@@ -1,0 +1,23 @@
+# Normalize line endings so `gofmt -l .` behaves identically on a Windows
+# checkout and on Linux CI. Without this, CRLF working copies make every Go
+# file look unformatted.
+* text=auto eol=lf
+
+*.go        text eol=lf
+*.py        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.json      text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.md        text eol=lf
+
+*.ps1       text eol=crlf
+
+*.png       binary
+*.jpg       binary
+*.ico       binary
+*.zip       binary
+*.exe       binary
+*.gguf      binary
+*.onnx      binary

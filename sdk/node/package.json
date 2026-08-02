@@ -1,0 +1,30 @@
+{
+  "name": "@deepaxiom/aura",
+  "version": "1.0.0",
+  "description": "TypeScript client for the AURA runtime: expose your app's functions as skills, or drive a graph from a frontend.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "generate": "node scripts/generate-types.mjs",
+    "check:generated": "node scripts/generate-types.mjs --check",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "keywords": ["aura", "deepaxiom", "agents", "skills", "websocket"],
+  "sideEffects": false
+}

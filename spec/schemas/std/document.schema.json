@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:std:document@1",
+  "title": "std/document@1",
+  "description": "A whole file: an image, a WAV, a PDF.",
+  "type": "object",
+  "required": [
+    "mime"
+  ],
+  "properties": {
+    "mime": {
+      "type": "string"
+    },
+    "bytes_b64": {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "uri": {
+      "type": "string"
+    }
+  }
+}

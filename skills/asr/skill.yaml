@@ -1,0 +1,102 @@
+id: "example/sensorial/asr"
+version: "1.1.0"
+protocol: "1"
+
+name: "Speech to text"
+description: "Transcribes speech using a local Whisper model (faster-whisper, CPU-friendly). Takes either a whole WAV on audio_in, or a live PCM stream on audio_chunk_in with partial results while the person is still speaking. Downloads the model on first use."
+capability: "sensorial.asr.transcribe"
+type: sensorial
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    # A whole file, transcribed once.
+    - name: audio_in
+      schema: "std/document@1"
+    # A live stream. A separate port because C1 binds one schema per port, and
+    # these two genuinely carry different things.
+    - name: audio_chunk_in
+      schema: "std/audio-chunk@1"
+  egress:
+    # The settled transcript only — this is what an LLM should answer.
+    # Partials must never come out here: `text` in std/text@1 is a delta that
+    # consumers concatenate, so a chat skill would answer four half-sentences.
+    - name: text_out
+      schema: "std/text@1"
+    # Partials and the final, each replacing the last. This is what a UI shows.
+    - name: transcript_out
+      schema: "std/transcript@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "1Gi"
+  accelerator: any
+
+permissions:
+  egress_http: ["huggingface.co", "cdn-lfs.huggingface.co"]
+  filesystem: "write:~/.aura/models"
+  channels: declared-only
+
+config:
+  - key: "model_size"
+    type: enum
+    default: "base"
+    options: ["tiny", "base", "small", "medium", "large-v3"]
+    description: "Whisper size. Bigger is more accurate and slower; on CPU, 'base' is usually the largest that keeps up with live partials on a laptop."
+    restart_required: true
+  - key: "language"
+    type: string
+    default: ""
+    description: "Language hint, e.g. 'es'. Empty autodetects, which costs accuracy on short utterances."
+  - key: "partials_enabled"
+    type: bool
+    default: true
+    description: "Emit interim hypotheses while the person is still speaking. Turn it off on slow hardware — the final transcript is unaffected."
+  - key: "partial_interval_ms"
+    type: int
+    default: 900
+    min: 200
+    max: 5000
+    description: "How much NEW audio to gather before re-decoding for a partial. Whisper has no incremental decode and pads to a fixed 30s window, so a partial costs roughly the same whatever the buffer holds — measured around 750ms for 'base' on a laptop CPU, which is why the default sits just above that. It backs off on its own if the machine cannot keep up."
+  - key: "max_utterance_s"
+    type: int
+    default: 15
+    min: 2
+    max: 120
+    description: "Hard cap before the utterance is finalised regardless. Stops a stuck client holding a transcript open forever."
+  - key: "silence_endpoint_ms"
+    type: int
+    default: 800
+    min: 200
+    max: 5000
+    description: "Trailing quiet before the utterance is considered over. A safety net: a client that does its own endpointing should send final=true rather than rely on this."
+  - key: "silence_rms"
+    type: int
+    default: 500
+    min: 0
+    max: 10000
+    description: "Loudness below which a chunk counts as silence, in PCM16 units. Raise it in a noisy room."
+  - key: "preload_on_boot"
+    type: bool
+    default: true
+    description: "Load the Whisper model in a background thread as soon as the skill starts, instead of on the first request. Keeps the first utterance from paying the 10-30s model load and timing out. Replaces the old AURA_ASR_PRELOAD environment variable."
+    restart_required: true
+  - key: "beam_size_final"
+    type: int
+    default: 5
+    min: 1
+    max: 10
+    description: "Beam width for the settled transcript (both the whole-file path and the end of a stream). Higher is more accurate and slower; unlike partials this only runs once per utterance, so it can afford a wider beam."
+  - key: "beam_size_partial"
+    type: int
+    default: 1
+    min: 1
+    max: 10
+    description: "Beam width for interim partials while the person is still speaking. Kept narrow by default because a partial is re-decoded on every interval and has to stay fast enough to keep up with live audio."
+
+signature: null

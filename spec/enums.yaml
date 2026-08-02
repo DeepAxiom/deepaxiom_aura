@@ -1,0 +1,122 @@
+# Single source of truth for the contract enumerations.
+#
+# These values were previously written out by hand in six places: a Go regex, a
+# Go slice, a Python tuple, the JSON Schemas, and both READMEs. Nothing checked
+# them against each other, so a sixth kind or a sixth skill type could be added
+# in one language and silently missing in another — and the failure mode is not
+# a build error, it is a skill that registers fine against one kernel and is
+# rejected by another.
+#
+# Everything generated from this file carries a "generated — do not edit"
+# header and is checked by `make ssot-check` in CI.
+#
+# Adding a value here is a contract change: C1/C2/C3 are frozen and additive
+# only, so a new value is allowed, and removing or renaming one is not.
+
+version: 1
+
+# C1 — the five kinds of skill. The type is not cosmetic: it prefixes the
+# capability, and the kernel's policy engine decides what to do about an effect
+# by looking at it.
+skill_types:
+  - name: sensorial
+    description: Perceives — turns the world into data.
+  - name: cognitive
+    description: Reasons — decides, plans, generates.
+  - name: motor
+    description: Acts — produces effects in the world.
+  - name: memory
+    description: Remembers — persists and retrieves context.
+  - name: logical
+    description: Transforms/validates — deterministic data to data.
+
+# The one type whose edges are effects, and therefore the one the policy engine
+# treats specially. Named here rather than hard-coded so the relationship
+# between "the taxonomy" and "what needs authorising" is visible in one place.
+effect_type: motor
+
+# C1 — how a skill is packaged.
+skill_formats:
+  - name: source
+    description: Runs from source in a language runtime.
+  - name: wasm
+    description: A sandboxed Wasm module (wazero, WASI command model; one ingress/egress port; filesystem and egress_http both enforced).
+  - name: model
+    description: A model artifact behind a driver.
+  - name: projection
+    description: An existing system exposed as a skill.
+
+# C3 — envelope kinds.
+envelope_kinds:
+  - name: data
+    description: Payload on a typed channel.
+  - name: done
+    description: Logical stream close.
+  - name: error
+    description: Terminal failure of a chain.
+  - name: status
+    description: Explanatory, non-terminal.
+  - name: register
+    description: A skill's first frame, carrying its C1 manifest.
+  - name: confirm_request
+    description: The kernel asking a human to approve an effect.
+  - name: confirm_response
+    description: The human's answer.
+  - name: cancel
+    description: Abandon a causal chain.
+  - name: config_update
+    description: Kernel to skill — runtime config changed live.
+
+# C3 rule 4 — per-edge delivery classes.
+qos_classes:
+  - name: reliable
+    description: Blocks the producer; nothing is lost.
+    default: true
+  - name: realtime
+    description: Never blocks; drops the oldest frame under pressure.
+  - name: bulk
+    description: Named but unspecified; treated as reliable.
+
+# C2 — what an edge may declare about approval.
+gates:
+  - name: human-approval
+    description: Hold the message until a human confirms it.
+  - name: none
+    description: A written request to skip approval, granted only by node policy.
+
+# C4 — what a node may decide about an effect. Declared in Phase 0 because the
+# policy engine that reads them shipped there.
+policy_decisions:
+  - name: allow
+    description: The effect proceeds unsupervised.
+  - name: gate
+    description: The effect waits for human approval.
+  - name: deny
+    description: The effect is refused and the session is not built.
+
+# C4 — what became of an effect that reached the ledger checkpoint. Distinct
+# from policy_decisions: a decision is what the node ruled *before* the fact: an
+# outcome is what happened after — "gate" always resolves to one of these two.
+effect_outcomes:
+  - name: delivered
+    description: The effect was authorized (directly, or after approval) and reached the skill.
+  - name: denied
+    description: A human held the gate and refused the effect.
+
+# C5 — where an energy figure in an inference attestation came from. Ordered
+# most to least trustworthy.
+#
+# The source travels with the number and is mandatory, which is the whole
+# point of enumerating it: a measured joule and a modelled joule differ by an
+# order of magnitude in trustworthiness, and a field carrying only the value
+# would launder an estimate into a measurement the first time it reached a
+# sustainability report.
+energy_sources:
+  - name: nvml
+    description: NVIDIA hardware counters, read from the GPU.
+  - name: rapl
+    description: Intel/AMD running-average power limit counters.
+  - name: powermetrics
+    description: Apple Silicon power counters.
+  - name: estimated
+    description: An analytical model; the attestation MUST state its basis.

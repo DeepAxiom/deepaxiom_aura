@@ -1,0 +1,100 @@
+---
+// src/components/sections/CTASection.astro
+import { githubUrl } from '../../i18n/ui.ts';
+const { t } = Astro.props;
+
+const socialLinks = [
+    { platform: 'X (Twitter)', href: 'https://x.com/AxiomDeep', iconPath: 'M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 7.184L18.901 1.153zm-1.613 19.59h2.669L7.027 2.373H4.226l13.062 18.37z' },
+    { platform: 'LinkedIn', href: 'https://www.linkedin.com/company/deep-axiom/', iconPath: 'M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z' },
+    { platform: 'GitHub', href: 'https://github.com/DeepAxiom', iconPath: 'M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12' },
+    { platform: 'Discord', href: 'https://discord.gg/jpZnWmQBR5', iconPath: 'M21.5,8.2C21.5,8.2,20.2,7,18.7,7c-1.4-0.1-2.9,0.5-2.9,0.5L15.2,6c-1.1-0.2-2.3-0.3-3.4-0.3S9.6,5.8,8.6,6.1l-0.7,1.5 c0,0-1.4-0.6-2.9-0.5C3.8,7,2.5,8.2,2.5,8.2S2,9.7,1.9,11.1c-0.2,2.8,0.7,5.5,0.7,5.5l1.6,1.7c1,0.6,2.1,1,3.2,1.2 c0.9,0.2,1.8,0.1,2.6-0.1c0.1-0.2,0.2-0.3,0.3-0.5c-0.1,0-0.2-0.1-0.3-0.1c-0.5-0.2-1-0.5-1.4-0.8c-0.2-0.1-0.3-0.2-0.4-0.3 c-0.5-0.3-0.7-0.4-0.7-0.4l-0.2-0.1c-0.1-0.1-0.2-0.1-0.2-0.2c-1.9-1.2-2.6-2.9-2.8-4.3c0-0.1-0.1-0.3,0-0.4 c0-0.1,0.1-0.2,0.1-0.3c0.1-0.1,0.2-0.1,0.3-0.1c0.1,0,0.2,0,0.3,0.1C6.9,9,7.5,9.2,8.1,9.4c0.1,0,0.2,0,0.2,0 c1.4,0.4,2.9,0.4,4.3,0c0.1,0,0.2,0,0.2,0c0.6-0.2,1.2-0.4,1.8-0.7c0.1,0,0.2-0.1,0.3-0.1c0.1,0,0.2,0.1,0.3,0.1 c0.1,0.1,0.1,0.2,0.1,0.3c0,0.1-0.1,0.3,0,0.4c-0.2,1.4-0.9,3.1-2.8,4.3c0,0-0.1,0.1-0.2,0.2l-0.2,0.1c0,0,0,0,0,0 c-0.1,0-0.1,0.1-0.2,0.1c-0.2,0.1-0.3,0.2-0.4,0.3c-0.4,0.3-0.9,0.6-1.4,0.8c-0.1,0-0.2,0.1-0.3,0.1c0.1,0.2,0.2,0.3,0.3,0.5 c0.8,0.2,1.7,0.3,2.6,0.1c1.1-0.2,2.2-0.6,3.2-1.2l1.6-1.7c0,0,0.9-2.7,0.7-5.5C22,9.7,21.5,8.2,21.5,8.2z M10.2,14.4 c-0.8,0-1.5-0.7-1.5-1.5s0.7-1.5,1.5-1.5s1.5,0.7,1.5,1.5S11,14.4,10.2,14.4z M13.8,14.4c-0.8,0-1.5-0.7-1.5-1.5s0.7-1.5,1.5-1.5 s1.5,0.7,1.5,1.5S14.7,14.4,13.8,14.4z' },
+    { platform: 'Instagram', href: 'https://www.instagram.com/deepaxiom/', iconPath: 'M7.8,2H16.2C19.4,2 22,4.6 22,7.8V16.2A5.8,5.8 0 0,1 16.2,22H7.8C4.6,22 2,19.4 2,16.2V7.8A5.8,5.8 0 0,1 7.8,2M7.6,4A3.6,3.6 0 0,0 4,7.6V16.4C4,18.39 5.61,20 7.6,20H16.4A3.6,3.6 0 0,0 20,16.4V7.6C20,5.61 18.39,4 16.4,4H7.6M17.25,5.5A1.25,1.25 0 0,1 18.5,6.75A1.25,1.25 0 0,1 17.25,8A1.25,1.25 0 0,1 16,6.75A1.25,1.25 0 0,1 17.25,5.5M12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9Z' },
+    { platform: 'YouTube', href: 'https://www.youtube.com/@deepaxiom', iconPath: 'M21.582,6.186c-0.23-0.86-0.908-1.538-1.768-1.768C18.254,4,12,4,12,4S5.746,4,4.186,4.418 c-0.86,0.23-1.538,0.908-1.768,1.768C2,7.746,2,12,2,12s0,4.254,0.418,5.814c0.23,0.86,0.908,1.538,1.768,1.768 C5.746,20,12,20,12,20s6.254,0,7.814-0.418c0.861-0.23,1.538-0.908,1.768-1.768C22,16.254,22,12,22,12S22,7.746,21.582,6.186z M10,15.464V8.536L16,12L10,15.464z' },
+    { platform: 'TikTok', href: 'https://www.tiktok.com/@deepaxiom', iconPath: 'M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-2.43.03-4.83-.95-6.43-2.98-1.6-2.04-1.66-5.04-.14-7.18 1.52-2.14 4.02-3.12 6.43-3.01 1.05.05 2.09.34 3.08.81v4.48c-.91-.38-1.84-.6-2.79-.59-.95.02-1.86.3-2.61.85-1.19.88-1.7 2.37-1.42 3.86.29 1.49 1.42 2.64 2.88 2.81 1.49.17 2.99-.44 3.86-1.63.81-1.1.9-2.55.56-3.86-.34-1.31-1.07-2.4-2.11-3.09v-4.66c.24.09.47.19.69.28.38.15.75.34 1.12.52 1.07.52 2.18.98 3.31 1.35v-4.22c-1.12-.35-2.22-.77-3.28-1.25-.33-.15-.65-.33-.97-.52-.57-.34-1.14-.72-1.69-1.15-1.1-1.02-1.7-2.44-1.7-4.04z' },
+    { platform: 'Facebook', href: 'https://www.facebook.com/profile.php?id=100090075371063', iconPath: 'M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-3 10h-2v-2c0-1.104.896-2 2-2h1v-4h-3c-3.866 0-7 3.134-7 7v1h-2v4h2v8h4v-8h3l1-4z' },
+];
+---
+<section id="contact" class="relative bg-aura-dark overflow-hidden">
+    
+    <!-- ===================================================================== -->
+    <!-- 1. EL "CIELO": Gradiente Masivo CON MÁSCARA SUPERIOR -->
+    <!-- ===================================================================== -->
+    <!-- 
+         AGREGADO: mask-image para desvanecer la parte superior.
+         Esto elimina el corte abrupto con la sección anterior.
+    -->
+    <div class="absolute inset-0 pointer-events-none z-0"
+         style="mask-image: linear-gradient(to bottom, transparent 0%, black 25%, black 100%); 
+                -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 25%, black 100%);">
+        
+        <!-- FORMA 1: La Gran Llamarada (Izquierda) -->
+        <div class="absolute top-[-20%] left-[-15%] w-[80%] h-[120%] 
+                    bg-gradient-to-b from-[var(--neon-color-15)] via-aura-red to-transparent 
+                    opacity-90 blur-[100px] rounded-[100%] rotate-[15deg] mix-blend-screen">
+        </div>
+
+        <!-- FORMA 2: El Contraste Profundo (Derecha) -->
+        <div class="absolute top-[10%] right-[-10%] w-[70%] h-[100%] 
+                    bg-gradient-to-b from-aura-blue via-purple-800 to-transparent 
+                    opacity-80 blur-[100px] rounded-[40%] -rotate-[30deg] mix-blend-screen">
+        </div>
+
+        <!-- FORMA 3: Puente Central -->
+        <div class="absolute top-[20%] left-[30%] w-[50%] h-[50%] 
+                    bg-pink-600 opacity-60 blur-[120px] rounded-full mix-blend-screen">
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- 2. CONTENIDO PRINCIPAL: Texto y Botones (z-10) -->
+    <!-- ===================================================================== -->
+    <div class="container mx-auto text-center max-w-3xl relative z-10 pt-32 pb-48">
+        <h2 class="text-4xl md:text-6xl font-bold text-white mb-8 drop-shadow-2xl tracking-tight">
+            {t('sectionCTA.title')}
+        </h2>
+        <p class="text-xl text-white/95 font-medium mb-12 drop-shadow-lg leading-relaxed">
+            {t('sectionCTA.subtitle')}
+        </p>
+        
+        <!-- Botones -->
+        <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <a href={githubUrl} target="_blank" rel="noopener noreferrer" class="h-14 px-10 rounded-full flex items-center justify-center font-bold text-black bg-white transition-all duration-300 ease-in-out transform hover:scale-105 shadow-2xl hover:shadow-white/50">
+                {t('sectionCTA.buttonPrimary')}
+            </a>
+            <a href="mailto:corporativo@deepaxiom.com" class="h-14 px-10 rounded-full flex items-center justify-center font-bold text-white border-2 border-white/30 hover:bg-white/10 transition-all duration-300">
+                {t('sectionCTA.buttonSecondary')}
+            </a>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- 3. LA "TIERRA": Tarjeta Negra Curva (Footer Container) -->
+    <!-- ===================================================================== -->
+    <div class="relative z-20 w-full bg-[#020202] rounded-t-[3rem] px-4 py-16 border-t border-white/5 shadow-[0_-20px_60px_rgba(0,0,0,0.5)]">
+        <div class="container mx-auto text-center">
+            
+            <div class="flex items-center justify-center gap-3 mb-8 opacity-70">
+                <span class="w-2 h-2 rounded-full bg-aura-red animate-pulse"></span>
+                <span class="text-xs font-bold tracking-[0.2em] uppercase text-white/50">Deep Axiom Status: Online</span>
+            </div>
+
+            <p class="text-sm font-bold text-white/40 uppercase tracking-widest mb-8">{t('sectionCTA.followUs')}</p>
+            
+            <div class="flex justify-center items-center gap-8 flex-wrap">
+                {socialLinks.map(link => (
+                    <a 
+                        href={link.href} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        title={link.platform} 
+                        class="text-white/40 hover:text-white transition-all duration-300 hover:scale-110 hover:drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]"
+                    >
+                        <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24" aria-label={`${link.platform} icon`}>
+                            <path d={link.iconPath}></path>
+                        </svg>
+                    </a>
+                ))}
+            </div>
+        </div>
+    </div>
+</section>

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:spec:manifest@1",
+  "title": "C1 Skill Manifest",
+  "type": "object",
+  "required": ["id", "version", "protocol", "name", "description", "capability", "type", "format", "ports"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+/[a-z0-9-]+$" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "protocol": { "type": "string", "pattern": "^\\d+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "capability": { "type": "string", "pattern": "^(sensorial|cognitive|motor|memory|logical)(\\.[a-z0-9_-]+)+$" },
+    "type": { "enum": ["sensorial", "cognitive", "motor", "memory", "logical"] },
+    "format": { "enum": ["source", "wasm", "model", "projection"] },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "language": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "ports": {
+      "type": "object",
+      "required": ["ingress", "egress"],
+      "properties": {
+        "ingress": { "$ref": "#/$defs/portList" },
+        "egress": { "$ref": "#/$defs/portList" }
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "properties": {
+        "memory": { "type": "string" },
+        "accelerator": { "enum": ["none", "gpu", "npu", "any"] }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "egress_http": { "type": "array", "items": { "type": "string" } },
+        "filesystem": { "type": "string" },
+        "channels": { "type": "string" }
+      }
+    },
+    "config": { "type": "array", "items": { "$ref": "#/$defs/configParam" } },
+    "compensates": {
+      "type": "object",
+      "description": "Optional (C4, additive): how to undo this motor skill's effect. `port` must be a declared ingress port.",
+      "required": ["port"],
+      "properties": {
+        "port": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "schema": { "type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9_-]+@\\d+$" }
+      }
+    },
+    "signature": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    { "if": { "properties": { "type": { "const": "sensorial" } } },
+      "then": { "properties": { "capability": { "pattern": "^sensorial\\." } } } },
+    { "if": { "properties": { "type": { "const": "cognitive" } } },
+      "then": { "properties": { "capability": { "pattern": "^cognitive\\." } } } },
+    { "if": { "properties": { "type": { "const": "motor" } } },
+      "then": { "properties": { "capability": { "pattern": "^motor\\." } } } },
+    { "if": { "properties": { "type": { "const": "memory" } } },
+      "then": { "properties": { "capability": { "pattern": "^memory\\." } } } },
+    { "if": { "properties": { "type": { "const": "logical" } } },
+      "then": { "properties": { "capability": { "pattern": "^logical\\." } } } }
+  ],
+  "$defs": {
+    "portList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "schema"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "schema": { "type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9_-]+@\\d+$" }
+        }
+      }
+    },
+    "configParam": {
+      "type": "object",
+      "required": ["key", "type", "default"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "type": { "enum": ["string", "int", "float", "bool", "enum"] },
+        "default": {},
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" },
+        "restart_required": { "type": "boolean" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "enum" } } },
+          "then": { "required": ["key", "type", "default", "options"] } }
+      ]
+    }
+  }
+}

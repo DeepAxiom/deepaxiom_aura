@@ -1,0 +1,45 @@
+# build artifacts
+kernel/aura.exe
+*.exe
+*.exe~
+*.db
+*.db-shm
+*.db-wal
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# node
+node_modules/
+*.tsbuildinfo
+# Build output of the TypeScript SDK. Unlike ui/dist it is NOT embedded in the
+# binary, so there is nothing to keep in sync — it is produced by `npm run
+# build` and by CI. src/generated/types.ts IS committed: it is generated from
+# spec/schemas, and CI checks it is current.
+sdk/node/dist/
+
+# release artifacts
+release/
+/sbom.json
+
+# local env
+.env
+.env.local
+
+# local Claude Code settings/permissions — machine-specific, not shared config
+.claude/settings.local.json
+
+# personal scratch notes, not project docs
+/TIPS
+
+# examples/ — local-only demo playground, not part of the published repo.
+# The general-purpose skills that used to live under here (tuya-status,
+# tuya-command, vision-reasoner, notify-alert, vision-ask) were moved to
+# skills/, the only directory whose skills are considered "published" by
+# this repo. What remains under examples/ (mocks, the Frigate bridge, the
+# voice web client) is demo glue that needs real accounts/hardware/heavy
+# setup to exercise end to end — kept on disk for local use, not tracked.
+examples/

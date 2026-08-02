@@ -1,0 +1,84 @@
+id: "example/cognitive/llm-chat"
+version: "1.0.0"
+protocol: "1"
+
+name: "LLM chat"
+description: "Converses in natural language using a local GGUF model (llama.cpp) by default, or an OpenAI-compatible cloud model (OpenAI, Gemini, ...) if OPENAI_API_KEY is set. Keeps per-session history. Downloads the default local model on first start."
+capability: "cognitive.llm.chat"
+type: cognitive
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: text_in
+      schema: "std/text@1"
+  egress:
+    - name: text_out
+      schema: "std/text@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "4Gi"
+  accelerator: any
+
+permissions:
+  # api.openai.com and generativelanguage.googleapis.com are only ever
+  # contacted if OPENAI_API_KEY is set — the local path never leaves
+  # huggingface.co (model download).
+  egress_http: ["huggingface.co", "cdn-lfs.huggingface.co", "api.openai.com", "generativelanguage.googleapis.com"]
+  filesystem: "write:~/.aura/models"
+  channels: declared-only
+
+config:
+  - key: "temperature"
+    type: float
+    default: 0.7
+    min: 0.0
+    max: 2.0
+    description: "Sampling temperature — higher is more random, lower is more deterministic."
+  - key: "max_tokens"
+    type: int
+    default: 1024
+    min: 1
+    max: 8192
+    description: "Maximum tokens generated per reply."
+  - key: "system_prompt"
+    type: string
+    default: "You are AURA, a helpful and concise assistant. Always reply in the user's language."
+    description: "System prompt prepended to every new conversation."
+  - key: "context_window"
+    type: int
+    default: 8192
+    min: 512
+    max: 131072
+    description: "Local model's context window (n_ctx). Only used when running the local GGUF backend, not the cloud path."
+    restart_required: true
+  - key: "top_p"
+    type: float
+    default: 0.95
+    min: 0.0
+    max: 1.0
+    description: "Nucleus sampling threshold."
+  - key: "top_k"
+    type: int
+    default: 40
+    min: 0
+    max: 200
+    description: "Number of highest-probability tokens considered at each step. Not applied to the cloud backend — silently ignored there."
+  - key: "repeat_penalty"
+    type: float
+    default: 1.0
+    min: 1.0
+    max: 2.0
+    description: "Penalty applied to already-generated tokens to discourage repetition. Not applied to the cloud backend — silently ignored there."
+  - key: "history_limit"
+    type: int
+    default: 40
+    min: 2
+    max: 500
+    description: "Maximum conversation history length (messages) before the oldest turn is dropped."

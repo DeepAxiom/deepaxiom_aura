@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:std:audio-chunk@1",
+  "title": "std/audio-chunk@1",
+  "description": "A slice of PCM audio. Signed 16-bit little-endian samples, base64-encoded. `final` marks an utterance or clause boundary, not the end of the stream — that is kind:done.",
+  "type": "object",
+  "required": [
+    "pcm_b64",
+    "sample_rate"
+  ],
+  "properties": {
+    "pcm_b64": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "description": "PCM16LE samples, base64."
+    },
+    "sample_rate": {
+      "type": "integer",
+      "minimum": 8000,
+      "maximum": 192000
+    },
+    "channels": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2,
+      "default": 1
+    },
+    "final": {
+      "type": "boolean",
+      "description": "End of an utterance or clause."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Chunk index within the stream, so a receiver can detect a gap when a realtime channel drops one."
+    },
+    "ref": {
+      "type": "string",
+      "description": "Reserved. Forward compatibility for carrying samples out of band; unused in v1, and a receiver may ignore it."
+    }
+  }
+}

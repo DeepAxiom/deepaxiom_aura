@@ -1,0 +1,38 @@
+id: "example/logical/echo"
+version: "1.0.0"
+protocol: "1"
+
+name: "Echo"
+description: "Returns the text it receives, unchanged. The smallest possible skill: it needs no model, no network and no credentials, so it is what a cold node uses to prove the kernel, the graph executor and the client path all work end to end."
+capability: "logical.echo"
+type: logical
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: text_in
+      schema: "std/text@1"
+  egress:
+    - name: text_out
+      schema: "std/text@1"
+
+requirements:
+  memory: "32Mi"
+  accelerator: none
+
+permissions:
+  egress_http: []
+  filesystem: none
+  channels: declared-only
+
+config:
+  - key: "prefix"
+    type: string
+    default: ""
+    description: "Optional string prepended to every reply. Handy for telling two echo skills apart when both are connected."
+
+signature: null

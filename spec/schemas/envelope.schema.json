@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:spec:envelope@1",
+  "title": "C3 Channel Envelope",
+  "type": "object",
+  "required": ["v", "id", "kind"],
+  "properties": {
+    "v": { "const": "1" },
+    "id": { "type": "string", "minLength": 1 },
+    "cause_id": { "type": "string" },
+    "session": { "type": "string" },
+    "node": { "type": "string" },
+    "port": { "type": "string" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "idem": { "type": "string" },
+    "schema": { "type": "string" },
+    "kind": { "enum": ["data", "done", "error", "status", "register", "confirm_request", "confirm_response", "cancel", "config_update"] },
+    "payload": {},
+    "receipt": { "type": "string", "description": "C4: hash of the ledger entry that sealed this effect. Present only on an envelope delivered into a motor.* skill." },
+    "attest": {
+      "type": "object",
+      "description": "C5: what the emitting skill asserts about how it produced this payload. An assertion bound to the effects it causes, not proof of what executed — see spec/c5-attestation.md.",
+      "required": ["engine", "model"],
+      "properties": {
+        "engine": { "type": "string", "minLength": 1 },
+        "engine_version": { "type": "string" },
+        "model": { "type": "string", "minLength": 1 },
+        "model_revision": { "type": "string" },
+        "model_file": { "type": "string" },
+        "model_sha256": { "type": "string" },
+        "quantization": { "type": "string" },
+        "params": { "type": "object" },
+        "prompt_sha256": { "type": "string" },
+        "output_sha256": { "type": "string" },
+        "energy": {
+          "type": "object",
+          "required": ["millijoules", "source"],
+          "properties": {
+            "millijoules": { "type": "number", "minimum": 0 },
+            "source": { "enum": ["nvml", "rapl", "powermetrics", "estimated"] },
+            "basis": { "type": "string" }
+          }
+        },
+        "tee": {}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "data" } } },
+      "then": { "required": ["session", "node", "port", "seq", "idem", "schema", "payload"] }
+    }
+  ]
+}

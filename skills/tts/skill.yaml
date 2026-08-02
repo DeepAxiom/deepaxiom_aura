@@ -1,0 +1,82 @@
+id: "example/motor/tts"
+version: "1.1.0"
+protocol: "1"
+
+name: "Text to speech"
+description: "Speaks a clause of text. Emits PCM in configurable-size chunks (chunk_ms, ~200ms by default) for a client that plays as it arrives, and the whole clause as a WAV for anything that wants a file. Put skills/sentence-chunker in front of a streaming LLM, or this synthesises once per token. Degradation chain: piper (if installed) then OS voices (SAPI/espeak)."
+capability: "motor.tts.speak"
+type: motor
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: text_in
+      schema: "std/text@1"
+  egress:
+    # For a live listener. Emitted whatever the backend is, so the client's
+    # playback path does not depend on which engine is installed — only the
+    # latency does.
+    - name: audio_chunk_out
+      schema: "std/audio-chunk@1"
+    # For anything that wants a file rather than a stream.
+    - name: audio_out
+      schema: "std/document@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "256Mi"
+  accelerator: none
+
+permissions:
+  egress_http: []
+  filesystem: "write:~/.aura/tmp"
+  channels: declared-only
+
+config:
+  - key: "voice"
+    type: string
+    default: ""
+    description: "Substring matched against installed voice names. Empty uses the system default."
+  - key: "rate"
+    type: int
+    default: 175
+    min: 60
+    max: 400
+    description: "Words per minute for the OS voice engine. Ignored by piper, which carries its own speaking rate in the model."
+  - key: "chunk_ms"
+    type: int
+    default: 200
+    min: 50
+    max: 1000
+    description: "Target size of each PCM piece sent on audio_chunk_out, in milliseconds. Applies after synthesis regardless of backend, so it does not change how live piper's output feels, only how finely it (and the OS voice's single finished clip) get sliced for the player."
+  - key: "length_scale"
+    type: float
+    default: -1.0
+    min: -1.0
+    max: 5.0
+    description: "Piper only, ignored by the OS voice. Phoneme length scale: below 1 speaks faster, above 1 slower. -1 leaves the voice model's own default untouched."
+  - key: "noise_scale"
+    type: float
+    default: -1.0
+    min: -1.0
+    max: 5.0
+    description: "Piper only, ignored by the OS voice. Amount of generator noise added during synthesis. -1 leaves the voice model's own default untouched."
+  - key: "noise_w_scale"
+    type: float
+    default: -1.0
+    min: -1.0
+    max: 5.0
+    description: "Piper only, ignored by the OS voice. Amount of phoneme-width noise, which varies speaking rhythm. -1 leaves the voice model's own default untouched."
+  - key: "speaker_id"
+    type: int
+    default: -1
+    min: -1
+    max: 999
+    description: "Piper only, and only for multi-speaker voice models (ignored otherwise, and by the OS voice). Index of the speaker to use. -1 leaves the voice model's own default speaker."
+
+signature: null

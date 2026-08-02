@@ -1,0 +1,15 @@
+{
+  "ir": "1",
+  "graph_id": "vector-valid-gate",
+  "origin": { "kind": "planner", "skill": "deepaxiom/cognitive/planner", "cause": "01ABC" },
+  "nodes": [
+    { "ref": "a", "resolve": "logical.echo" },
+    { "ref": "b", "use": "acme/motor/notify", "constraints": { "privacy": "no-egress" } }
+  ],
+  "edges": [
+    { "from": "client.text_out", "to": "a.text_in" },
+    { "from": "a.text_out", "to": "b.in", "gate": "human-approval", "qos": "reliable" },
+    { "from": "a.text_out", "to": "client.text_in" }
+  ],
+  "waves": [["a"], ["b"]]
+}

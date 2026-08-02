@@ -1,0 +1,14 @@
+{
+  "id": "Acme Corp/Logical/Upper Case",
+  "version": "1.0.0",
+  "protocol": "1",
+  "name": "Bad id",
+  "description": "Id with uppercase and spaces — invalid.",
+  "capability": "logical.uppercase",
+  "type": "logical",
+  "format": "source",
+  "ports": {
+    "ingress": [{ "name": "text_in", "schema": "std/text@1" }],
+    "egress": []
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:std:db-change@1",
+  "title": "std/db-change@1",
+  "description": "One row change from a database change-data-capture skill (e.g. example/sensorial/postgres-cdc) — one envelope per row change, not per transaction.",
+  "type": "object",
+  "required": [
+    "table",
+    "op",
+    "columns"
+  ],
+  "properties": {
+    "table": {
+      "type": "string",
+      "description": "Schema-qualified table name, e.g. \"public.orders\"."
+    },
+    "op": {
+      "enum": [
+        "insert",
+        "update",
+        "delete"
+      ]
+    },
+    "columns": {
+      "type": "object",
+      "description": "Column name -> value. For \"delete\", and for \"update\" unless the source table is REPLICA IDENTITY FULL, this is only the replica-identity columns (the primary key, by default) — a property of the source database, not data the skill lost."
+    },
+    "lsn": {
+      "type": "string",
+      "description": "The source's log sequence number for this change, if the skill exposes one — for external resumability, not something the kernel interprets."
+    }
+  }
+}

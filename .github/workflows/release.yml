@@ -1,0 +1,123 @@
+name: Release
+
+# Fires on a version tag. Builds the same six targets ci.yml's cross-compile
+# job already proves build on every push, hashes them, generates an SBOM for
+# the kernel module, signs the checksums and the SBOM keylessly with cosign
+# (Sigstore, via this workflow's own GitHub OIDC identity — no private key
+# to generate, store, or ever leak), and publishes everything as a GitHub
+# Release. See SECURITY.md for how to verify a downloaded release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: binary (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: windows, goarch: amd64}
+          - {goos: windows, goarch: arm64}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: kernel/go.sum
+
+      # Same cgo-free build ci.yml's cross-compile job already exercises on
+      # every push; this just names the output for a release download rather
+      # than a CI artifact, which is why (unlike ci.yml) windows gets a real
+      # .exe extension.
+      - name: build
+        working-directory: kernel
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          go build -trimpath -ldflags "-s -w" \
+            -o "aura-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" ./cmd/aura
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aura-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: kernel/aura-${{ matrix.goos }}-${{ matrix.goarch }}*
+          retention-days: 7
+
+  sbom:
+    name: SBOM (kernel Go module)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: kernel/go.sum
+
+      - name: install cyclonedx-gomod
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+
+      - name: generate SBOM
+        run: ./scripts/gen_sbom.sh sbom.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 7
+
+  release:
+    name: sign and publish
+    needs: [build, sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the GitHub Release
+      id-token: write # for cosign's keyless OIDC signing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: false
+
+      - name: stage release files
+        run: |
+          mkdir -p release
+          find dist -type f -name 'aura-*' -exec cp {} release/ \;
+          cp dist/sbom/sbom.json release/sbom.json
+          cd release
+          sha256sum aura-* > SHA256SUMS
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Keyless: cosign signs using this workflow run's own GitHub OIDC
+      # identity against Sigstore's public Fulcio CA/Rekor transparency log.
+      # No signing key exists anywhere for this project to protect or lose.
+      - name: sign checksums and SBOM
+        working-directory: release
+        run: |
+          cosign sign-blob --yes \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.pem \
+            SHA256SUMS
+          cosign sign-blob --yes \
+            --output-signature sbom.json.sig \
+            --output-certificate sbom.json.pem \
+            sbom.json
+
+      - name: publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

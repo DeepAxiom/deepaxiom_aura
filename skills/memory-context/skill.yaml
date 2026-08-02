@@ -1,0 +1,64 @@
+id: "example/memory/context-window"
+version: "1.0.0"
+protocol: "1"
+
+name: "Memory — context window"
+description: "Persistent, per-session conversation memory: remembers turns across process restarts (unlike cognitive.llm.chat's in-process history), and hands back a context window trimmed to a configurable token budget. Commands on event_in: 'remember: <role>: <content>' to store a turn, 'recall' to get the assembled context back on result_out, 'clear' to wipe a session's memory."
+capability: "memory.context.window"
+type: memory
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: event_in
+      schema: "std/text@1"
+  egress:
+    - name: result_out
+      schema: "std/text@1"
+
+requirements:
+  memory: "256Mi"
+  accelerator: none
+
+permissions:
+  # Only contacted if trim_strategy=summarize and no local model is cached
+  # yet — same download path as skills/llm-chat (both use aura.llm.ChatBackend).
+  egress_http: ["huggingface.co", "cdn-lfs.huggingface.co", "api.openai.com", "generativelanguage.googleapis.com"]
+  filesystem: "write:~/.aura/memory"
+  channels: declared-only
+
+config:
+  - key: "max_context_tokens"
+    type: int
+    default: 4096
+    min: 256
+    max: 131072
+    description: "Approximate token budget 'recall' trims stored history to before returning it. Approximate: counted as len(text)/4, not a real tokenizer, so treat it as a budget, not an exact count."
+  - key: "max_turns"
+    type: int
+    default: 200
+    min: 1
+    max: 5000
+    description: "Hard cap on turns kept per session in storage, regardless of token budget — the oldest turn is dropped once this is exceeded."
+  - key: "trim_strategy"
+    type: enum
+    default: "drop-oldest"
+    options: ["drop-oldest", "summarize"]
+    description: "How 'recall' shrinks history once it exceeds max_context_tokens: drop-oldest discards the oldest turns (free, deterministic); summarize compresses them into one running summary turn using cognitive.llm.chat's same local-or-cloud backend (costs a generation, keeps more of the gist)."
+  - key: "storage_path"
+    type: string
+    default: "~/.aura/memory/context.sqlite"
+    description: "Where the SQLite file with persisted turns lives. Changing this only takes effect on the next restart."
+    restart_required: true
+  - key: "summarize_max_tokens"
+    type: int
+    default: 256
+    min: 32
+    max: 2048
+    description: "Max tokens generated when trim_strategy=summarize compresses dropped turns into one running summary. Only applies to that strategy; has no effect under drop-oldest."
+
+signature: null

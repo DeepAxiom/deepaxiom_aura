@@ -1,0 +1,14 @@
+{
+  "id": "acme/motor/notify",
+  "version": "1.0.0",
+  "protocol": "1",
+  "name": "Mismatch",
+  "description": "capability does not start with the type — invalid.",
+  "capability": "cognitive.notify",
+  "type": "motor",
+  "format": "source",
+  "ports": {
+    "ingress": [{ "name": "in", "schema": "std/text@1" }],
+    "egress": []
+  }
+}

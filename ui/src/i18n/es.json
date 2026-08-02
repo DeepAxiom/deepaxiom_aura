@@ -1,0 +1,137 @@
+{
+  "nav": {
+    "chat": "Chat",
+    "operate": "Operar",
+    "skills": "Skills",
+    "projections": "Proyecciones",
+    "graphs": "Grafos",
+    "sessions": "Sesiones",
+    "voice": "Voz"
+  },
+  "topbar": {
+    "connected": "nodo {{node}} · modo {{mode}} · protocolo {{protocol}}",
+    "disconnected": "kernel no disponible — ejecuta `aura up`"
+  },
+  "chat": {
+    "title": "Chat",
+    "graph": "Grafo",
+    "placeholder": "Escribe un mensaje…",
+    "send": "Enviar",
+    "empty": "Elige un grafo y empieza la conversación.",
+    "sessionReady": "sesión {{session}} · grafo {{graph}}",
+    "disconnected": "desconectado — envía para reconectar"
+  },
+  "gate": {
+    "approve": "Aprobar",
+    "deny": "Denegar",
+    "approved": "aprobado",
+    "denied": "denegado"
+  },
+  "operate": {
+    "title": "Operar",
+    "subtitle": "Un objetivo en lenguaje natural se convierte en plan, grafo y ejecución con aprobaciones.",
+    "placeholder": "p. ej. crea un usuario llamado Grace Hopper en el CRM",
+    "run": "Planificar y ejecutar",
+    "planning": "Planificando…",
+    "reasoning": "Razonamiento",
+    "steps": "Pasos",
+    "executing": "Ejecutando — sesión {{session}}",
+    "result": "Resultado",
+    "completed": "Objetivo completado",
+    "failed": "El plan falló: {{error}}",
+    "needPlanner": "La skill planner debe estar corriendo (skills/planner)."
+  },
+  "skills": {
+    "title": "Skills",
+    "subtitle": "Catálogo vivo de capacidades — todo lo que el sistema sabe hacer ahora mismo.",
+    "refresh": "Actualizar",
+    "connected": "{{count}} conectada(s)",
+    "empty": "No hay skills conectadas. Arranca una y se registrará aquí sola.",
+    "ingress": "entrada",
+    "egress": "salida",
+    "types": {
+      "sensorial": "percibe",
+      "cognitive": "razona",
+      "motor": "actúa",
+      "memory": "recuerda",
+      "logical": "transforma"
+    },
+    "config": {
+      "configure": "Configurar",
+      "hide": "Ocultar config",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "resetDefaults": "Restaurar por defecto",
+      "savedLive": "Guardado — aplicado en caliente.",
+      "savedNext": "Guardado — se aplica en la próxima conexión.",
+      "restartRequired": "reinicio",
+      "restartRequiredHint": "Cambiar esto solo tiene efecto la próxima vez que arranque el proceso del skill."
+    }
+  },
+  "projections": {
+    "title": "Proyecciones",
+    "subtitle": "Sistemas existentes expuestos como skills — sin tocar su código.",
+    "connect": "Conectar un API",
+    "specLabel": "Spec OpenAPI (JSON o YAML)",
+    "specPlaceholder": "Pega aquí el documento OpenAPI…",
+    "name": "Nombre (opcional)",
+    "baseUrl": "URL base (opcional si el spec declara servers)",
+    "submit": "Conectar",
+    "connecting": "Conectando…",
+    "empty": "Sin proyecciones. Conecta un API existente y sus operaciones se vuelven skills.",
+    "readOnly": "solo lectura",
+    "write": "escritura",
+    "mode": {
+      "live": "live",
+      "dry-run": "dry-run",
+      "disabled": "deshabilitada"
+    },
+    "writeWarning": "el modo live ejecuta escrituras REALES sobre el sistema destino"
+  },
+  "graphs": {
+    "title": "Grafos",
+    "subtitle": "Grafos IR registrados — declarados por humanos o generados por planners.",
+    "empty": "No hay grafos registrados.",
+    "origin": {
+      "declared": "declarado",
+      "planner": "planner"
+    },
+    "nodes": "{{count}} nodo(s)",
+    "viewIR": "IR"
+  },
+  "sessions": {
+    "title": "Sesiones",
+    "subtitle": "Cada sesión con su log causal — haz clic en una para inspeccionar la cadena (cause_id → id).",
+    "refresh": "Actualizar",
+    "empty": "Aún no hay sesiones registradas.",
+    "noEvents": "Sin eventos para esa sesión.",
+    "events": "{{count}} envelope(s)",
+    "errors": "{{count}} error(es)",
+    "cols": {
+      "cause": "causa",
+      "origin": "nodo.puerto"
+    }
+  },
+  "common": {
+    "loading": "Cargando…",
+    "error": "Error: {{message}}",
+    "close": "Cerrar",
+    "language": "Idioma"
+  },
+  "voice": {
+    "title": "Voz",
+    "subtitle": "Habla con un grafo. Interrúmpelo cuando quieras — se para.",
+    "start": "Empezar a escuchar",
+    "stop": "Parar",
+    "halfDuplex": "Silenciar mientras habla",
+    "halfDuplexHelp": "Apaga el micrófono mientras el asistente habla. Úsalo si el asistente se interrumpe a sí mismo a través de tus altavoces; los auriculares resuelven lo mismo.",
+    "hearingYou": "escuchando",
+    "speaking": "hablando",
+    "waiting": "te toca",
+    "connecting": "conectando…",
+    "empty": "Pulsa empezar y di algo. Lo que digas aparece mientras lo dices.",
+    "requires": "Necesita micrófono y el grafo de voz corriendo: skills/asr, skills/llm-chat, skills/sentence-chunker y skills/tts.",
+    "insecureContext": "El micrófono necesita un contexto seguro. localhost vale; una dirección de LAN por http:// plano no — usa https o abre la UI en la propia máquina.",
+    "unknownError": "algo falló"
+  }
+}
