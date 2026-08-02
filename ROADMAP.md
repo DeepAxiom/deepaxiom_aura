@@ -467,6 +467,194 @@ hechos, y por eso siguen marcados como pendientes en vez de darse por buenos.
   estar completo antes.
 
 ---
+
+## Horizonte · La red (post-Fase 3, sin fecha)
+
+**Esto no es la beta.** Todo lo de arriba (Fases 0-3) es lo que hace que `aura
+up` sea seguro de correr hoy. Lo que sigue es otra pregunta: qué necesita
+AURA para dejar de ser *lo que un operador instala* y pasar a ser *lo que
+varias organizaciones que no se conocen usan para probarse cosas entre sí*.
+Ninguna fase de acá abajo tiene fecha ni compromiso — tiene orden y criterio
+de salida, igual que las anteriores, porque eso es lo único que este
+documento promete alguna vez.
+
+Renumera desde Fase 3 para no chocar con las fases ya comprometidas arriba.
+Cinco reglas valen para las cinco fases siguientes, sin excepción:
+
+1. **Todo cambio a C1-C4 es aditivo**, versión menor — igual que todo lo
+   construido hasta hoy. Si una fase de acá abajo necesitara romper un
+   contrato ya congelado, esa fase está mal diseñada, no el contrato.
+2. **Ninguna fase empieza sin que la anterior cumpla su criterio de salida**
+   verificable. No hay trabajo en paralelo que se adelante — salvo que se
+   demuestre por qué un criterio es innecesario, y eso se escribe acá, no se
+   omite en silencio.
+3. **`motor.actuator.*` nunca es waivable por política**, sin flag, sin modo,
+   sin excepción operativa. Es una regla dura del kernel, no una
+   configuración — la única razón real para esa dureza en la sección Fase 7.
+4. **La Fase 6 (`motor.self.*`) no se activa por defecto sin el executor Wasm
+   de la Fase 3.** Sin sandbox, un skill que se auto-modifica corre con los
+   mismos privilegios que cualquier otro `motor.*` hoy — proceso, sin
+   aislamiento — así que declarar el tipo de efecto sin el sandbox no cambia
+   el riesgo, solo lo nombra. Eso se documenta en el propio `skill.yaml` como
+   una advertencia, no un bloqueo automático nuevo — la Fase 3 ya resuelve
+   esto mejor que un gate ad hoc.
+5. **Cada fase se prueba igual que las anteriores**: cobertura de Go donde
+   aplique, un job de CI adversarial donde el invariante importa, y —siendo
+   coherentes con la Fase 1— nada se declara "hecho" sin un test que lo
+   demuestre atacándolo, no solo ejercitándolo en el camino feliz.
+
+### Fase 4 · Gobernanza del protocolo y el nombre
+
+**Por qué primero:** ninguna organización ajena a Deep Axiom va a correr un
+nodo propio, ni va a co-firmar el checkpoint de nadie, mientras el protocolo
+que ese nodo implementa sea "lo que una persona decide". Esto no se resuelve
+con más código — se resuelve con menos control unilateral.
+
+Qué se construye:
+
+- **`spec/GOVERNANCE.md`** — quién puede proponer un cambio a C1-C4, quién lo
+  revisa, cuánto dura el período de comentario, y bajo qué regla se acepta.
+  Un RFC versionado por contrato (`C1-RFC-001`, …), no un PR que un solo
+  maintainer aprueba.
+- **Al menos un steward externo** con permiso de merge sobre `spec/` — no
+  sobre `kernel/`, sobre el contrato. Kernel y SDKs siguen siendo
+  implementaciones del contrato, no el contrato mismo — eso ya lo dice la
+  arquitectura de hoy, esto lo hace cierto en los permisos del repo.
+- **Resolución del choque de nombre.** Un nombre de protocolo distinguible
+  del de Mezmo AURA y del de "Deep Axiom" — el protocolo y la empresa que
+  mantiene la implementación de referencia no deberían compartir identidad,
+  por la misma razón que C1-C4 no deberían depender de que Deep Axiom exista.
+
+**Criterio de salida:**
+
+| # | Criterio |
+|---|---|
+| 1 | `spec/GOVERNANCE.md` publicado y enlazado desde `README.md` |
+| 2 | Al menos un colaborador externo a Deep Axiom con permiso de merge sobre `spec/` |
+| 3 | Un RFC real (no de ejemplo) propuesto y resuelto siguiendo el proceso documentado |
+| 4 | Nombre de protocolo decidido y comunicado — con o sin cambio de marca del kernel |
+
+### Fase 5 · Ledger cross-witnessed + federación descubrible
+
+**Por qué en este orden:** es la infraestructura que convierte "somos una
+red" de afirmación a algo que un tercero puede verificar. Sin esto, federar
+dos nodos sigue significando "confío en el operador del otro" — exactamente
+el límite de confianza que la Fase 1 ya eliminó *dentro* de un nodo, pero
+nunca *entre* nodos.
+
+Qué se construye:
+
+- **`witness` en el checkpoint (extensión aditiva de C4).** Cuando dos nodos
+  están federados, cada uno ofrece el hash de su checkpoint más reciente al
+  otro para que lo co-firme con su propia clave Ed25519 — misma cadencia que
+  ya existe (100 entradas o 60s). El witness se guarda junto al checkpoint
+  propio; no lo reemplaza.
+- **`aura verify` extendido** para chequear witnesses cuando existen: la
+  firma del witness tiene que validar contra la clave pública del nodo
+  remoto, registrada al momento de federar — trust-on-first-use, el mismo
+  patrón que ya usa el registro de paquetes para el `id` de un skill.
+- **Federación descubrible.** El A2A card en `/.well-known/agent.json`
+  (ya existe) gana un campo de federación: qué capacidades ofrece un nodo a
+  quién quiera pedirlas, para que `aura federate` deje de requerir que un
+  humano escriba la URL de memoria — un directorio liviano (puede ser el
+  mismo registro federado que ya existe) es donde los nodos se anuncian.
+
+**Criterio de salida:**
+
+| # | Criterio |
+|---|---|
+| 1 | Dos nodos con claves y operadores distintos co-firman el checkpoint del otro, verificable con `aura verify` sin ninguno de los dos corriendo |
+| 2 | Un test adversarial prueba que, si la clave *propia* de un nodo se compromete pero su witness no, `aura verify` sigue detectando la manipulación — ese es el punto entero del witness |
+| 3 | Un nodo nuevo descubre y solicita federación con otro sin que un humano copie una URL a mano |
+
+### Fase 6 · Cuña vertical piloto
+
+**Por qué en este orden:** una red no crece por convicción arquitectónica —
+crece porque alguien necesita, este trimestre, probarle algo a otra
+organización que no confía en su palabra. El Artículo 12 del EU AI Act
+(trazabilidad de decisiones de IA, vigente desde agosto de 2026) es el
+forzador de adopción real; no hace falta inventar uno.
+
+Qué se construye:
+
+- **Un flujo real, no una demo** — 3 a 5 organizaciones de un mismo sector
+  regulado (salud, banca, gobierno) con un caso donde hoy no se confían entre
+  sí y necesitan probarlo ante un tercero (un regulador, un auditor, una
+  contraparte contractual).
+- **Un kit de despliegue de referencia para ese caso** — paquete de skills +
+  plantilla de policy + script de federación, versionado y publicado como
+  cualquier otro paquete del registro.
+- Nada de esto es kernel nuevo — es la Fase 4 y la Fase 5 puestas a prueba
+  contra organizaciones reales que no son Deep Axiom.
+
+**Criterio de salida:**
+
+| # | Criterio |
+|---|---|
+| 1 | 3+ nodos de organizaciones distintas, operando de forma independiente, federados y co-firmándose |
+| 2 | Un revisor externo a las tres organizaciones (el regulador o auditor del caso elegido) verifica el ledger combinado offline, sin confiar en ningún operador individual |
+| 3 | El kit de despliegue está publicado en el registro federado, no solo documentado |
+
+### Fase 7 · `motor.self.*` y `motor.actuator.*`
+
+**Por qué en este orden, y no antes:** generalizar qué tipo de efecto pasa
+por el checkpoint del kernel solo vale la pena una vez que hay una red que
+verifica lo que ese checkpoint certifica. Un nodo aislado que se
+auto-modifica o mueve un brazo no necesita nada de esto — necesita la Fase 3
+(sandbox) primero, y un testigo después.
+
+Qué se construye:
+
+- **`motor.self.*`** (extensión aditiva de C1, ningún cambio de kernel): un
+  skill `cognitive` o `logical` lee el causal log (`aura why` ya expone
+  esto), propone un parche a un grafo o a otro skill, y esa propuesta entra
+  al kernel como cualquier edge hacia un `motor.*` — gateada, sellada,
+  reversible por `aura undo` (Fase 2) si `aura replay` prueba después que
+  empeoró algo. Sin camino especial.
+- **`motor.actuator.*`** (extensión aditiva de C1 + una regla nueva y dura en
+  `executor/policy.go`): `GraphWaiverAllowed` devuelve `false` incondicional
+  para cualquier capability bajo este prefijo, sin importar lo que diga la
+  policy cargada — la única excepción a "el nodo decide" en todo el sistema,
+  y se justifica exactamente una vez, acá: un efecto físico irreversible no
+  admite el mismo margen que hablar en voz alta.
+
+**Criterio de salida:**
+
+| # | Criterio |
+|---|---|
+| 1 | Un test adversarial prueba que ninguna policy, ni siquiera una escrita a propósito para intentarlo, puede waivear un edge `motor.actuator.*` |
+| 2 | Un ejemplo de punta a punta: un skill se auto-observa, propone un parche, el parche se gatea y se sella, y `aura undo` lo revierte cuando se marca como regresión |
+| 3 | `motor.self.*` está documentado como no-recomendado-por-defecto sin el executor Wasm de la Fase 3, con el aviso viviendo en el propio manifiesto del skill |
+
+### Fase 8 · Gate de settlement generalizado
+
+**Por qué al final:** es el incentivo económico para que a alguien le
+convenga correr un nodo y federarse — pero un incentivo sin red (Fase 5) ni
+casos reales (Fase 6) es una feature sin nadie que la use.
+
+Qué se construye:
+
+- **`gate` deja de ser binario** (extensión aditiva de C2/C3): hoy es
+  `human-approval` o su ausencia; gana variantes tipadas —
+  `settlement:x402`, `settlement:ap2` — resueltas por el mismo punto único
+  del executor que ya aplica `human-approval` hoy. El kernel no aprende qué
+  es un pago; solo aplica una prueba de autorización más, sea cual sea su
+  forma.
+- **`price` opcional en C1** para un skill `motor.*` — declarativo, mismo
+  patrón que `permissions`.
+- **El recibo de C4 carga la prueba de settlement** (hash del recibo de pago)
+  en vez de, o además de, la aprobación humana — mismo campo `receipt`, sin
+  cambiar de forma.
+
+**Criterio de salida:**
+
+| # | Criterio |
+|---|---|
+| 1 | Una llamada federada a un skill remoto con `price` declarado se rechaza sin prueba de settlement válida, y se entrega con una |
+| 2 | La prueba de settlement es verificable offline junto con el resto de la cadena, por `aura verify` |
+| 3 | Un test adversarial prueba que un recibo de settlement reutilizado (replay) se rechaza — mismo principio que ya aplica hoy al ingress de webhooks |
+
+---
 ---
 
 # Roadmap (English)
@@ -689,3 +877,157 @@ Multi-device, `bulk` QoS, binary WebSocket frames, a visual graph editor,
 MQTT/BLE peripherals and a managed cloud — the reasoning for each is in the
 Spanish section above. The cloud is deliberately last: it is just another node,
 and the open runtime has to be complete first.
+
+---
+
+## Horizon · The network (post-Phase 3, no date)
+
+**This is not the beta.** Phases 0-3 above are what make `aura up` safe to
+run today. What follows is a different question: what AURA needs to stop
+being *what one operator installs* and become *what several organizations
+that don't know each other use to prove things to one another*. Nothing
+below has a date — it has order and an exit criterion, same as everything
+above, because that is the only thing this document ever promises.
+
+Numbered onward from Phase 3 so it never collides with the committed phases
+above. Five rules apply to all five phases below, no exceptions — full
+reasoning for each is in the Spanish section:
+
+1. **Every change to C1-C4 is additive**, a minor version — same as
+   everything built so far. A phase below that needed to break a frozen
+   contract would be a badly designed phase, not a reason to break the
+   contract.
+2. **No phase starts before the previous one clears its verifiable exit
+   criterion.** No jumping ahead in parallel, unless a criterion is shown to
+   be unnecessary and that reasoning is written down here, not silently
+   skipped.
+3. **`motor.actuator.*` is never waivable by policy** — no flag, no mode, no
+   operational exception. A hard kernel rule, not a configuration, justified
+   exactly once, in Phase 7.
+4. **Phase 6 (`motor.self.*`) does not activate by default without Phase 3's
+   Wasm executor.** Without a sandbox, a self-modifying skill runs with the
+   same privileges as any other `motor.*` skill today — a process, no
+   isolation — so declaring the effect type without the sandbox names the
+   risk without changing it. That is documented as a warning in the skill's
+   own manifest, not a new ad hoc gate — Phase 3 already solves this better.
+5. **Every phase is tested the same way as the ones above it**: Go coverage
+   where it applies, an adversarial CI job where the invariant matters, and
+   — consistent with Phase 1 — nothing is called done without a test that
+   attacks it, not one that only exercises the happy path.
+
+### Phase 4 · Protocol governance and the name
+
+**Why first:** no organization outside Deep Axiom is going to run its own
+node, let alone co-sign anyone else's checkpoint, while the protocol that
+node implements is "whatever one person decides." Code doesn't fix this —
+giving up unilateral control does.
+
+- `spec/GOVERNANCE.md` — who proposes a change to C1-C4, who reviews it, and
+  under what rule it's accepted. A versioned RFC per contract, not a PR one
+  maintainer approves alone.
+- At least one external steward with merge rights on `spec/` — the contract,
+  not the kernel. Kernel and SDKs stay implementations of the contract, same
+  as today; this makes that true in the repo's permissions, not just in prose.
+- The name collision resolved — a protocol identity distinguishable from
+  both Mezmo's AURA and from Deep Axiom the company.
+
+**Exit criterion:** `GOVERNANCE.md` published and linked from `README.md`;
+at least one external merge-right holder on `spec/`; one real RFC proposed
+and resolved through the documented process; the protocol name decided and
+announced.
+
+### Phase 5 · Cross-witnessed ledger + discoverable federation
+
+**Why in this order:** it's the infrastructure that turns "we are a network"
+from a claim into something a third party can check. Without it, federating
+two nodes still means "I trust the other operator" — the exact trust
+boundary Phase 1 already removed *inside* one node, never removed *between*
+nodes.
+
+- `witness` on the checkpoint (additive C4 extension): federated nodes offer
+  each other their latest checkpoint hash for co-signing, same cadence as
+  today's checkpoint signing. The witness is stored alongside the node's own
+  checkpoint, never replacing it.
+- `aura verify` checks a witness when one exists, against the peer's public
+  key recorded at federation time — trust-on-first-use, the same pattern the
+  package registry already uses.
+- Discoverable federation: the A2A card gains a federation field so a node
+  advertises what it offers to whoever wants to ask — `aura federate` stops
+  requiring a human to type a URL from memory.
+
+**Exit criterion:** two independently-keyed, independently-operated nodes
+co-sign each other's checkpoints, verifiable with neither running; an
+adversarial test proves that a compromised *local* signing key still gets
+caught by an intact witness; a new node discovers and requests federation
+without a human copying a URL by hand.
+
+### Phase 6 · A regulated vertical wedge
+
+**Why in this order:** a network doesn't grow from architectural conviction —
+it grows because someone needs, this quarter, to prove something to another
+organization that doesn't take their word for it. EU AI Act Article 12
+(in force since August 2026) is the real adoption forcer; there's no need to
+invent one.
+
+- A real workflow, not a demo — 3 to 5 organizations in one regulated
+  sector with a case where they don't trust each other today and need to
+  prove something to a third party (a regulator, an auditor, a counterparty).
+- A reference deployment kit for that case — skill bundle + policy template
+  + federation script, versioned and published through the registry like
+  anything else.
+- None of this is new kernel — it's Phase 4 and Phase 5 tested against real
+  organizations that are not Deep Axiom.
+
+**Exit criterion:** 3+ independently-operated nodes from distinct
+organizations, federated and cross-signing; a reviewer external to all
+three verifies the combined ledger offline, trusting no single operator;
+the deployment kit published in the federated registry, not just documented.
+
+### Phase 7 · `motor.self.*` and `motor.actuator.*`
+
+**Why not sooner:** generalizing which effect types pass through the kernel
+checkpoint only pays off once a network exists to verify what that
+checkpoint certifies. An isolated node that rewrites itself or moves an arm
+needs Phase 3's sandbox first, and a witness after — not this.
+
+- `motor.self.*` (additive C1 extension, no kernel change): a `cognitive` or
+  `logical` skill reads the causal log, proposes a patch to a graph or
+  another skill, and that proposal enters the kernel as an ordinary edge
+  into a `motor.*` skill — gated, sealed, reversible by `aura undo` (Phase 2)
+  if `aura replay` later proves it made things worse. No special path.
+- `motor.actuator.*` (additive C1 extension plus one hard new rule in
+  `executor/policy.go`): `GraphWaiverAllowed` returns `false`
+  unconditionally for this prefix regardless of the loaded policy — the one
+  exception to "the node decides" anywhere in the system, justified exactly
+  once: an irreversible physical effect doesn't get the same latitude as
+  speaking out loud.
+
+**Exit criterion:** an adversarial test proves no policy, not even one
+written on purpose to try, can waive a `motor.actuator.*` edge; an
+end-to-end example where a skill observes itself, proposes a patch, the
+patch is gated and sealed, and `aura undo` reverts it once flagged as a
+regression; `motor.self.*` documented as not-recommended-by-default without
+Phase 3's Wasm executor, the warning living in the skill's own manifest.
+
+### Phase 8 · A generalized settlement gate
+
+**Why last:** it's the economic reason to run a node and federate — but an
+incentive with no network (Phase 5) and no real cases (Phase 6) is a feature
+nobody uses.
+
+- `gate` stops being binary (additive C2/C3 extension): today it's
+  `human-approval` or its absence; it gains typed variants —
+  `settlement:x402`, `settlement:ap2` — resolved at the same single
+  checkpoint that already applies `human-approval` today. The kernel never
+  learns what a payment is; it just applies one more proof of authorization,
+  whatever shape it takes.
+- Optional `price` in C1 for a `motor.*` skill — declarative, same pattern
+  as `permissions`.
+- C4's receipt carries the settlement proof (a payment receipt hash) instead
+  of, or alongside, human approval — same `receipt` field, same shape.
+
+**Exit criterion:** a federated call to a remote skill with `price` declared
+is refused without valid settlement proof and delivered with one; the
+settlement proof verifies offline alongside the rest of the chain; an
+adversarial test proves a replayed settlement receipt is rejected — the same
+principle already applied to webhook ingress today.
