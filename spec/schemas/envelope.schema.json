@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:spec:envelope@1",
+  "title": "C3 Channel Envelope",
+  "type": "object",
+  "required": ["v", "id", "kind"],
+  "properties": {
+    "v": { "const": "1" },
+    "id": { "type": "string", "minLength": 1 },
+    "cause_id": { "type": "string" },
+    "session": { "type": "string" },
+    "node": { "type": "string" },
+    "port": { "type": "string" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "idem": { "type": "string" },
+    "schema": { "type": "string" },
+    "kind": { "enum": ["data", "done", "error", "status", "register", "confirm_request", "confirm_response", "cancel", "config_update"] },
+    "payload": {},
+    "receipt": { "type": "string", "description": "C4: hash of the ledger entry that sealed this effect. Present only on an envelope delivered into a motor.* skill." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "data" } } },
+      "then": { "required": ["session", "node", "port", "seq", "idem", "schema", "payload"] }
+    }
+  ]
+}

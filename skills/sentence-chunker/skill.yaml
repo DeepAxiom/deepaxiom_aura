@@ -1,0 +1,62 @@
+id: "deepaxiom/logical/sentence-chunker"
+version: "1.0.0"
+protocol: "1"
+
+name: "Sentence chunker"
+description: "Groups a token-by-token text stream into whole clauses. Put it between a streaming LLM and anything that works in utterances — a speech synthesiser, a translator, a moderator — so the consumer is handed sentences instead of one envelope per token."
+capability: "logical.text.sentence_chunk"
+type: logical
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: text_in
+      schema: "std/text@1"
+  egress:
+    - name: text_out
+      schema: "std/text@1"
+
+requirements:
+  memory: "32Mi"
+  accelerator: none
+
+permissions:
+  egress_http: []
+  filesystem: none
+  channels: declared-only
+
+config:
+  - key: "first_clause_chars"
+    type: int
+    default: 10
+    min: 1
+    max: 200
+    description: "Minimum length of the FIRST clause of a reply. Deliberately short: time-to-first-sound is what a conversation is judged on, and the listener has heard nothing yet."
+  - key: "min_chars"
+    type: int
+    default: 30
+    min: 1
+    max: 500
+    description: "Minimum length of every clause after the first. Longer than the first on purpose — the listener is already hearing something, and a synthesiser needs a longer span for natural prosody."
+  - key: "max_chars"
+    type: int
+    default: 240
+    min: 20
+    max: 2000
+    description: "Flush at this length even with no punctuation in sight, so unpunctuated prose still gets spoken."
+  - key: "max_wait_ms"
+    type: int
+    default: 400
+    min: 50
+    max: 10000
+    description: "Flush a short clause if the producer has gone this long without a token. Evaluated when the next token arrives, so a producer that stops without sending final leaves its tail unflushed."
+  - key: "boundary_chars"
+    type: string
+    default: ".!?;:,…"
+    description: "Characters a clause may end on. Remove commas for longer, better-sounding spans at the cost of a slower first sound."
+
+signature: null

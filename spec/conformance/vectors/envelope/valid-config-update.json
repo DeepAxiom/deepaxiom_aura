@@ -1,0 +1,6 @@
+{
+  "v": "1",
+  "id": "01J9ZK3V7QABCDEFGHJKMNPQRX",
+  "kind": "config_update",
+  "payload": { "temperature": 0.3, "max_tokens": 2048 }
+}

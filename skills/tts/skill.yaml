@@ -1,0 +1,52 @@
+id: "deepaxiom/motor/tts"
+version: "1.1.0"
+protocol: "1"
+
+name: "Text to speech"
+description: "Speaks a clause of text. Emits PCM in ~200ms chunks for a client that plays as it arrives, and the whole clause as a WAV for anything that wants a file. Put skills/sentence-chunker in front of a streaming LLM, or this synthesises once per token. Degradation chain: piper (if installed) then OS voices (SAPI/espeak)."
+capability: "motor.tts.speak"
+type: motor
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: text_in
+      schema: "std/text@1"
+  egress:
+    # For a live listener. Emitted whatever the backend is, so the client's
+    # playback path does not depend on which engine is installed — only the
+    # latency does.
+    - name: audio_chunk_out
+      schema: "std/audio-chunk@1"
+    # For anything that wants a file rather than a stream.
+    - name: audio_out
+      schema: "std/document@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "256Mi"
+  accelerator: none
+
+permissions:
+  egress_http: []
+  filesystem: "write:~/.aura/tmp"
+  channels: declared-only
+
+config:
+  - key: "voice"
+    type: string
+    default: ""
+    description: "Substring matched against installed voice names. Empty uses the system default."
+  - key: "rate"
+    type: int
+    default: 175
+    min: 60
+    max: 400
+    description: "Words per minute for the OS voice engine. Ignored by piper, which carries its own speaking rate in the model."
+
+signature: null

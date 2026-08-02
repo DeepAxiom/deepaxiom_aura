@@ -1,0 +1,32 @@
+id: "deepaxiom/motor/model-manager"
+version: "1.0.0"
+protocol: "1"
+
+name: "Model manager"
+description: "Manages local models in ~/.aura/models: list installed, browse a curated catalog, search Hugging Face, download any repo file, delete. Actions: list | catalog | search | download | delete."
+capability: "motor.models.manage"
+type: motor
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: command_in
+      schema: "deepaxiom/model-command@1"
+  egress:
+    - name: result_out
+      schema: "deepaxiom/model-result@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "256Mi"
+  accelerator: none
+
+permissions:
+  egress_http: ["huggingface.co", "cdn-lfs.huggingface.co"]
+  filesystem: "write:~/.aura/models"
+  channels: declared-only

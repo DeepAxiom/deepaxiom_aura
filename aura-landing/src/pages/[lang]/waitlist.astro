@@ -1,0 +1,300 @@
+---
+// src/pages/[lang]/waitlist.astro
+import Layout from '../../layouts/Layout.astro';
+import { ui, defaultLang, languages, githubUrl } from '../../i18n/ui';
+
+export async function getStaticPaths() {
+  return Object.keys(languages).map((lang) => ({ params: { lang } }));
+}
+
+const { lang = defaultLang } = Astro.params;
+const t = (key) => ui[lang][key] || ui[defaultLang][key];
+
+// Mapeo de intereses para generar las tarjetas
+const interestKeys = ['forge', 'studio', 'health', 'logistics', 'general'];
+---
+
+<Layout title={t('seo.waitlist.title')} description={t('seo.waitlist.description')}>
+  
+  <div class="flex flex-col md:flex-row min-h-screen bg-aura-dark text-white overflow-hidden">
+        
+    <!-- SIDEBAR IZQUIERDO (Contexto) -->
+    <aside class="w-full md:w-1/3 p-8 md:p-12 flex flex-col justify-between border-b md:border-b-0 md:border-r border-white/10 relative overflow-hidden bg-[#050505]">
+        <!-- Efectos de luz -->
+        <div class="absolute top-0 left-0 w-full h-full bg-aura-blue/5 pointer-events-none"></div>
+        <div class="absolute bottom-[-10%] right-[-10%] w-[300px] h-[300px] bg-aura-red/10 rounded-full blur-[80px]"></div>
+
+        <div class="relative z-10">
+            <a href={`/${lang}/`} class="block mb-12 opacity-80 hover:opacity-100 transition-opacity">
+                 <img src="/logo.svg" alt="Deep Axiom" class="h-8 w-auto"> 
+            </a>
+
+            <div class="mb-2 text-xs font-bold text-aura-red uppercase tracking-[0.2em]">
+                {t('waitlist.badge')} <span id="current-step-label" class="text-white text-lg ml-1">1</span> <span class="text-white/40 mx-1">/</span> 2
+            </div>
+
+            <h2 class="text-3xl md:text-4xl font-bold text-white mb-6 leading-tight">
+                {t('waitlist.title')}
+            </h2>
+            <p class="text-gray-400 text-lg leading-relaxed border-l-2 border-white/10 pl-4 mb-8">
+                {t('waitlist.subtitle')}
+            </p>
+            <a href={githubUrl} target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 text-sm font-semibold text-aura-blue hover:text-white transition-colors">
+                {t('waitlist.getStartedNow')}
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path></svg>
+            </a>
+        </div>
+
+        <!-- Barra de Progreso -->
+        <div class="relative z-10 hidden md:block w-full bg-white/5 h-1 rounded-full mt-12 overflow-hidden border border-white/5">
+            <div id="progress-bar" class="bg-gradient-to-r from-aura-red to-aura-blue h-full w-[50%] transition-all duration-500 ease-out shadow-[0_0_10px_rgba(210,7,7,0.8)]"></div>
+        </div>
+    </aside>
+
+    <!-- ÁREA PRINCIPAL DERECHA -->
+    <main class="w-full md:w-2/3 p-6 md:p-12 relative flex flex-col justify-center min-h-[600px]">
+        
+        <form id="waitlist-form" class="flex-grow max-w-2xl mx-auto w-full flex flex-col justify-center relative z-10">
+            
+            <!-- PASO 1: CONTACTO -->
+            <div class="form-step" data-step="1">
+                <div class="mb-8">
+                    <h3 class="text-2xl font-bold text-white mb-2">{t('waitlist.step1.title')}</h3>
+                    <p class="text-gray-400">{t('waitlist.step1.subtitle')}</p>
+                </div>
+
+                <div class="space-y-6">
+                    <div>
+                        <label for="email" class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-widest">{t('waitlist.form.email')}</label>
+                        <input type="email" name="email" id="email" required class="w-full h-16 px-6 rounded-xl bg-white/5 border border-white/10 focus:border-aura-blue focus:ring-1 focus:ring-aura-blue text-white text-lg transition-all outline-none placeholder-white/20">
+                    </div>
+
+                    <div>
+                        <label for="whatsapp" class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-widest">{t('waitlist.form.whatsapp')}</label>
+                        <input type="tel" name="whatsapp" id="whatsapp" class="w-full h-16 px-6 rounded-xl bg-white/5 border border-white/10 focus:border-aura-blue focus:ring-1 focus:ring-aura-blue text-white text-lg transition-all outline-none placeholder-white/20">
+                    </div>
+                </div>
+            </div>
+
+            <!-- PASO 2: INTERESES (GRID) -->
+            <div class="form-step hidden" data-step="2">
+                <div class="mb-8">
+                    <h3 class="text-2xl font-bold text-white mb-2">{t('waitlist.form.interests')}</h3>
+                    <p class="text-gray-400">{t('waitlist.step2.subtitle')}</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {interestKeys.map((key) => (
+                        <label class="cursor-pointer group relative">
+                            <input type="checkbox" name="interests" value={key} class="peer sr-only">
+                            <div class="p-5 rounded-xl border border-white/10 bg-white/5 hover:border-aura-red/50 hover:bg-white/10 peer-checked:border-aura-red peer-checked:bg-aura-red/10 transition-all duration-300 h-full flex items-center">
+                                <!-- Checkbox visual -->
+                                <div class="w-5 h-5 rounded border border-white/30 peer-checked:bg-aura-red peer-checked:border-aura-red mr-4 flex items-center justify-center transition-colors">
+                                    <svg class="w-3 h-3 text-white opacity-0 peer-checked:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                                </div>
+                                <span class="font-medium text-white/80 group-hover:text-white select-none">
+                                    {t(`waitlist.form.interest.${key}`)}
+                                </span>
+                            </div>
+                        </label>
+                    ))}
+                </div>
+            </div>
+
+        </form>
+
+        <!-- BOTONES DE NAVEGACIÓN -->
+        <div id="nav-buttons" class="mt-10 pt-6 border-t border-white/5 flex justify-between items-center max-w-2xl mx-auto w-full relative z-10">
+            <button id="btn-back" class="text-gray-500 font-semibold hover:text-white px-4 py-2 invisible transition-colors flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                {t('waitlist.back')}
+            </button>
+            <button id="btn-next" class="bg-white text-black px-10 py-4 rounded-full font-bold hover:scale-105 transition-all shadow-[0_0_15px_rgba(255,255,255,0.3)] disabled:opacity-50 disabled:cursor-not-allowed">
+                {t('waitlist.next')}
+            </button>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- PANTALLA DE ÉXITO (Misma UX que Sales) -->
+        <!-- ============================================ -->
+        <div id="success-view" class="hidden flex-grow w-full flex-col items-center justify-center text-center p-8 animate-fade-in">
+            
+            <!-- Logo Brillante -->
+            <div class="relative w-40 h-40 mb-10 flex items-center justify-center">
+                    <div class="absolute inset-0 bg-gradient-to-tr from-aura-red to-purple-600 blur-[60px] opacity-60 animate-pulse rounded-full"></div>
+                    <img 
+                        src="/logo.svg" 
+                        alt="Deep Axiom" 
+                        class="relative z-10 w-full h-full object-contain drop-shadow-[0_0_25px_rgba(255,255,255,0.5)]"
+                    >
+            </div>
+            
+            <h2 class="text-4xl md:text-5xl font-bold text-white mb-6 tracking-tight drop-shadow-xl">
+                {t('waitlist.form.success')}
+            </h2>
+            
+            <div class="w-24 h-1 bg-gradient-to-r from-aura-red to-aura-blue mx-auto mb-8 rounded-full"></div>
+            
+            <p class="text-xl md:text-2xl text-gray-300 mb-12 max-w-lg mx-auto leading-relaxed font-light">
+                {t('waitlist.success.desc')}
+                <span class="inline-block ml-2 text-2xl">☕</span>
+            </p>
+            
+            <!-- Botón de regreso -->
+            <a href={`/${lang}/`} class="group relative inline-flex items-center justify-center px-10 py-4 font-bold text-white transition-all duration-300 bg-white/5 border border-white/20 rounded-full hover:bg-white/10 hover:scale-105 hover:shadow-[0_0_30px_rgba(210,7,7,0.4)] overflow-hidden">
+                <span class="relative z-10 flex items-center gap-3">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                    {t('waitlist.success.home')}
+                </span>
+                <div class="absolute inset-0 h-full w-full scale-0 rounded-full transition-all duration-500 group-hover:scale-100 group-hover:bg-gradient-to-r group-hover:from-aura-red/20 group-hover:to-transparent"></div>
+            </a>
+        </div>
+
+    </main>
+  </div>
+</Layout>
+
+<script define:vars={{ lang, defaultLang, textRegister: t('waitlist.form.button'), textContinue: t('waitlist.next'), textConnecting: t('waitlist.connecting'), textError: t('waitlist.error') }}>
+  let currentStep = 1;
+  const totalSteps = 2; // Solo 2 pasos para la waitlist
+
+  const form = document.getElementById('waitlist-form');
+  const btnNext = document.getElementById('btn-next');
+  const btnBack = document.getElementById('btn-back');
+  const navButtons = document.getElementById('nav-buttons');
+  const steps = document.querySelectorAll('.form-step');
+  const progressBar = document.getElementById('progress-bar');
+  const stepLabel = document.getElementById('current-step-label');
+
+  function updateView() {
+      // 1. Mostrar el paso actual
+      steps.forEach(step => {
+          if(parseInt(step.dataset.step) === currentStep) {
+              step.classList.remove('hidden');
+              step.animate([
+                  { opacity: 0, transform: 'translateY(10px)' },
+                  { opacity: 1, transform: 'translateY(0)' }
+              ], { duration: 400, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' });
+          } else {
+              step.classList.add('hidden');
+          }
+      });
+
+      // 2. Actualizar Sidebar
+      stepLabel.innerText = currentStep;
+      
+      const progress = (currentStep / totalSteps) * 100;
+      progressBar.style.width = `${progress}%`;
+
+      // 3. Botones
+      btnBack.style.visibility = currentStep === 1 ? 'hidden' : 'visible';
+      
+      if (currentStep === totalSteps) {
+          btnNext.innerText = textRegister;
+          btnNext.className = "bg-gradient-to-r from-aura-red to-aura-blue text-white px-10 py-4 rounded-full font-bold hover:scale-105 transition-all shadow-[0_0_20px_rgba(210,7,7,0.6)]";
+      } else {
+          btnNext.innerText = textContinue;
+          btnNext.className = "bg-white text-black px-10 py-4 rounded-full font-bold hover:scale-105 transition-all shadow-[0_0_15px_rgba(255,255,255,0.3)]";
+      }
+  }
+
+  function validateStep() {
+      const currentStepEl = document.querySelector(`.form-step[data-step="${currentStep}"]`);
+      const inputs = currentStepEl.querySelectorAll('input');
+      let isValid = true;
+
+      inputs.forEach(input => {
+          if (input.hasAttribute('required') && !input.value) isValid = false;
+          if (input.type === 'email' && input.value && !input.value.includes('@')) isValid = false;
+      });
+
+      return isValid;
+  }
+
+  btnNext.addEventListener('click', async (e) => {
+      e.preventDefault();
+      
+      if (!validateStep()) {
+          // Animación de "shake" suave si falla validación
+          btnNext.animate([
+              { transform: 'translateX(0)' },
+              { transform: 'translateX(-5px)' },
+              { transform: 'translateX(5px)' },
+              { transform: 'translateX(0)' }
+          ], { duration: 300 });
+          return;
+      }
+
+      if (currentStep < totalSteps) {
+          currentStep++;
+          updateView();
+      } else {
+          // ENVIAR FORMULARIO
+          btnNext.disabled = true;
+          btnNext.innerText = textConnecting;
+
+          const formData = new FormData(form);
+          
+          const clientMetadata = {
+            language: navigator.language || navigator.userLanguage,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            screenResolution: `${window.screen.width}x${window.screen.height}`,
+            localTime: new Date().toString(),
+            pageLang: lang || defaultLang
+          };
+
+          const payload = {
+            email: formData.get('email'),
+            whatsapp: formData.get('whatsapp'),
+            interests: formData.getAll('interests'),
+            clientMetadata: clientMetadata
+          };
+
+          try {
+            // Usamos la API existente de waitlist
+            const response = await fetch(`/api/addToWaitlist`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) throw new Error('Error en servidor');
+
+            // ÉXITO
+            form.classList.add('hidden');
+            navButtons.classList.add('hidden');
+            
+            const successView = document.getElementById('success-view');
+            successView.classList.remove('hidden');
+            successView.classList.add('flex');
+            
+            progressBar.style.width = '100%';
+
+          } catch (error) {
+            console.error(error);
+            btnNext.disabled = false;
+            btnNext.innerText = textError;
+          }
+      }
+  });
+
+  btnBack.addEventListener('click', () => {
+      if (currentStep > 1) {
+          currentStep--;
+          updateView();
+      }
+  });
+
+  // Inicializar
+  updateView();
+</script>
+
+<style>
+    .animate-fade-in {
+        animation: fadeIn 0.8s ease-out forwards;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+    }
+</style>

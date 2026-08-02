@@ -1,0 +1,7 @@
+{
+  "ir": "99",
+  "graph_id": "vector-invalid-major",
+  "origin": { "kind": "declared" },
+  "nodes": [{ "ref": "eco", "resolve": "logical.echo" }],
+  "edges": [{ "from": "client.text_out", "to": "eco.text_in" }]
+}

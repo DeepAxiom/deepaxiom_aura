@@ -1,0 +1,32 @@
+id: "deepaxiom/cognitive/planner"
+version: "1.0.0"
+protocol: "1"
+
+name: "Planner"
+description: "Turns a natural-language goal into an executable IR graph: reads the live skill catalog, chooses which skills to use and with which parameters, and compiles the plan. Edges into motor skills carry a human-approval gate."
+capability: "cognitive.planner"
+type: cognitive
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: goal_in
+      schema: "std/text@1"
+  egress:
+    - name: plan_out
+      schema: "std/plan@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "4Gi"
+  accelerator: any
+
+permissions:
+  egress_http: ["localhost"]     # kernel catalog; LLM APIs if configured
+  filesystem: "read:~/.aura/models"
+  channels: declared-only

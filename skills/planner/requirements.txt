@@ -1,0 +1,4 @@
+websockets>=12.0
+pyyaml>=6.0
+# optional depending on backend:
+# llama-cpp-python>=0.3   (local backend)

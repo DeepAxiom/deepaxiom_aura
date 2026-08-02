@@ -1,0 +1,7 @@
+{
+  "ir": "1",
+  "graph_id": "vector-invalid-unknown-ref",
+  "origin": { "kind": "declared" },
+  "nodes": [{ "ref": "eco", "resolve": "logical.echo" }],
+  "edges": [{ "from": "fantasma.out", "to": "eco.text_in" }]
+}

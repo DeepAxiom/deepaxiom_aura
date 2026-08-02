@@ -1,0 +1,167 @@
+---
+// src/layouts/BlogPostLayout.astro
+import Layout from './Layout.astro';
+import Header from '../components/Header.astro';
+
+export interface Props {
+  frontmatter: {
+    title: string;
+    description: string;
+    pubDate: Date;
+    author: string;
+    image?: string;
+    imageAlt?: string;
+    tags?: string[];
+  };
+}
+
+const { frontmatter } = Astro.props;
+const { url, site } = Astro;
+
+// 1. Detección de Idioma basada en URL
+const lang = url.pathname.startsWith('/en') ? 'en' : 'es';
+const locale = lang === 'en' ? 'en-US' : 'es-MX';
+
+// 2. Generación de URLs Absolutas (Crítico para SEO técnico)
+const canonicalURL = new URL(url.pathname, site);
+const imageURL = frontmatter.image ? new URL(frontmatter.image, site) : null;
+
+// 3. Construcción de Schema.org (JSON-LD)
+const articleSchema = {
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": frontmatter.title,
+  "description": frontmatter.description,
+  "image": imageURL ? imageURL.toString() : undefined,
+  "author": {
+    "@type": "Organization", // O "Person" si prefieres
+    "name": frontmatter.author || "Deep Axiom Team",
+    "url": site ? site.toString() : "https://deepaxiom.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Deep Axiom",
+    "logo": {
+      "@type": "ImageObject",
+      "url": new URL("/logo.svg", site).toString()
+    }
+  },
+  "datePublished": frontmatter.pubDate.toISOString(),
+  "inLanguage": locale,
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": canonicalURL.toString()
+  }
+};
+---
+
+<Layout title={frontmatter.title} description={frontmatter.description}>
+    <!-- Inyección de Schema para Robots de Búsqueda -->
+    <script type="application/ld+json" set:html={JSON.stringify(articleSchema)} />
+
+    <Header />
+  
+    <article class="pt-32 pb-24 min-h-screen bg-aura-dark relative overflow-hidden" itemscope itemtype="https://schema.org/BlogPosting">
+        <!-- Luz de fondo ambiental -->
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] bg-aura-blue/10 blur-[120px] rounded-full pointer-events-none"></div>
+
+        <div class="container mx-auto px-4 max-w-3xl relative z-10">
+        
+            <!-- Header del Artículo -->
+            <header class="mb-12 text-center">
+                
+                <!-- Tags con Efecto Shimmer -->
+                <div class="flex flex-wrap justify-center gap-3 mb-8">
+                    {frontmatter.tags && frontmatter.tags.map(tag => (
+                        <span class="shimmer-tag relative overflow-hidden text-xs font-bold uppercase tracking-widest text-white border border-white/20 px-4 py-1.5 rounded-full select-none">
+                            <span class="relative z-10">{tag}</span>
+                            <div class="absolute inset-0 z-0 bg-gradient-to-r from-transparent via-aura-blue/60 to-transparent opacity-50 shimmer-anim"></div>
+                        </span>
+                    ))}
+                </div>
+
+                <h1 class="text-4xl md:text-5xl font-bold text-white mb-6 leading-tight drop-shadow-xl" itemprop="headline">
+                    {frontmatter.title}
+                </h1>
+                
+                <div class="flex items-center justify-center gap-4 text-muted text-sm font-mono">
+                    <!-- Fecha Semántica -->
+                    <time datetime={frontmatter.pubDate.toISOString()} itemprop="datePublished">
+                        {frontmatter.pubDate.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' })}
+                    </time>
+                    <span class="text-aura-red">•</span>
+                    <span itemprop="author">{frontmatter.author}</span>
+                </div>
+            </header>
+
+            <!-- Imagen Destacada -->
+            {frontmatter.image && (
+                <div class="rounded-2xl overflow-hidden border border-white/10 mb-12 shadow-[0_0_40px_rgba(48,5,134,0.3)] group relative">
+                    <img 
+                        src={frontmatter.image} 
+                        alt={frontmatter.imageAlt || frontmatter.title} 
+                        class="w-full h-auto object-cover transition-transform duration-700 group-hover:scale-105" 
+                        itemprop="image"
+                    />
+                    <!-- Overlay sutil para integración -->
+                    <div class="absolute inset-0 bg-gradient-to-t from-aura-dark/20 to-transparent pointer-events-none"></div>
+                </div>
+            )}
+
+            <!-- Contenido del Artículo (Typography Plugin Config) -->
+            <div class="prose prose-invert prose-lg max-w-none 
+                prose-headings:font-bold 
+                prose-h1:text-white
+                prose-h2:text-[#F92C85] 
+                prose-h3:text-[#F92C85]
+                prose-h4:text-aura-red
+                prose-p:text-gray-300 prose-p:leading-relaxed
+                prose-a:text-[#52A4FF] hover:prose-a:text-white prose-a:no-underline prose-a:transition-colors
+                prose-strong:text-white prose-strong:font-bold
+                prose-blockquote:border-l-[#F92C85] prose-blockquote:bg-white/5 prose-blockquote:py-4 prose-blockquote:px-6 prose-blockquote:rounded-r-lg prose-blockquote:text-gray-300 prose-blockquote:not-italic
+                prose-code:text-[#F92C85] prose-code:bg-black/50 prose-code:px-2 prose-code:py-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
+                prose-li:text-gray-300
+                prose-img:rounded-xl prose-img:border prose-img:border-white/10 prose-img:shadow-lg">
+                
+                <slot />
+            </div>
+
+            <!-- Footer del Artículo (Opcional: Compartir o Navegación) -->
+            <hr class="border-white/10 my-12" />
+            <div class="text-center">
+                 <a href={`/${lang}/blog`} class="inline-flex items-center text-sm font-bold text-white/60 hover:text-white transition-colors">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    {lang === 'en' ? 'Back to Transmissions' : 'Volver a Transmisiones'}
+                 </a>
+            </div>
+
+        </div>
+    </article>
+</Layout>
+
+<style>
+  /* Animación Shimmer Optimizada */
+  .shimmer-anim {
+    width: 200%;
+    transform: translateX(-100%) skewX(-15deg);
+    animation: shimmer 3s infinite linear;
+    will-change: transform;
+  }
+
+  @keyframes shimmer {
+    0% { transform: translateX(-150%) skewX(-15deg); }
+    50% { transform: translateX(150%) skewX(-15deg); }
+    100% { transform: translateX(150%) skewX(-15deg); } 
+  }
+
+  /* Efecto Hover en Tags */
+  .shimmer-tag {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .shimmer-tag:hover {
+    border-color: rgba(82, 164, 255, 0.8);
+    box-shadow: 0 0 20px rgba(82, 164, 255, 0.4);
+    transform: translateY(-1px);
+  }
+</style>

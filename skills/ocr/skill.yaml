@@ -1,0 +1,32 @@
+id: "deepaxiom/sensorial/ocr"
+version: "1.0.0"
+protocol: "1"
+
+name: "Image OCR"
+description: "Extracts text from images (PNG/JPEG) using ONNX Runtime models (RapidOCR, CPU-friendly). Downloads small models on first use."
+capability: "sensorial.ocr.image"
+type: sensorial
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: image_in
+      schema: "std/document@1"
+  egress:
+    - name: text_out
+      schema: "std/text@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "512Mi"
+  accelerator: none
+
+permissions:
+  egress_http: []
+  filesystem: none
+  channels: declared-only

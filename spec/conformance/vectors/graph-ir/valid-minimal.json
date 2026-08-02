@@ -1,0 +1,10 @@
+{
+  "ir": "1",
+  "graph_id": "vector-valid-minimal",
+  "origin": { "kind": "declared" },
+  "nodes": [{ "ref": "eco", "resolve": "logical.echo" }],
+  "edges": [
+    { "from": "client.text_out", "to": "eco.text_in" },
+    { "from": "eco.text_out", "to": "client.text_in" }
+  ]
+}

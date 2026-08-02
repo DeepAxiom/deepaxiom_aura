@@ -1,0 +1,14 @@
+{
+  "id": "acme/logical/uppercase",
+  "version": "1.0.0",
+  "protocol": "1",
+  "name": "Uppercase",
+  "description": "Converts text to uppercase.",
+  "capability": "logical.uppercase",
+  "type": "logical",
+  "format": "source",
+  "ports": {
+    "ingress": [{ "name": "text_in", "schema": "std/text@1" }],
+    "egress": [{ "name": "text_out", "schema": "std/text@1" }]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "acme/logical/bad",
+  "version": "1.0.0",
+  "protocol": "1",
+  "name": "Bad",
+  "description": "Port without schema — violates C1 rule 2.",
+  "capability": "logical.bad",
+  "type": "logical",
+  "format": "source",
+  "ports": {
+    "ingress": [{ "name": "text_in" }],
+    "egress": []
+  }
+}

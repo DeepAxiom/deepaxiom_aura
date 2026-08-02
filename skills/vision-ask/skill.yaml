@@ -1,0 +1,32 @@
+id: "deepaxiom/cognitive/vision-ask"
+version: "1.0.0"
+protocol: "1"
+
+name: "On-demand vision Q&A"
+description: "Ask a question about what a camera currently sees, right now — not a past event. Name the camera at the start of your message followed by a colon, e.g. 'front_door: is there a package at the door?'. Available cameras: front_door, driveway, backyard, side_gate, street. If you don't name one, the default camera is used. Requires OPENAI_API_KEY pointing at a vision-capable model (Gemini or OpenAI) — there is no local fallback for vision."
+capability: "cognitive.vision.ask"
+type: cognitive
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: question_in
+      schema: "std/text@1"
+  egress:
+    - name: answer_out
+      schema: "std/text@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "256Mi"
+  accelerator: none
+
+permissions:
+  egress_http: ["localhost", "api.openai.com", "generativelanguage.googleapis.com"]
+  filesystem: "none"
+  channels: declared-only

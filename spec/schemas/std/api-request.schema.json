@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:std:api-request@1",
+  "title": "std/api-request@1",
+  "description": "A call into a projected or connected system.",
+  "type": "object",
+  "properties": {
+    "params": {
+      "type": "object"
+    },
+    "query": {
+      "type": "object"
+    },
+    "headers": {
+      "type": "object"
+    },
+    "body": {}
+  }
+}

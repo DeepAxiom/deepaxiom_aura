@@ -1,0 +1,281 @@
+name: CI
+
+# The safety net: nothing merges that breaks the build, the tests, or the
+# conformance suite. See ROADMAP.md, "Foundations".
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    name: kernel (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: kernel/go.sum
+
+      # gofmt is a hard gate; .gitattributes normalises line endings so this
+      # behaves identically on a Windows checkout and here.
+      - name: gofmt
+        working-directory: kernel
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go vet
+        working-directory: kernel
+        run: go vet ./...
+
+      - name: go build
+        working-directory: kernel
+        run: go build ./...
+
+      - name: go test
+        working-directory: kernel
+        run: go test ./... -cover
+
+      # The kernel is concurrent (per-session mutexes, a goroutine writer per
+      # socket), so the race detector earns its keep. It needs cgo, which the
+      # shipped binary deliberately does not use — hence a separate step:
+      # a race report must never be confused with a build problem.
+      - name: go test -race
+        working-directory: kernel
+        env:
+          CGO_ENABLED: '1'
+        run: go test ./... -race
+
+  ui:
+    name: control-plane UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: install
+        working-directory: ui
+        run: npm ci
+
+      - name: build
+        working-directory: ui
+        run: npm run build
+
+      # The kernel embeds ui/dist via go:embed, so a source-only change
+      # would leave the shipped binary out of sync with the source.
+      - name: embedded bundle is up to date
+        run: |
+          if ! git diff --quiet -- kernel/internal/gateway/ui/dist; then
+            echo "ui/ was changed but the embedded bundle was not rebuilt."
+            echo "Run 'npm run build' in ui/ and commit kernel/internal/gateway/ui/dist."
+            git diff --stat -- kernel/internal/gateway/ui/dist
+            exit 1
+          fi
+
+  node-sdk:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: install
+        working-directory: sdk/node
+        run: npm install --no-audit --no-fund
+
+      # The types are generated from spec/schemas. If a contract changed and
+      # this package was not regenerated, its types are already lying.
+      - name: generated types match the frozen schemas
+        working-directory: sdk/node
+        run: npm run check:generated
+
+      - name: build
+        working-directory: sdk/node
+        run: npm run build
+
+      - name: test
+        working-directory: sdk/node
+        run: npm test
+
+  skills:
+    name: first-party skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
+
+      # No model is loaded: these cover the streaming buffer, whose failures
+      # are silent — a mis-ordered chunk yields a worse transcript, never an
+      # error.
+      - name: asr streaming buffer
+        working-directory: skills/asr
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+      - name: sentence chunker
+        working-directory: skills/sentence-chunker
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+  conformance:
+    name: conformance suite (C1/C2/C3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: kernel/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: build the kernel
+        working-directory: kernel
+        run: go build -o aura ./cmd/aura
+
+      - name: install suite dependencies
+        run: pip install websockets jsonschema
+
+      # Black-box, over the raw protocol, against a freshly built binary.
+      # --no-auth because this suite speaks the three contracts, not this
+      # kernel's access control; the adversarial job below is what exercises
+      # that, and it uses a default node precisely so the default is what gets
+      # tested.
+      - name: run a node and check conformance
+        run: |
+          ./kernel/aura up --port 9080 --no-auth --data "$RUNNER_TEMP/aura-data" &
+          node_pid=$!
+          trap 'kill $node_pid 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9080/healthz >/dev/null 2>&1; then break; fi
+            if [ "$i" = "30" ]; then echo "node never became healthy"; exit 1; fi
+            sleep 1
+          done
+
+          python spec/conformance/runner.py --port 9080
+
+          # C4: register a real motor skill, drive two effects through the
+          # actual gate-approval path so the kernel seals them for real, then
+          # edit kernel.db directly — not through any API the node exposes —
+          # and confirm both `aura verify` and GET /v1/ledger/verify say the
+          # chain is no longer sound. Runs against the same node and data dir
+          # the conformance suite just used, rather than standing up a second
+          # one, since sealing an effect needs a live skill and a graph either
+          # way.
+          python scripts/ledger_adversarial.py --port 9080 \
+            --data "$RUNNER_TEMP/aura-data" --aura-binary ./kernel/aura
+
+  adversarial:
+    name: adversarial (the node refuses what it should)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: kernel/go.sum
+
+      - name: build the kernel
+        working-directory: kernel
+        run: go build -o aura ./cmd/aura
+
+      # Runs a real binary with the DEFAULT flags and checks it refuses what it
+      # is meant to refuse: the control surface without a token, a public bind,
+      # a world-readable credential, and a graph whose capability the node's
+      # policy denies. Testing the hardened path while shipping a permissive
+      # default would prove nothing, so the default is what gets tested.
+      - name: a default node refuses what it should
+        run: ./scripts/adversarial.sh ./kernel/aura
+
+  ssot:
+    name: single source of truth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
+
+      # The version lived in three files with two different values, and the
+      # five skill types were written out by hand in a Go regex, a Go slice, a
+      # Python tuple and the JSON Schemas. Drift is not a build error — it is a
+      # skill that registers against one kernel and is rejected by another — so
+      # it has to be caught here or not at all.
+      - name: generated constants match spec/
+        run: python scripts/gen_ssot.py --check
+
+  cross-compile:
+    name: binary (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: windows, goarch: amd64}
+          - {goos: windows, goarch: arm64}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: kernel/go.sum
+
+      # The kernel is pure Go with a cgo-free SQLite driver, which is what
+      # makes "one binary, no external services" true on a Raspberry Pi and a
+      # Jetson as well as on a laptop. The claim is only worth making if every
+      # target is built on every change.
+      - name: build
+        working-directory: kernel
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: go build -o "aura-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/aura
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aura-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: kernel/aura-${{ matrix.goos }}-${{ matrix.goarch }}
+          retention-days: 7
+
+  docs:
+    name: documentation links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Broken relative links are how the docs drifted from the repo before;
+      # this makes that a build failure instead of a reader's problem.
+      - name: no broken relative links
+        run: python scripts/check_links.py

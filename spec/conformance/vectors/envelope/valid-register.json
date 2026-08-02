@@ -1,0 +1,6 @@
+{
+  "v": "1",
+  "id": "01J9ZK3V7QABCDEFGHJKMNPQRT",
+  "kind": "register",
+  "payload": { "id": "acme/logical/uppercase", "version": "1.0.0" }
+}

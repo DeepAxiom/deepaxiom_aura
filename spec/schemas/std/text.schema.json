@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:std:text@1",
+  "title": "std/text@1",
+  "description": "A piece of text. `text` is a DELTA to append: a streaming producer emits one of these per token and terminates with final:true. Consumers concatenate.",
+  "type": "object",
+  "required": [
+    "text"
+  ],
+  "properties": {
+    "text": {
+      "type": "string"
+    },
+    "final": {
+      "type": "boolean",
+      "description": "Last piece of this stream."
+    }
+  }
+}

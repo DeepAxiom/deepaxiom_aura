@@ -1,0 +1,33 @@
+id: "deepaxiom/motor/notify-alert"
+version: "1.0.0"
+protocol: "1"
+
+name: "Alert notifier"
+description: "Delivers an approved vision alert: always writes it to ./alerts/, and additionally calls a Home Assistant notify service if HA_BASE_URL + HA_TOKEN are configured. The only motor skill in the deepaxiom-vision-guard pipeline — the edge feeding it (reasoner.alert_out -> notifier.alert_in, see examples/vision/graph.json) carries a human-approval gate, so nothing is delivered without a human OK."
+capability: "motor.notify.alert"
+type: motor
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: alert_in
+      schema: "std/text@1"
+  egress:
+    - name: alert_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "64Mi"
+  accelerator: none
+
+permissions:
+  # local mode has zero enforcement friction (see README "Security model").
+  # Publishing this skill for site/published mode requires listing your real
+  # Home Assistant host here explicitly — capability-based, unlisted = denied.
+  egress_http: []
+  filesystem: "write:./alerts"
+  channels: declared-only

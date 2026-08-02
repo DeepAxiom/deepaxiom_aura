@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:std:confirmation@1",
+  "title": "std/confirmation@1",
+  "description": "A human-approval gate question (C2 rule 4).",
+  "type": "object",
+  "required": [
+    "question",
+    "options",
+    "held"
+  ],
+  "properties": {
+    "question": {
+      "type": "string"
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "held": {
+      "type": "string",
+      "description": "Id of the envelope being held."
+    }
+  }
+}

@@ -1,0 +1,30 @@
+id: "deepaxiom/motor/tuya-command"
+version: "1.0.0"
+protocol: "1"
+
+name: "Tuya device command"
+description: "Turns a Tuya-connected device on or off by name, e.g. 'cocina: encender' or 'ventilador: apagar'. Acts directly on Tuya's Cloud API under your own project credentials. Every plan through this skill is gated behind human approval automatically (motor policy) — nothing is sent to a real device without an explicit yes."
+capability: "motor.api.tuya.command"
+type: motor
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: command_in
+      schema: "std/text@1"
+  egress:
+    - name: result_out
+      schema: "std/text@1"
+
+requirements:
+  memory: "64Mi"
+  accelerator: none
+
+permissions:
+  egress_http: ["localhost", "openapi.tuyaus.com", "openapi.tuyaeu.com", "openapi.tuyacn.com", "openapi.tuyain.com"]
+  filesystem: "none"
+  channels: declared-only

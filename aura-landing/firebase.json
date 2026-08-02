@@ -1,0 +1,48 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "site": "deepaxiom-aura",
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "redirects": [
+      {
+        "source": "/",
+        "destination": "/es/",
+        "type": 301
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "/api/addToWaitlist",
+        "function": "addToWaitlist"
+      },
+      {
+        "source": "/api/submitProjectRequest",
+        "function": "submitProjectRequest"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ]
+}

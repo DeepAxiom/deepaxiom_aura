@@ -1,0 +1,32 @@
+id: "deepaxiom/sensorial/tuya-status"
+version: "1.0.0"
+protocol: "1"
+
+name: "Tuya device status"
+description: "Reads the current status of a Tuya-connected device (light, plug, switch) by name, e.g. 'cocina' or 'ventilador'. Read-only — always live, no approval needed. Talks directly to Tuya's Cloud API, signed per Tuya's HMAC-SHA256 request signing, using your own TUYA_CLIENT_ID/TUYA_CLIENT_SECRET project credentials — not Home Assistant."
+capability: "sensorial.api.tuya.status"
+type: sensorial
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: device_in
+      schema: "std/text@1"
+  egress:
+    - name: status_out
+      schema: "std/text@1"
+    - name: progress_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "64Mi"
+  accelerator: none
+
+permissions:
+  egress_http: ["localhost", "openapi.tuyaus.com", "openapi.tuyaeu.com", "openapi.tuyacn.com", "openapi.tuyain.com"]
+  filesystem: "none"
+  channels: declared-only

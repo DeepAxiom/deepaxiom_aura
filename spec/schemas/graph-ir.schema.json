@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:spec:graph-ir@1",
+  "title": "C2 Graph IR",
+  "type": "object",
+  "required": ["ir", "graph_id", "origin", "nodes", "edges"],
+  "properties": {
+    "ir": { "const": "1" },
+    "graph_id": { "type": "string", "minLength": 1 },
+    "origin": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["declared", "planner"] },
+        "skill": { "type": "string" },
+        "cause": { "type": "string" }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["ref"],
+        "properties": {
+          "ref": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+          "resolve": { "type": "string" },
+          "use": { "type": "string" },
+          "constraints": { "type": "object" }
+        },
+        "anyOf": [ { "required": ["resolve"] }, { "required": ["use"] } ]
+      }
+    },
+    "edges": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "type": "string", "pattern": "^[a-z0-9_-]+\\.[a-z0-9_]+$" },
+          "to": { "type": "string", "pattern": "^[a-z0-9_-]+\\.[a-z0-9_]+$" },
+          "gate": { "enum": ["human-approval", "none"] },
+          "qos": { "enum": ["reliable", "realtime", "bulk"] }
+        }
+      }
+    },
+    "waves": {
+      "type": "array",
+      "items": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}
