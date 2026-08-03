@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"aura/kernel/internal/registry"
 	"aura/kernel/internal/spec"
 	"aura/kernel/internal/store"
+	"aura/kernel/internal/wasmrt"
 )
 
 // version comes from spec/VERSION via the generated spec package. It used to
@@ -75,6 +77,8 @@ func main() {
 		cmdStatus(os.Args[2:])
 	case "verify":
 		cmdVerify(os.Args[2:])
+	case "undo":
+		cmdUndo(os.Args[2:])
 	case "version":
 		fmt.Printf("aura %s (channel protocol %s, graph ir %s)\n",
 			version, channel.ProtocolMajor, executor.IRMajor)
@@ -107,6 +111,7 @@ Usage:
   aura run <org/cat/name> [--port 9080]
   aura status [--port 9080]
   aura verify [--data <dir>]
+  aura undo <session|receipt> [--yes] [--port 9080]
   aura version`)
 }
 
@@ -188,6 +193,16 @@ func cmdUp(args []string) {
 		fatal(fmt.Errorf("open effect ledger: %w", err))
 	}
 
+	// The wasm sandbox (Phase 3). Unlike the ledger this is allowed to fail
+	// soft: a node that cannot link WASI preview1 (should never happen on a
+	// supported platform, but the failure mode matters) still runs every
+	// other primitive fine — format:wasm skills simply cannot register,
+	// exactly like a node with --no-auth still runs without a token.
+	wasmRT, err := wasmrt.New(context.Background())
+	if err != nil {
+		log.Warn("wasm runtime unavailable — format:wasm skills cannot be hosted", "err", err)
+	}
+
 	// The token is minted before anything is served, so there is no window in
 	// which the node is reachable without one.
 	var auth *gateway.Auth
@@ -223,7 +238,7 @@ func cmdUp(args []string) {
 		Version: version, Token: token, Log: log,
 	}
 	gw := &gateway.Gateway{Node: node, Reg: reg, St: st, Mgr: mgr, Proj: proj,
-		Adm: adm, Ldg: ldg, MCP: mcp.Handler(), Log: log, Auth: auth,
+		Adm: adm, Ldg: ldg, Wasm: wasmRT, MCP: mcp.Handler(), Log: log, Auth: auth,
 		ConfigFile: configFile.Skills}
 
 	seedDefaultGraphs(st, log)

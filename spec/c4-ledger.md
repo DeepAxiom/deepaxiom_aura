@@ -1,6 +1,6 @@
 # C4 — Effect Ledger & Policy (frozen contract)
 
-**Protocol major: 1 · Status: v1.0 — FROZEN (2026-08-01: initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.1 — FROZEN (2026-08-02: `compensates` added to the ledger entry — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
 
 C1, C2 and C3 answer *what a skill is*, *how a graph is wired*, and *how
 envelopes flow*. None of them answer the question a node actually has to
@@ -51,7 +51,8 @@ be.
   "outcome": "delivered",
   "policy": "sha256:7c1e…",
   "payload_sha256": "b5b3…",
-  "compensation": { "capability": "motor.erp.invoice.create", "port": "undo_in", "schema": "acme/erp-undo@1" }
+  "compensation": { "capability": "motor.erp.invoice.create", "port": "undo_in", "schema": "acme/erp-undo@1" },
+  "compensates": "sha256:1a2b…"
 }
 ```
 
@@ -70,6 +71,7 @@ be.
 | `policy` | The hash of the policy document in force (the same value a node prints at startup) — an auditor can find the exact document that authorized this. |
 | `payload_sha256` | sha256 of the delivered payload. **Never the payload itself** — the ledger is evidence, not a data lake, and a payload carrying personal data must not become permanently undeletable. |
 | `compensation` | Present only when the skill declared C1 `compensates`; carries its capability, port and schema. Absent (not null-valued — omitted) means the effect was recorded as irreversible. |
+| `compensates` | Present only on an entry that IS an undo: the `hash` (see below) of the entry it reverses. Absent on every ordinary effect. A conforming implementation MUST refuse to seal a second entry with the same `compensates` value — an undo is a one-time action, not a repeatable one (see [`ROADMAP.md`](../ROADMAP.md), Phase 2, `aura undo`). |
 
 ### Hash
 
@@ -154,10 +156,14 @@ wrote the log, only the math.
   and enforced by the kernel; C4 only requires that a node cite, in `policy`,
   a hash identifying whichever document authorized a sealed entry. A future
   node could use a different policy language entirely and still speak C4.
-- **Compensation execution.** C1's `compensates` and this contract's
-  `compensation` field are groundwork: what `aura undo` does with them is
-  scoped to the runtime, not to this wire contract, and lands after C4 itself
-  (see [`ROADMAP.md`](../ROADMAP.md), Phase 2).
+- **Compensation execution.** `aura undo` (Phase 2) walks the ledger and
+  re-delivers an effect's original payload to the skill's declared
+  compensation port — that behavior is scoped to the runtime, not to this
+  wire contract. C4 only requires that the resulting entry, if one is sealed,
+  carry `compensates` pointing at what it reversed; how a caller decides
+  *which* entries to undo, in what order, or how it recovers the original
+  payload (from the causal event log, C3 rule 7) is runtime behavior, not
+  part of this contract.
 - **Storage.** Nothing here requires SQLite, or any particular database. The
   guarantees are about the entries and their hashes, not about how they are
   kept durable.

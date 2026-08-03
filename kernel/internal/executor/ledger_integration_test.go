@@ -103,7 +103,7 @@ rules:
     decision: allow
 `)
 	sess, err := NewSession("sess-seal-1", graphInto("w", "motor.api.writer", ""),
-		reg, st, "local", pol, ldg, func([]byte, string) error { return nil }, testLogger())
+		reg, st, "local", pol, ldg, "", func([]byte, string) error { return nil }, testLogger())
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestApprovedGateIsSealedAsGateDelivered(t *testing.T) {
 
 	var toClient []channel.Envelope
 	sess, err := NewSession("sess-seal-2", graphInto("w", "motor.api.writer", ""),
-		reg, st, "local", DefaultPolicy(), ldg,
+		reg, st, "local", DefaultPolicy(), ldg, "",
 		func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
@@ -194,7 +194,7 @@ func TestDeniedGateIsSealedAsGateDenied(t *testing.T) {
 
 	var toClient []channel.Envelope
 	sess, err := NewSession("sess-seal-3", graphInto("w", "motor.api.writer", ""),
-		reg, st, "local", DefaultPolicy(), ldg,
+		reg, st, "local", DefaultPolicy(), ldg, "",
 		func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
@@ -233,7 +233,7 @@ func TestNonMotorDeliveryIsNeverSealed(t *testing.T) {
 	ldg, st := testLedgerForSession(t)
 
 	sess, err := NewSession("sess-seal-4", graphInto("e", "logical.echo", ""),
-		reg, st, "local", DefaultPolicy(), ldg,
+		reg, st, "local", DefaultPolicy(), ldg, "",
 		func([]byte, string) error { return nil }, testLogger())
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -261,7 +261,7 @@ rules:
     decision: allow
 `)
 	sess, err := NewSession("sess-seal-5", graphInto("w", "motor.api.writer", ""),
-		reg, st, "local", pol, ldg, func([]byte, string) error { return nil }, testLogger())
+		reg, st, "local", pol, ldg, "", func([]byte, string) error { return nil }, testLogger())
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
@@ -305,7 +305,7 @@ rules:
     decision: allow
 `)
 	sess, err := NewSession("sess-seal-6", graphInto("w", "motor.tts.speak", ""),
-		reg, st, "local", pol, ldg, func([]byte, string) error { return nil }, testLogger())
+		reg, st, "local", pol, ldg, "", func([]byte, string) error { return nil }, testLogger())
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"aura/kernel/internal/channel"
+	"aura/kernel/internal/ledger"
 )
 
 // cmdReplay — re-run a recorded session's real client inputs against the
@@ -161,6 +162,64 @@ func cmdReplay(args []string) {
 		fmt.Println("  ok")
 	} else {
 		fmt.Println("  (differences above — expected for model-backed graphs)")
+	}
+
+	printLedgerDiff(*port, session, ready.Session)
+}
+
+// fetchLedgerBySession returns one session's sealed ledger entries, in seq
+// order — the same GET /v1/sessions/{id}/ledger endpoint `aura undo` reads.
+// Empty rather than an error for a node with no ledger, or a session that
+// sealed no effects at all (a graph with no motor skills, e.g. echo), so
+// replaying either still completes cleanly.
+func fetchLedgerBySession(port int, session string) []ledger.Entry {
+	code, body := getRaw(port, "/v1/sessions/"+session+"/ledger")
+	if code != 200 {
+		return nil
+	}
+	var out struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	_ = json.Unmarshal(body, &out)
+	entries := make([]ledger.Entry, 0, len(out.Entries))
+	for _, raw := range out.Entries {
+		var e ledger.Entry
+		if json.Unmarshal(raw, &e) == nil {
+			entries = append(entries, e)
+		}
+	}
+	return entries
+}
+
+// printLedgerDiff closes the fourth property of the project's thesis
+// (ROADMAP.md): Reproducible. The payload diff above proves the conversation
+// looked the same to a client; this proves the ledger agrees the
+// *authorization* did — same capability, same policy decision, same outcome
+// — using the ledger itself as the oracle, not the transcript.
+func printLedgerDiff(port int, oldSession, newSession string) {
+	oldEntries := fetchLedgerBySession(port, oldSession)
+	newEntries := fetchLedgerBySession(port, newSession)
+	if len(oldEntries) == 0 && len(newEntries) == 0 {
+		return // nothing sealed either run — nothing to say
+	}
+
+	r := ledger.Diff(oldEntries, newEntries)
+	fmt.Printf("\n  ledger: %d effect(s) sealed then, %d now", r.OldCount, r.NewCount)
+	if r.Reproducible() {
+		fmt.Println(" — reproducible: every capability, decision and outcome matched")
+	} else {
+		fmt.Println(" — NOT reproducible")
+		for _, d := range r.Divergences {
+			if d.Field == "count" {
+				fmt.Printf("    ✗ effect count: %s then, %s now\n", d.Old, d.New)
+				continue
+			}
+			fmt.Printf("    ✗ effect %d: %s changed %q -> %q\n", d.Index+1, d.Field, d.Old, d.New)
+		}
+	}
+	for _, n := range r.Notes {
+		fmt.Printf("    (effect %d: %s differs — %q -> %q; expected to vary run to run)\n",
+			n.Index+1, n.Field, n.Old, n.New)
 	}
 }
 

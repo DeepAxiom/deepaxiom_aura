@@ -46,7 +46,7 @@ func TestManagerStartsAndEndsSessions(t *testing.T) {
 	if m.LiveSessions() != 0 {
 		t.Fatalf("a fresh manager reports %d sessions", m.LiveSessions())
 	}
-	if _, err := m.Start("s1", "echo", func([]byte, string) error { return nil }); err != nil {
+	if _, err := m.Start("s1", "echo", "", func([]byte, string) error { return nil }); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if m.LiveSessions() != 1 {
@@ -60,7 +60,7 @@ func TestManagerStartsAndEndsSessions(t *testing.T) {
 
 func TestStartingAnUnknownGraphFails(t *testing.T) {
 	m, _, _ := testManager(t)
-	if _, err := m.Start("s1", "no-such-graph", func([]byte, string) error { return nil }); err == nil {
+	if _, err := m.Start("s1", "no-such-graph", "", func([]byte, string) error { return nil }); err == nil {
 		t.Fatal("starting a graph that was never registered succeeded")
 	}
 }
@@ -71,7 +71,7 @@ func TestStartingAGraphWithNoLiveSkillFails(t *testing.T) {
 	m, _, st := testManager(t)
 	seedGraph(t, st, "echo", "logical.nobody-provides-this")
 
-	if _, err := m.Start("s1", "echo", func([]byte, string) error { return nil }); err == nil {
+	if _, err := m.Start("s1", "echo", "", func([]byte, string) error { return nil }); err == nil {
 		t.Fatal("a graph resolving to nothing started anyway")
 	}
 }
@@ -85,12 +85,12 @@ func TestSessionCapRefusesBeyondItsLimit(t *testing.T) {
 	m.SetMaxSessions(3)
 
 	for i := 0; i < 3; i++ {
-		if _, err := m.Start(fmt.Sprintf("s%d", i), "echo",
+		if _, err := m.Start(fmt.Sprintf("s%d", i), "echo", "",
 			func([]byte, string) error { return nil }); err != nil {
 			t.Fatalf("session %d refused inside the cap: %v", i, err)
 		}
 	}
-	_, err := m.Start("s-overflow", "echo", func([]byte, string) error { return nil })
+	_, err := m.Start("s-overflow", "echo", "", func([]byte, string) error { return nil })
 	if err == nil {
 		t.Fatal("the manager opened a fourth session against a cap of 3")
 	}
@@ -101,7 +101,7 @@ func TestSessionCapRefusesBeyondItsLimit(t *testing.T) {
 
 	// Ending one makes room again, or a node would wedge after its first burst.
 	m.End("s0")
-	if _, err := m.Start("s-again", "echo", func([]byte, string) error { return nil }); err != nil {
+	if _, err := m.Start("s-again", "echo", "", func([]byte, string) error { return nil }); err != nil {
 		t.Fatalf("no room freed after ending a session: %v", err)
 	}
 }
@@ -113,7 +113,7 @@ func TestZeroCapMeansUnlimited(t *testing.T) {
 	m.SetMaxSessions(0)
 
 	for i := 0; i < 50; i++ {
-		if _, err := m.Start(fmt.Sprintf("s%d", i), "echo",
+		if _, err := m.Start(fmt.Sprintf("s%d", i), "echo", "",
 			func([]byte, string) error { return nil }); err != nil {
 			t.Fatalf("session %d refused with no cap set: %v", i, err)
 		}
@@ -127,7 +127,7 @@ func TestDispatchRoutesToTheOwningSession(t *testing.T) {
 
 	var toClient []channel.Envelope
 	var mu sync.Mutex
-	if _, err := m.Start("s1", "echo", func(raw []byte, _ string) error {
+	if _, err := m.Start("s1", "echo", "", func(raw []byte, _ string) error {
 		var env channel.Envelope
 		_ = json.Unmarshal(raw, &env)
 		mu.Lock()
@@ -199,7 +199,7 @@ func TestConcurrentStartAndEndIsSafe(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			id := fmt.Sprintf("s%d", n)
-			if _, err := m.Start(id, "echo", func([]byte, string) error { return nil }); err == nil {
+			if _, err := m.Start(id, "echo", "", func([]byte, string) error { return nil }); err == nil {
 				m.End(id)
 			}
 		}(i)

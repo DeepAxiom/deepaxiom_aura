@@ -1,0 +1,42 @@
+id: "deepaxiom/sensorial/postgres-cdc"
+version: "1.0.0"
+protocol: "1"
+
+name: "Postgres CDC"
+description: "Streams row-level changes from a Postgres database via logical replication (test_decoding — no extension install required) as causal events. One watch_in message starts the stream; it keeps emitting until the session cancels it."
+capability: "sensorial.postgres.cdc"
+type: sensorial
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: watch_in
+      schema: "std/status@1"
+  egress:
+    - name: change_out
+      schema: "std/db-change@1"
+
+requirements:
+  memory: "64Mi"
+  accelerator: none
+
+permissions:
+  egress_http: []
+  filesystem: none
+  channels: declared-only
+
+config:
+  - key: "slot"
+    type: string
+    default: "aura_cdc"
+    description: "Logical replication slot name. Created with the test_decoding plugin on first watch if it does not already exist."
+  - key: "tables"
+    type: string
+    default: ""
+    description: "Comma-separated schema.table allowlist (e.g. \"public.orders,public.invoices\"). Empty means every table in the database."
+
+signature: null

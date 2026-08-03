@@ -20,6 +20,9 @@ deferred. Connection liveness, transitive cancellation and QoS enforcement are
 in; session resume is the biggest gap still open, and seven kernel packages
 have no automated tests at all.
 
+**Found a security issue?** Don't open a public issue for it — see
+[`SECURITY.md`](SECURITY.md) for how to report it privately.
+
 ## Where things live
 
 | Area | Language | License | Touch it for |

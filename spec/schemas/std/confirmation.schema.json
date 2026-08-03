@@ -22,6 +22,14 @@
     "held": {
       "type": "string",
       "description": "Id of the envelope being held."
+    },
+    "to_ref": {
+      "type": "string",
+      "description": "Graph node ref of the held delivery's destination (Phase 2, session resume)."
+    },
+    "to_port": {
+      "type": "string",
+      "description": "Ingress port of the held delivery's destination (Phase 2, session resume)."
     }
   }
 }

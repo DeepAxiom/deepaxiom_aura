@@ -412,7 +412,7 @@ func (g *Gateway) receiveHook(w http.ResponseWriter, r *http.Request) {
 	sessionID := identity.NewSessionID()
 	// The sender gets a 2xx, not the graph's output, so nothing is written
 	// back to it — the causal log is where a delivery's result is read from.
-	sess, err := g.Mgr.Start(sessionID, route.Graph, func([]byte, string) error { return nil })
+	sess, err := g.Mgr.Start(sessionID, route.Graph, "", func([]byte, string) error { return nil })
 	if err != nil {
 		writeJSON(w, 503, map[string]string{"error": err.Error()})
 		return

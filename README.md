@@ -458,15 +458,16 @@ Flags must precede the positional message — `aura chat --graph echo "test"`, n
 | `aura registry serve [--port 9091] [--data <dir>]` | Host a federable package registry. |
 | `aura publish <skill-dir> [--registry <url>]` | Sign (Ed25519, auto-keygen) and upload a skill. |
 | `aura add <org/cat/name>[@version] \| --capability <cap> [--registry <url>] [--yes]` | Download, verify hash + signature, show permissions, install. |
-| `aura run <org/cat/name> [--port 9080]` | Start an installed skill against the local node. |
+| `aura run <org/cat/name> [--port 9080]` | Start an installed skill against the local node — spawns a process for `format: source`, or hosts it inside the running kernel's wazero sandbox for `format: wasm` (see [Wasm skills](#wasm-skills)). |
 
 ### Debugging & observability
 
 | Command | Purpose |
 |---|---|
 | `aura why [session] [--no-explain] [--port 9080]` | Walk a session's causal chain to the root cause; narrate it with the local LLM. |
-| `aura replay <session> [--graph <id>] [--deny-gates] [--port 9080]` | Re-run recorded real inputs on the current graph and diff outputs. |
+| `aura replay <session> [--graph <id>] [--deny-gates] [--port 9080]` | Re-run recorded real inputs on the current graph and diff outputs, then diff the two sessions' sealed ledger entries against each other — same capability, decision and outcome, not just the same transcript (see [C4](spec/c4-ledger.md)). |
 | `aura trace <session> [--otlp <url>] [--out <file>] [--port 9080]` | Export the causal log as OpenTelemetry traces. |
+| `aura undo <session\|receipt> [--yes] [--port 9080]` | Reverse one effect, or every reversible effect of a session (reverse causal order), by re-delivering its original payload to the skill's declared `compensates` port. Each undo is itself a gated, sealed effect — see [C4](spec/c4-ledger.md). |
 
 ### Fleet
 
@@ -717,7 +718,7 @@ conformance suite checks — not just as prose:
 | `std/audio-chunk@1` | `{ "pcm_b64": string, "sample_rate": int, "channels": int?, "final": bool?, "seq": int?, "ref": string? }` |
 | `std/api-request@1` | `{ "params": obj?, "query": obj?, "headers": obj?, "body": any? }` |
 | `std/api-response@1` | `{ "ok": bool, "status": int, "body": any?, "dry_run": bool?, "error": string? }` |
-| `std/confirmation@1` | `{ "question": string, "options": [string], "held": string }` |
+| `std/confirmation@1` | `{ "question": string, "options": [string], "held": string, "to_ref": string?, "to_port": string? }` |
 | `std/plan@1` | `{ "reasoning": string, "graph": <C2 IR>, "inputs": [...] }` |
 
 **`text` and `transcript` are not interchangeable.** In `std/text@1`, `text` is
@@ -727,6 +728,53 @@ because a speech recogniser re-decodes its whole buffer and hypothesis 3 is not
 hypothesis 2 plus a suffix. Carrying speech partials as `std/text@1` would make
 every consumer that concatenates produce garbage, which is why they are
 separate schemas on separate ports.
+
+### Wasm skills
+
+`format: wasm` (Phase 3, [kernel/internal/wasmrt](kernel/internal/wasmrt)) is
+the other way to write a skill, for one specific case: a synchronous,
+`logical`/`motor` transform where you want `permissions.filesystem` to be a
+sandbox the kernel actually enforces, not a line `aura add` merely prints
+before install. It compiles to a `.wasm` binary (`GOOS=wasip1 GOARCH=wasm go
+build`, or any other WASI-targeting toolchain — TinyGo, Rust, C) and is
+hosted **inside the kernel process**, never as a separate one: `aura run`
+detects `format: wasm` in the installed manifest and `POST`s the compiled
+module to the running kernel (`POST /v1/skills/wasm`) instead of spawning
+anything.
+
+The guest contract is deliberately narrow — a WASI **command** module (the
+same model as a CGI script: one instantiation per delivery, not a long-lived
+process), exactly one ingress and one egress port. The kernel writes the
+delivered payload to the guest's stdin and closes it; the guest writes its
+reply payload to stdout and exits 0, or writes an error to stderr and exits
+non-zero:
+
+```yaml
+format: wasm                    # instead of source
+ports:
+  ingress: [{ name: text_in, schema: "std/text@1" }]   # exactly one of each
+  egress:  [{ name: text_out, schema: "std/text@1" }]
+
+permissions:
+  filesystem: "read:/data/lookup"     # or write:<path>, or omit for none — a
+                                       # WASI directory preopen, enforced not declared
+  egress_http: ["api.example.com"]    # exact hostnames only; omit or [] for none
+```
+
+Both permissions are enforced, not just shown to a human at install time
+(`aura add`). `filesystem` is a WASI directory preopen — with no grant a
+guest cannot open a single file; with one, it is confined to exactly that
+directory. `egress_http` is a purpose-built host import (`env.http_fetch`,
+since WASI preview1 has no sockets at all): the guest owns its own request
+and response buffers, and the kernel only completes a fetch when the URL's
+hostname is an **exact** match in the list — no prefix or suffix matching.
+The permission travels on each delivery's own `context.Context`, so two
+skills with different grants running at the same time never see each
+other's — see [kernel/internal/wasmrt](kernel/internal/wasmrt).
+
+`sensorial`/`cognitive` skills that need to stream stay `format: source` — a
+WASI command module runs once and exits, so there is no guest contract yet
+for a skill that emits more than one reply per delivery.
 
 ---
 
@@ -971,6 +1019,29 @@ asked for (`"unsigned": true`). Routes are listable and revocable
 itself — and listing never returns the secret, only the name of the variable it
 comes from.
 
+### A row change becomes a causal event (Postgres CDC)
+
+Legacy systems with no API are common enough to name as their own case:
+[`skills/postgres-cdc`](skills/postgres-cdc) turns Postgres's own logical
+replication stream into ordinary `sensorial.postgres.cdc` events — a skill,
+like every connector above, not a kernel feature.
+
+```bash
+ALTER SYSTEM SET wal_level = logical;   # once, on the source database; then restart it
+
+PG_CDC_DSN="host=... dbname=... user=... password=..." \
+    PYTHONPATH=sdk/python/src python skills/postgres-cdc/main.py
+```
+
+It uses `test_decoding` — built into Postgres core since 9.4, so there is
+nothing to install on the target database. One `watch_in` message starts the
+stream; it keeps emitting `std/db-change@1` events (`{ table, op, columns,
+lsn }`, one per row change) until the session cancels it. `config.tables`
+narrows it to specific `schema.table`s; the default is every table in the
+database. The DSN is read from `PG_CDC_DSN`, not a `config` field — `config`
+values are readable over `GET /v1/skills/config`, and a connection string
+carries a password.
+
 ---
 
 ## Talking to it
@@ -1180,7 +1251,7 @@ can resolve by proxying another node's skills as if they were local.
 # On an edge box (node B): run, say, the OCR skill.
 # On your laptop (node A):
 .\kernel\aura.exe federate http://edge-box:9080
-#   federating http://edge-box:9080 → 1 skill(s) proxied into the local node
+#   federating http://edge-box:9080 → 1 skill(s) proxied into the local node (route: lan)
 #   node A now resolves sensorial.ocr.image — the work runs physically on B,
 #   replies stream back with causality intact.
 .\kernel\aura.exe federate http://edge-box:9080 --capability sensorial   # filter
@@ -1192,6 +1263,17 @@ there), relaying envelopes between them. It required no kernel changes, which is
 some evidence that the micro-kernel boundary is drawn in a useful place. It also
 is covered by tests (`fed`, 87%), including that `cancel` and `idem` survive
 the node boundary.
+
+**Negotiated transport (C3 rule 5).** The bridge keeps one persistent connection
+per federated capability, reused across every relay — not redialed per
+envelope, which is what it used to do (confirmed by the wire, not assumed: a
+five-message exchange meant five WebSocket handshakes and five disconnected
+remote sessions). Cancelling one relay sends a targeted `cancel` envelope on
+that shared connection rather than closing it — closing it would abort every
+other relay riding along — and `aura federate` prints what route it measured
+to the remote (`same-host` / `lan` / `relay`, timed against `/healthz`).
+Scoped to what's actually verifiable without two genuinely separate networks:
+QUIC/WebRTC and NAT traversal remain future work.
 
 ---
 
@@ -1538,7 +1620,7 @@ was exercised manually and works, but nothing stops a regression.
 | Milestone | What it delivered | Verification |
 |---|---|---|
 | Single-binary kernel + SDK + distro | `aura up` → UI + local LLM chat, no external services | Tested |
-| Spec + conformance | Contracts frozen — C1 v1.3, C2 v1.1, C3 v1.4, C4 v1.0; 59-check black-box suite | Tested |
+| Spec + conformance | Contracts frozen — C1 v1.5, C2 v1.1, C3 v1.4, C4 v1.1; 59-check black-box suite | Tested |
 | Streaming multi-channel voice | `voice` graph + browser client: partial transcripts, spoken replies, working barge-in | Kernel tested; client hand-verified |
 | Connectivity without OpenAPI | Declarative connector, TypeScript SDK, webhook ingress, traffic observation | Ingress + generator tested; connector hand-verified |
 | Model drivers + admission | ASR / TTS / OCR skills; `--memory-budget` | Admission + ASR/chunker tested; drivers hand-verified |
@@ -1548,7 +1630,13 @@ was exercised manually and works, but nothing stops a regression.
 | Federable registry | `aura publish/add/run`, Ed25519 + trust-on-first-use | Tested (`signing` 90%, `hub` 81%) |
 | Standard borders | MCP server, A2A card, OpenTelemetry export | MCP tested (63%); OTel export hand-verified |
 | Node federation | `aura federate`, resolution across nodes | Tested (`fed` 87%) |
+| Negotiated transport, LAN/same-host (Phase 3) | One pooled connection per federated capability instead of one dial per envelope; cancel-by-envelope, not socket-close; measured route classification (`aura federate` prints it) | Tested — connection reuse, concurrent-relay demux, cancel-doesn't-affect-a-peer, self-heal after a drop |
 | Effect ledger (C4) | Hash-chained, signed attestation of every effect; `aura verify`, `GET /v1/ledger[/verify]` | Tested (`ledger` 89%); tamper-detection proven by a CI job driving a real binary |
+| Reversibility (`aura undo`, Phase 2) | Undo an effect via its declared `compensates` port — itself a gated, sealed effect; refused before a session is built if already undone, never delivered, or irreversible | Tested (adversarial: double-undo, no-compensation, denied-gate cases) |
+| Session resume (Phase 2) | A session's dedup window, causal/in-flight indexes, pending gates and per-hop `Seq` counters are reconstructed from the causal event log on reconnect — whether the client dropped or the kernel process restarted, both take the same path | Tested (adversarial: pending gate survives, cancel still reaches an in-flight multi-hop chain, `Seq` continues rather than resetting) |
+| Deterministic replay (Phase 2) | `aura replay` diffs the original and replayed sessions' sealed ledger entries, not just the client-visible transcript — closes the thesis's fourth property (Reproducible) | Tested (`ledger.Diff`, pure, 8 table-driven cases) |
+| Wasm skills, real sandbox (Phase 3) | `format: wasm` on wazero — `filesystem` (WASI preopen) and `egress_http` (custom `env.http_fetch` host import, exact-hostname allowlist) both enforced, not printed declarations; hosted in-process, never a separate OS process | Tested against real compiled `GOOS=wasip1` guests, not mocked (`wasmrt` + `gateway` end-to-end; concurrency-tested permission scoping) |
+| Postgres CDC (Phase 3) | `skills/postgres-cdc` — logical replication (`test_decoding`, no extension install) becomes `std/db-change@1` causal events, one per row change | Tested against a real Docker `postgres:16`, not mocked — INSERT/UPDATE/DELETE, NULL round-trip, table filter |
 
 ### What "streaming and persistent" does and doesn't mean yet
 

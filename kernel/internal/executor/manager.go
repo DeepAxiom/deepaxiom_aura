@@ -59,8 +59,10 @@ func (m *Manager) LiveSessions() int {
 	return len(m.sessions)
 }
 
-// Start instantiates a session for a stored graph and wires the client sender.
-func (m *Manager) Start(sessionID, graphID string,
+// Start instantiates a session for a stored graph and wires the client
+// sender. undoOf is empty for an ordinary session; non-empty marks this as
+// an ephemeral undo session (Phase 2, `aura undo`) — see NewSession.
+func (m *Manager) Start(sessionID, graphID, undoOf string,
 	sendClient func(raw []byte, qos string) error) (*Session, error) {
 	irRaw, err := m.st.LoadGraph(graphID)
 	if err != nil {
@@ -81,7 +83,7 @@ func (m *Manager) Start(sessionID, graphID string,
 				"retry shortly or raise --max-sessions", m.maxSessions)
 		}
 	}
-	sess, err := NewSession(sessionID, g, m.reg, m.st, m.mode, m.policy, m.ldg, sendClient, m.log)
+	sess, err := NewSession(sessionID, g, m.reg, m.st, m.mode, m.policy, m.ldg, undoOf, sendClient, m.log)
 	if err != nil {
 		return nil, err
 	}

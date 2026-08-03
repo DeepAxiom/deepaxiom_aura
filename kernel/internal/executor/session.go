@@ -49,6 +49,11 @@ type Session struct {
 	// see sealEffect — so tests that only exercise routing never have to wire
 	// a store and a keypair just to construct a Session.
 	ldg *ledger.Ledger
+	// undoOf is non-empty only for an ephemeral undo session (Phase 2, `aura
+	// undo`): the receipt of the effect this session's single edge reverses.
+	// NewSession validated it against the ledger before this Session was ever
+	// built — see validateUndo — so sealEffect only has to attach it.
+	undoOf string
 
 	// pending human-approval gates: confirm_request id -> held envelope + dest
 	pendMu  sync.Mutex
@@ -126,9 +131,14 @@ func applyPolicy(d *dest, pol *Policy, mode string, from, to string) error {
 // DefaultPolicy() for the pre-policy behaviour. ldg is the node's effect
 // ledger (C4); a production node always supplies one — nil is accepted only
 // so tests that do not care about attestation are not forced to construct a
-// store and a signing keypair just to build a Session.
+// store and a signing keypair just to build a Session. undoOf is empty for
+// an ordinary session; for an ephemeral undo session (Phase 2, `aura undo`)
+// it is the receipt of the effect g's one edge is meant to reverse, and is
+// validated against the ledger here — before the session exists — the same
+// "refuse before building" pattern a policy deny already uses (see
+// validateUndo).
 func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
-	mode string, pol *Policy, ldg *ledger.Ledger,
+	mode string, pol *Policy, ldg *ledger.Ledger, undoOf string,
 	sendClient func(raw []byte, qos string) error, log *slog.Logger) (*Session, error) {
 
 	if pol == nil {
@@ -144,6 +154,12 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		resolved[n.Ref] = live
 	}
 
+	if undoOf != "" {
+		if err := validateUndo(st, undoOf, g, resolved); err != nil {
+			return nil, err
+		}
+	}
+
 	s := &Session{
 		ID: id, Graph: g,
 		routes:     map[string][]dest{},
@@ -152,6 +168,7 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		st:         st,
 		policy:     pol,
 		ldg:        ldg,
+		undoOf:     undoOf,
 		log:        log,
 		pending:    map[string]pendingGate{},
 		causal:     newCausalIndex(maxCausalRoots),
@@ -191,7 +208,56 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		}
 		s.routes[e.From] = append(s.routes[e.From], d)
 	}
+
+	if err := s.resumeFromLog(); err != nil {
+		return nil, fmt.Errorf("resume session %q: %w", id, err)
+	}
 	return s, nil
+}
+
+// validateUndo refuses to build an undo session unless the ledger agrees the
+// undo makes sense — before any envelope moves, mirroring how a policy deny
+// is resolved before a session exists rather than on first delivery (C4,
+// "What deny does"). g is the caller's ephemeral one-edge graph
+// (client.<port> -> skill.<compensates.port>); resolved is what NewSession
+// already resolved that edge's target against the live registry.
+func validateUndo(st *store.Store, undoOf string, g *Graph, resolved map[string]*registry.Live) error {
+	raw, err := st.LedgerEntryByHash(undoOf)
+	if err != nil {
+		return fmt.Errorf("undo %s: %w", undoOf, err)
+	}
+	var entry ledger.Entry
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return fmt.Errorf("undo %s: stored entry is corrupt: %w", undoOf, err)
+	}
+	if entry.Outcome != spec.OutcomeDelivered {
+		return fmt.Errorf("undo %s: refused — effect was never delivered (outcome=%q)", undoOf, entry.Outcome)
+	}
+	if entry.Compensation == nil {
+		return fmt.Errorf("undo %s: refused — the skill that produced this effect declared no compensation", undoOf)
+	}
+	if _, found, err := st.LedgerFindByCompensates(undoOf); err != nil {
+		return fmt.Errorf("undo %s: %w", undoOf, err)
+	} else if found {
+		return fmt.Errorf("undo %s: refused — this effect was already undone", undoOf)
+	}
+	if len(g.Edges) != 1 {
+		return fmt.Errorf("undo %s: an undo graph must have exactly one edge, got %d", undoOf, len(g.Edges))
+	}
+	toRef, toPort := splitEndpoint(g.Edges[0].To)
+	live, ok := resolved[toRef]
+	if !ok {
+		return fmt.Errorf("undo %s: edge target %q did not resolve", undoOf, toRef)
+	}
+	if live.Manifest.Capability != entry.Compensation.Capability {
+		return fmt.Errorf("undo %s: edge targets capability %q, but the declared compensation capability is %q",
+			undoOf, live.Manifest.Capability, entry.Compensation.Capability)
+	}
+	if toPort != entry.Compensation.Port {
+		return fmt.Errorf("undo %s: edge targets port %q, but the declared compensation port is %q",
+			undoOf, toPort, entry.Compensation.Port)
+	}
+	return nil
 }
 
 func splitEndpoint(ep string) (ref, port string) {
@@ -403,6 +469,14 @@ func (s *Session) holdForApproval(env channel.Envelope, d dest) {
 		"question": fmt.Sprintf("Approve delivery to %s.%s?", d.ref, d.port),
 		"options":  []string{"approve", "deny"},
 		"held":     env.ID,
+		// to_ref/to_port name the held delivery's destination (additive,
+		// Phase 2). A human only needs "question" to answer, but resumeFromLog
+		// needs these to unambiguously re-derive `dest` from the routing table
+		// after a restart — the held envelope's source port alone is not
+		// enough when a session has more than one human-approval gate reachable
+		// from it.
+		"to_ref":  d.ref,
+		"to_port": d.port,
 	})
 	req := channel.Envelope{
 		V: channel.ProtocolMajor, ID: reqID, CauseID: env.ID, Session: s.ID,
@@ -471,6 +545,7 @@ func (s *Session) sealEffect(out *channel.Envelope, d dest) {
 		Policy:       s.policy.Hash(),
 		Payload:      out.Payload,
 		Compensation: compensationOf(d.skill.Manifest),
+		Compensates:  s.undoOf,
 	}
 	receipt, err := s.ldg.Seal(req)
 	if err != nil {
@@ -498,6 +573,7 @@ func (s *Session) sealDenial(held pendingGate) {
 		Policy:       s.policy.Hash(),
 		Payload:      held.env.Payload,
 		Compensation: compensationOf(held.to.skill.Manifest),
+		Compensates:  s.undoOf,
 	}
 	if _, err := s.ldg.Seal(req); err != nil {
 		s.log.Error("denial sealing failed", "session", s.ID, "capability", req.Capability, "err", err)

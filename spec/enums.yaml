@@ -40,7 +40,7 @@ skill_formats:
   - name: source
     description: Runs from source in a language runtime.
   - name: wasm
-    description: A sandboxed Wasm module (executor not yet implemented).
+    description: A sandboxed Wasm module (wazero, WASI command model; one ingress/egress port; filesystem and egress_http both enforced).
   - name: model
     description: A model artifact behind a driver.
   - name: projection

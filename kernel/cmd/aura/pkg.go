@@ -223,7 +223,9 @@ func cmdAdd(args []string) {
 	fmt.Printf("  run it:  aura run %s\n", pkg.ID)
 }
 
-// cmdRun — start an installed source skill against the local kernel.
+// cmdRun — start an installed skill against the local kernel. A `source`
+// skill is spawned as its own process, dialing back over WS; a `wasm`
+// skill is hosted inside the running kernel itself — see runWasmSkill.
 //
 //	aura run <org/cat/name> [--port 9080]
 func cmdRun(args []string) {
@@ -250,6 +252,23 @@ func cmdRun(args []string) {
 	sort.Strings(names)
 	dir := filepath.Join(base, names[len(names)-1])
 
+	manifestRaw, err := os.ReadFile(filepath.Join(dir, "skill.yaml"))
+	if err != nil {
+		fatal(fmt.Errorf("no skill.yaml in %s: %w", dir, err))
+	}
+	var manifest map[string]any
+	if err := yaml.Unmarshal(manifestRaw, &manifest); err != nil {
+		fatal(fmt.Errorf("invalid skill.yaml: %w", err))
+	}
+
+	// A wasm skill is never a separate OS process — it is hosted inside the
+	// running kernel (see kernel/internal/gateway/wasm.go), so `aura run`
+	// asks the kernel to host it instead of spawning anything.
+	if manifest["format"] == "wasm" {
+		runWasmSkill(*port, rest[0], dir, manifest)
+		return
+	}
+
 	cmd := exec.Command("python", "main.py")
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
@@ -260,6 +279,27 @@ func cmdRun(args []string) {
 	if err := cmd.Run(); err != nil {
 		fatal(fmt.Errorf("skill exited: %w (is python + aura-sdk installed?)", err))
 	}
+}
+
+// runWasmSkill POSTs an installed format:wasm package's manifest + compiled
+// module to the running kernel's POST /v1/skills/wasm, which compiles and
+// registers it in-process (kernel/internal/gateway/wasm.go). The packaging
+// convention is the same rigidity skill.yaml already has: a wasm package's
+// compiled binary is a file literally named skill.wasm at the package root.
+func runWasmSkill(port int, id, dir string, manifest map[string]any) {
+	wasmBytes, err := os.ReadFile(filepath.Join(dir, "skill.wasm"))
+	if err != nil {
+		fatal(fmt.Errorf("no skill.wasm in %s (a format:wasm package must include one): %w", dir, err))
+	}
+	body, _ := json.Marshal(map[string]any{
+		"manifest": manifest,
+		"wasm_b64": base64.StdEncoding.EncodeToString(wasmBytes),
+	})
+	code, resp := postJSON(port, "/v1/skills/wasm", body)
+	if code != 201 {
+		fatal(fmt.Errorf("the kernel refused to host %s (%d): %s", id, code, resp["error"]))
+	}
+	fmt.Printf("hosted %s inside the kernel at :%d (%s)\n", id, port, dir)
 }
 
 // ── helpers ──────────────────────────────────────────────────────

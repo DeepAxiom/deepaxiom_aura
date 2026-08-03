@@ -5,6 +5,9 @@
 //	GET  /v1/graphs                  — stored graph ids
 //	POST /v1/graphs                  — register a C2 IR document
 //	GET  /v1/sessions/{id}/events    — causal event log (raw material for `aura why`)
+//	GET  /v1/sessions/{id}/ledger    — one session's sealed effects (`aura undo`)
+//	GET  /v1/ledger/entries/{hash}   — one sealed effect by receipt (`aura undo`)
+//	POST /v1/skills/wasm             — register a format:wasm skill, hosted in-process
 //	WS   /ws/skill                   — skill IoC connection (first frame: register)
 //	WS   /v1/stream?graph=<id>       — client connection (session per socket)
 package gateway
@@ -28,6 +31,7 @@ import (
 	"aura/kernel/internal/registry"
 	"aura/kernel/internal/spec"
 	"aura/kernel/internal/store"
+	"aura/kernel/internal/wasmrt"
 )
 
 type Gateway struct {
@@ -41,8 +45,13 @@ type Gateway struct {
 	// for a test that has nothing to do with attestation still constructs —
 	// the ledger routes and the /healthz summary simply omit themselves.
 	Ldg *ledger.Ledger
-	MCP http.HandlerFunc // standard projection: skills as MCP tools
-	Log *slog.Logger
+	// Wasm hosts every `format: wasm` skill on this node (Phase 3). Nil is
+	// accepted for the same reason Ldg's nil is: a Gateway built for a test
+	// unrelated to wasm skills should not have to wire a wazero runtime just
+	// to construct — POST /v1/skills/wasm answers 404 instead.
+	Wasm *wasmrt.Runtime
+	MCP  http.HandlerFunc // standard projection: skills as MCP tools
+	Log  *slog.Logger
 	// Auth guards the control surface: bearer token plus the WebSocket origin
 	// allowlist. Nil means an unauthenticated node, which only --no-auth
 	// produces and which prints a warning at startup.
@@ -96,6 +105,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions", g.listSessions)
 	mux.HandleFunc("GET /v1/sessions/{id}", g.sessionMeta)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", g.sessionEvents)
+	mux.HandleFunc("GET /v1/sessions/{id}/ledger", g.sessionLedger)
 	mux.HandleFunc("POST /v1/projections", g.connectProjection)
 	mux.HandleFunc("GET /v1/projections", g.listProjections)
 	mux.HandleFunc("POST /v1/projections/{name}/promote", g.promoteOperation)
@@ -104,6 +114,8 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/ingress/{name}", g.deleteIngress)
 	mux.HandleFunc("GET /v1/ledger", g.listLedger)
 	mux.HandleFunc("GET /v1/ledger/verify", g.verifyLedger)
+	mux.HandleFunc("GET /v1/ledger/entries/{hash}", g.ledgerEntry)
+	mux.HandleFunc("POST /v1/skills/wasm", g.registerWasmSkill)
 	mux.HandleFunc("POST /hooks/{name}", g.receiveHook)
 	mux.HandleFunc("GET /ws/skill", g.skillWS)
 	mux.HandleFunc("GET /v1/stream", g.clientWS)
@@ -662,6 +674,10 @@ func (g *Gateway) clientWS(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		sessionID = identity.NewSessionID()
 	}
+	// undoOf marks this as an ephemeral undo session (Phase 2, `aura undo`):
+	// the receipt of the effect the caller's one-edge graph is meant to
+	// reverse. Empty for every ordinary connection.
+	undoOf := r.URL.Query().Get("undo")
 
 	up := g.upgrader()
 	conn, err := up.Upgrade(w, r, nil)
@@ -673,7 +689,7 @@ func (g *Gateway) clientWS(w http.ResponseWriter, r *http.Request) {
 	defer writer.Close()
 	defer keepAlive(conn, writer)()
 
-	sess, err := g.Mgr.Start(sessionID, graphID, writer.Send)
+	sess, err := g.Mgr.Start(sessionID, graphID, undoOf, writer.Send)
 	if err != nil {
 		payload, _ := json.Marshal(map[string]string{"state": "error", "detail": err.Error()})
 		env := channel.Envelope{V: channel.ProtocolMajor, ID: channel.NewID(),

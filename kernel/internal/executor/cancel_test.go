@@ -64,7 +64,7 @@ func newChain(t *testing.T, sessionID string) *chainFixture {
 	toB := liveSkill(t, reg, "acme/logical/b", "logical", "logical.b")
 
 	toClient := &[]channel.Envelope{}
-	sess, err := NewSession(sessionID, chain(), reg, testStore(t), "local", DefaultPolicy(), nil,
+	sess, err := NewSession(sessionID, chain(), reg, testStore(t), "local", DefaultPolicy(), nil, "",
 		func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
@@ -211,7 +211,7 @@ func TestSuppressedEnvelopesAreStillRecordedInTheEventLog(t *testing.T) {
 	liveSkill(t, reg, "acme/logical/a", "logical", "logical.a")
 	liveSkill(t, reg, "acme/logical/b", "logical", "logical.b")
 
-	sess, err := NewSession("s5", chain(), reg, st, "local", DefaultPolicy(), nil,
+	sess, err := NewSession("s5", chain(), reg, st, "local", DefaultPolicy(), nil, "",
 		func([]byte, string) error { return nil }, testLogger())
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)

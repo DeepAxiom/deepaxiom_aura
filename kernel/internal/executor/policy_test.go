@@ -301,7 +301,7 @@ func TestSessionIgnoresGraphWaiverUnderPolicy(t *testing.T) {
 
 	var toClient []channel.Envelope
 	sess, err := NewSession("p1", graphInto("w", "motor.api.writer", GateNone),
-		reg, testStore(t), "local", pol, nil, func(raw []byte, _ string) error {
+		reg, testStore(t), "local", pol, nil, "", func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
 			toClient = append(toClient, env)
@@ -333,7 +333,7 @@ rules:
     decision: deny
 `)
 	_, err := NewSession("p2", graphInto("w", "motor.payments.send", GateNone),
-		reg, testStore(t), "local", pol, nil, func([]byte, string) error { return nil }, testLogger())
+		reg, testStore(t), "local", pol, nil, "", func([]byte, string) error { return nil }, testLogger())
 	if err == nil {
 		t.Fatal("a session wiring a denied capability was built anyway")
 	}
@@ -353,7 +353,7 @@ rules:
     reason: "speech is continuous; per-clause approval is unusable"
 `)
 	sess, err := NewSession("p3", graphInto("w", "motor.tts.speak", ""),
-		reg, testStore(t), "local", pol, nil, func([]byte, string) error { return nil }, testLogger())
+		reg, testStore(t), "local", pol, nil, "", func([]byte, string) error { return nil }, testLogger())
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestPublishedModeIgnoresWaiverEvenWhenPolicyGrantsIt(t *testing.T) {
 
 	var toClient []channel.Envelope
 	sess, err := NewSession("p4", graphInto("w", "motor.api.writer", GateNone),
-		reg, testStore(t), "published", pol, nil, func(raw []byte, _ string) error {
+		reg, testStore(t), "published", pol, nil, "", func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
 			toClient = append(toClient, env)
@@ -407,7 +407,7 @@ rules:
 `)
 	var toClient []channel.Envelope
 	sess, err := NewSession("p5", graphInto("w", "motor.api.writer", ""),
-		reg, testStore(t), "local", pol, nil, func(raw []byte, _ string) error {
+		reg, testStore(t), "local", pol, nil, "", func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
 			toClient = append(toClient, env)

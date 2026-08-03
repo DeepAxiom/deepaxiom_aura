@@ -3,6 +3,7 @@ package fed
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -91,12 +92,46 @@ func newFakeNode(t *testing.T, skills []map[string]any) *fakeNode {
 			n.onStream(t, conn, first)
 			return
 		}
-		_ = conn.WriteJSON(channel.Envelope{
-			V: "1", ID: channel.NewID(), Kind: channel.KindData,
-			Port: "text_out", Schema: "std/text@1",
-			Payload: json.RawMessage(`{"text":"remote reply","final":true}`),
-		})
-		_ = conn.WriteJSON(channel.Envelope{V: "1", ID: channel.NewID(), Kind: channel.KindDone})
+		// Default: reply to `first`, then keep serving whatever further
+		// envelopes arrive on the *same* connection — a real kernel's
+		// /v1/stream never closes after one exchange, and the bridge's
+		// pooled connection (bridge.go) relies on that being true. Every
+		// reply carries CauseID: the real Session.forward() always does,
+		// and the bridge's reply demux (pooledConn.readLoop) depends on it
+		// exactly the way a real remote node's replies do.
+		respond := func(in channel.Envelope) bool {
+			// Echoes the incoming payload rather than a fixed string
+			// deliberately: it's what lets a test prove a reply reached the
+			// *right* concurrent caller (its own marker came back), not just
+			// that some reply arrived (see TestConcurrentRelaysDoNotCrossReplies).
+			if conn.WriteJSON(channel.Envelope{
+				V: "1", ID: channel.NewID(), CauseID: in.ID, Kind: channel.KindData,
+				Port: "text_out", Schema: "std/text@1", Payload: in.Payload,
+			}) != nil {
+				return false
+			}
+			return conn.WriteJSON(channel.Envelope{
+				V: "1", ID: channel.NewID(), CauseID: in.ID, Kind: channel.KindDone,
+			}) == nil
+		}
+		if !respond(first) {
+			return
+		}
+		for {
+			var env channel.Envelope
+			if conn.ReadJSON(&env) != nil {
+				return
+			}
+			n.mu.Lock()
+			n.received = append(n.received, env)
+			n.mu.Unlock()
+			if env.Kind != channel.KindData {
+				continue
+			}
+			if !respond(env) {
+				return
+			}
+		}
 	})
 
 	n.srv = httptest.NewServer(mux)
@@ -263,22 +298,44 @@ func dataEnvelope(id, idem string) channel.Envelope {
 // The bridge used to drop every envelope that was not `data`, so a cancel died
 // at the boundary: the local kernel suppressed its own side while the remote
 // node kept working. Barge-in across a federation did not happen.
+//
+// On a pooled connection (bridge.go), a cancel can no longer be "close the
+// socket" — that would abort every other relay sharing it (see
+// TestCancelDoesNotAffectAConcurrentRelayOnTheSameConnection just below) — so
+// this now asserts the more precise thing the pool requires: a real `Kind:
+// cancel` envelope, addressed with the cause_id the remote node was actually
+// given for this specific relay.
 func TestCancelCrossesTheBridge(t *testing.T) {
 	remote := newFakeNode(t, remoteCatalog())
 
-	remoteClosed := make(chan struct{})
-	var closeOnce sync.Once
+	cancelReceived := make(chan channel.Envelope, 1)
+	stop := make(chan struct{})
 	remote.onStream = func(t *testing.T, conn *websocket.Conn, _ channel.Envelope) {
-		// Hold the session open and stream until the far end goes away. A
-		// propagated cancel closes this socket; without one we sit here until
-		// the test's deadline.
+		go func() {
+			for {
+				var env channel.Envelope
+				if conn.ReadJSON(&env) != nil {
+					return
+				}
+				if env.Kind == channel.KindCancel {
+					select {
+					case cancelReceived <- env:
+					default:
+					}
+				}
+			}
+		}()
 		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
 			if conn.WriteJSON(channel.Envelope{
 				V: "1", ID: channel.NewID(), Kind: channel.KindData,
 				Port: "text_out", Schema: "std/text@1",
 				Payload: json.RawMessage(`{"text":"tok","final":false}`),
 			}) != nil {
-				closeOnce.Do(func() { close(remoteClosed) })
 				return
 			}
 			time.Sleep(20 * time.Millisecond)
@@ -287,11 +344,19 @@ func TestCancelCrossesTheBridge(t *testing.T) {
 
 	local := newLocalStub(t)
 	startBridge(t, local, remote)
+	defer close(stop)
 
 	in := dataEnvelope("ENV-1", "sess-1:client:text_out:1")
 	local.toBridge <- in
 	waitFor(t, func() bool { _, streams, _ := remote.snapshot(); return streams > 0 },
 		"the bridge never opened a remote session")
+	_, _, receivedByRemote := remote.snapshot()
+	if len(receivedByRemote) == 0 {
+		t.Fatal("the remote node never received the relayed envelope")
+	}
+	// What the remote actually knows this work by — not in.ID, which the
+	// remote never sees at all.
+	wantCauseID := receivedByRemote[len(receivedByRemote)-1].ID
 
 	// The kernel addresses a cancel with the cause_id the proxy knows the work
 	// by, which is the id of the envelope it was handed.
@@ -301,9 +366,13 @@ func TestCancelCrossesTheBridge(t *testing.T) {
 	}
 
 	select {
-	case <-remoteClosed:
+	case got := <-cancelReceived:
+		if got.CauseID != wantCauseID {
+			t.Fatalf("cancel reached the remote with cause_id %q, want %q — it would not recognise this",
+				got.CauseID, wantCauseID)
+		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("a cancel did not reach the remote node; the relay kept streaming")
+		t.Fatal("a cancel did not reach the remote node")
 	}
 }
 
@@ -536,6 +605,14 @@ func TestRepliesFlowBackCausallyLinked(t *testing.T) {
 	waitFor(t, func() bool { return len(local.emissions()) > 0 }, "no reply came back")
 
 	got := local.emissions()[0]
+	// Checked first and separately from the causal-metadata assertions below:
+	// emitError() derives CauseID/Session/Idem exactly the same way emit()
+	// does for a real reply, so those alone would still pass even if the
+	// relay never actually got the remote's answer — Kind is what tells
+	// apart "the reply came back" from "the relay gave up and reported why."
+	if got.Kind != channel.KindData {
+		t.Fatalf("first emission is Kind=%q, want data (payload=%s)", got.Kind, got.Payload)
+	}
 	if got.CauseID != in.ID {
 		t.Errorf("reply cause_id = %q; want %q so the chain stays walkable", got.CauseID, in.ID)
 	}
@@ -575,4 +652,239 @@ func TestUnreachableRemoteSurfacesAnErrorEnvelope(t *testing.T) {
 		}
 		return false
 	}, "a dead federation link produced no error envelope; the caller would wait forever")
+}
+
+// --- the pooled connection (Phase 3, ROADMAP.md: negotiated transport) -------
+
+func markedEnvelope(id, idem, marker string) channel.Envelope {
+	payload, _ := json.Marshal(map[string]any{"text": marker, "final": true})
+	return channel.Envelope{
+		V: "1", ID: id, Session: "sess-1", Node: "fedskill", Port: "text_in",
+		Seq: 1, Idem: idem, Schema: "std/text@1", Kind: channel.KindData,
+		Payload: payload,
+	}
+}
+
+func payloadText(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal payload %s: %v", raw, err)
+	}
+	return body.Text
+}
+
+// The concrete structural bottleneck this package's own doc comment used to
+// accept: relay() dialing a brand-new WebSocket to the remote node for every
+// single envelope. Five relays on the same capability must now open exactly
+// one remote stream, not five — streamOpened is the same counter
+// TestRemoteGraphIsRegisteredOncePerSession already uses to prove graph
+// registration is cached; this proves the connection is too.
+func TestRelaysOnTheSameCapabilityShareOneConnection(t *testing.T) {
+	remote := newFakeNode(t, remoteCatalog())
+	local := newLocalStub(t)
+	startBridge(t, local, remote)
+
+	for i := 0; i < 5; i++ {
+		local.toBridge <- dataEnvelope(channel.NewID(), fmt.Sprintf("sess-1:client:text_out:%d", i))
+	}
+	waitFor(t, func() bool { _, _, got := remote.snapshot(); return len(got) >= 5 },
+		"not all envelopes were relayed")
+
+	_, streams, _ := remote.snapshot()
+	if streams != 1 {
+		t.Fatalf("the remote stream was opened %d times for 5 relays on one capability; want 1", streams)
+	}
+}
+
+// The adversarial case a demux keyed wrong, or racy under concurrent
+// registration, would fail: fire several relays at once, each carrying a
+// distinct marker the fake remote echoes straight back, and check every
+// caller's own marker came back to it — not another concurrent caller's.
+func TestConcurrentRelaysDoNotCrossReplies(t *testing.T) {
+	remote := newFakeNode(t, remoteCatalog())
+	local := newLocalStub(t)
+	startBridge(t, local, remote)
+
+	const n = 8
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		ids[i] = channel.NewID()
+		marker := fmt.Sprintf("marker-%d", i)
+		local.toBridge <- markedEnvelope(ids[i], fmt.Sprintf("sess-1:client:text_out:%d", i), marker)
+	}
+
+	waitFor(t, func() bool {
+		data := 0
+		for _, e := range local.emissions() {
+			if e.Kind == channel.KindData {
+				data++
+			}
+		}
+		return data >= n
+	}, "not every relay received a reply")
+
+	byLocalID := map[string]string{}
+	for i, id := range ids {
+		byLocalID[id] = fmt.Sprintf("marker-%d", i)
+	}
+	seen := map[string]bool{}
+	for _, e := range local.emissions() {
+		if e.Kind != channel.KindData {
+			continue
+		}
+		wantMarker, ok := byLocalID[e.CauseID]
+		if !ok {
+			t.Fatalf("a data reply's cause_id %q does not match any local envelope this test sent", e.CauseID)
+		}
+		if got := payloadText(t, e.Payload); got != wantMarker {
+			t.Fatalf("envelope %q got back marker %q, want its own %q — a reply crossed to the wrong caller",
+				e.CauseID, got, wantMarker)
+		}
+		seen[e.CauseID] = true
+	}
+	if len(seen) != n {
+		t.Fatalf("got replies for %d of %d relays", len(seen), n)
+	}
+}
+
+// Cancelling one relay sharing a pooled connection must send a targeted
+// cancel envelope, never close the shared socket — that would silently abort
+// every other relay riding the same connection, the exact regression a naive
+// port of the old close()-based cancel would introduce.
+func TestCancelDoesNotAffectAConcurrentRelayOnTheSameConnection(t *testing.T) {
+	remote := newFakeNode(t, remoteCatalog())
+
+	held := make(chan channel.Envelope, 2)
+	release := make(chan string, 2) // cause_id -> go ahead and reply
+	remote.onStream = func(t *testing.T, conn *websocket.Conn, first channel.Envelope) {
+		respond := func(in channel.Envelope) {
+			_ = conn.WriteJSON(channel.Envelope{
+				V: "1", ID: channel.NewID(), CauseID: in.ID, Kind: channel.KindData,
+				Port: "text_out", Schema: "std/text@1", Payload: in.Payload,
+			})
+			_ = conn.WriteJSON(channel.Envelope{V: "1", ID: channel.NewID(), CauseID: in.ID, Kind: channel.KindDone})
+		}
+		pending := map[string]channel.Envelope{first.ID: first}
+		held <- first
+		go func() {
+			for {
+				var env channel.Envelope
+				if conn.ReadJSON(&env) != nil {
+					return
+				}
+				if env.Kind == channel.KindData {
+					pending[env.ID] = env
+					held <- env
+				}
+				// A cancel for one held request is simply never answered —
+				// exactly what "stop working on this" should look like; it
+				// must have no effect on any *other* pending request.
+			}
+		}()
+		for id := range release {
+			if in, ok := pending[id]; ok {
+				respond(in)
+			}
+		}
+	}
+
+	local := newLocalStub(t)
+	startBridge(t, local, remote)
+
+	// a and b are dispatched by proxySession as two independent goroutines
+	// (one per incoming data envelope), so there is no guarantee which one's
+	// relay() reaches the shared connection first. Identify them by their
+	// payload marker rather than by held's receive order, which is a race.
+	a := markedEnvelope(channel.NewID(), "sess-1:client:text_out:a", "marker-a")
+	b := markedEnvelope(channel.NewID(), "sess-1:client:text_out:b", "marker-b")
+	local.toBridge <- a
+	local.toBridge <- b
+
+	remoteByMarker := map[string]string{}
+	for i := 0; i < 2; i++ {
+		env := <-held
+		remoteByMarker[payloadText(t, env.Payload)] = env.ID
+	}
+	remoteBID, ok := remoteByMarker["marker-b"]
+	if !ok {
+		t.Fatalf("never saw B's envelope reach the remote (got markers: %v)", remoteByMarker)
+	}
+
+	// Cancel A only.
+	local.toBridge <- channel.Envelope{
+		V: "1", ID: channel.NewID(), CauseID: a.ID, Session: "sess-1", Kind: channel.KindCancel,
+	}
+	// Give the cancel a moment to land before letting B proceed, so a bug
+	// that tore down the shared connection on any cancel has a chance to show.
+	time.Sleep(100 * time.Millisecond)
+	release <- remoteBID
+
+	waitFor(t, func() bool {
+		for _, e := range local.emissions() {
+			if e.Kind == channel.KindDone && e.CauseID == b.ID {
+				return true
+			}
+		}
+		return false
+	}, "the uncancelled relay (B) never completed — cancelling A affected the shared connection")
+
+	for _, e := range local.emissions() {
+		if e.CauseID == a.ID && (e.Kind == channel.KindData || e.Kind == channel.KindDone) {
+			t.Fatalf("the cancelled relay (A) still produced a reply: %+v", e)
+		}
+	}
+}
+
+// A pooled connection that dies must not permanently break the capability —
+// the next relay reconnects, the same self-healing principle serveProxy
+// already applies one level up (reconnecting the whole proxy session).
+func TestPooledConnectionSelfHealsAfterADrop(t *testing.T) {
+	remote := newFakeNode(t, remoteCatalog())
+	local := newLocalStub(t)
+	startBridge(t, local, remote)
+
+	local.toBridge <- dataEnvelope("ENV-1", "sess-1:client:text_out:1")
+	waitFor(t, func() bool { return len(local.emissions()) > 0 }, "first relay never replied")
+
+	// The fake remote's default handler returns (closing its side) after
+	// answering — simulating the pooled connection dying between uses.
+	waitFor(t, func() bool { _, streams, _ := remote.snapshot(); return streams >= 1 },
+		"remote never opened a stream")
+
+	local.toBridge <- dataEnvelope("ENV-2", "sess-1:client:text_out:2")
+	waitFor(t, func() bool {
+		for _, e := range local.emissions() {
+			if e.CauseID == "ENV-2" && e.Kind == channel.KindData {
+				return true
+			}
+		}
+		return false
+	}, "the second relay did not recover after the pooled connection died")
+}
+
+// --- route classification -----------------------------------------------------
+
+func TestClassifyRoute(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  string
+		rtt  time.Duration
+		want RouteClass
+	}{
+		{"loopback IP is same-host regardless of rtt", "http://127.0.0.1:9080", 200 * time.Millisecond, RouteSameHost},
+		{"localhost hostname is same-host", "http://localhost:9080", 50 * time.Millisecond, RouteSameHost},
+		{"fast remote is lan", "http://10.0.0.5:9080", 5 * time.Millisecond, RouteLAN},
+		{"right at the threshold is lan", "http://10.0.0.5:9080", 15 * time.Millisecond, RouteLAN},
+		{"slow remote is relay", "http://example.com:9080", 200 * time.Millisecond, RouteRelay},
+		{"just past the threshold is relay", "http://10.0.0.5:9080", 16 * time.Millisecond, RouteRelay},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyRoute(tc.url, tc.rtt); got != tc.want {
+				t.Errorf("classifyRoute(%q, %s) = %q, want %q", tc.url, tc.rtt, got, tc.want)
+			}
+		})
+	}
 }

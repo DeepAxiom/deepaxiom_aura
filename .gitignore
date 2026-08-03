@@ -23,6 +23,7 @@ sdk/node/dist/
 
 # release artifacts
 release/
+/sbom.json
 
 # local env
 .env

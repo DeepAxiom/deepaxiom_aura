@@ -236,8 +236,14 @@ func (s *Store) GetSession(sessionID string) (SessionMeta, error) {
 	return SessionMeta{}, fmt.Errorf("session %q not found", sessionID)
 }
 
+// StartSession records a session's start. On a session id that already
+// exists — a resume (Phase 2): the client reconnected, or the kernel process
+// itself restarted — it also clears `ended`, so a session that picks back up
+// stops looking permanently ended to `aura why` and `GET /v1/sessions`.
 func (s *Store) StartSession(sessionID, graphID string) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO sessions (session_id, graph_id, started) VALUES (?,?,?)`,
+	_, err := s.db.Exec(`
+INSERT INTO sessions (session_id, graph_id, started) VALUES (?,?,?)
+ON CONFLICT(session_id) DO UPDATE SET ended=NULL`,
 		sessionID, graphID, time.Now().UnixMilli())
 	return err
 }
@@ -421,6 +427,68 @@ func (s *Store) LedgerEntryCount() (int64, error) {
 	var n int64
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM ledger_entries`).Scan(&n)
 	return n, err
+}
+
+// LedgerEntriesBySession returns one session's sealed entries in seq order —
+// what `aura undo <session>` walks backwards. seq is the node's own global
+// counter (C4), not per-session, but filtering by the session column still
+// yields that session's entries in the order they were sealed, which is what
+// "reverse causal order" needs.
+func (s *Store) LedgerEntriesBySession(session string) ([]json.RawMessage, error) {
+	rows, err := s.db.Query(
+		`SELECT entry FROM ledger_entries WHERE session = ? ORDER BY seq`, session)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []json.RawMessage
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			return nil, err
+		}
+		out = append(out, json.RawMessage(e))
+	}
+	return out, rows.Err()
+}
+
+// LedgerEntryByHash looks up one sealed entry by its own Hash() — the receipt
+// a client holds after an effect is delivered. Used by `aura undo <receipt>`
+// (single-effect mode) and, internally, to validate an undo request before a
+// session for it is ever built.
+func (s *Store) LedgerEntryByHash(hash string) (json.RawMessage, error) {
+	var entry string
+	err := s.db.QueryRow(`SELECT entry FROM ledger_entries WHERE hash = ?`, hash).Scan(&entry)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("no ledger entry with receipt %q", hash)
+	}
+	return json.RawMessage(entry), err
+}
+
+// LedgerFindByCompensates reports whether any entry already *delivered* an
+// undo of the entry whose hash is receiptHash — the idempotency check that
+// keeps a successful undo a one-time action. Scoped to outcome=delivered
+// deliberately: a gated undo a human denied also carries `compensates` (C4
+// records the refused proposal, same as any other gate — see
+// executor.sealDenial), and a denial must not permanently block a later,
+// approved retry of the same undo. Uses SQLite's JSON1 extension the same
+// way ListSessions already does for `$.kind`, so no schema change (a
+// dedicated column) is needed for a field most entries will never carry.
+func (s *Store) LedgerFindByCompensates(receiptHash string) (entry json.RawMessage, found bool, err error) {
+	var e string
+	err = s.db.QueryRow(
+		`SELECT entry FROM ledger_entries
+		 WHERE json_extract(entry, '$.compensates') = ?
+		   AND json_extract(entry, '$.outcome') = 'delivered'
+		 LIMIT 1`,
+		receiptHash).Scan(&e)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return json.RawMessage(e), true, nil
 }
 
 // LedgerEntries returns entries in seq order starting at fromSeq (inclusive).

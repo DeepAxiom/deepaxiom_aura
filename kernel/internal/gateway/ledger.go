@@ -51,6 +51,43 @@ func (g *Gateway) listLedger(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// sessionLedger returns one session's sealed entries in seq order (GET
+// /v1/sessions/{id}/ledger) — what `aura undo <session>` walks backwards.
+// Unbounded, like `aura verify`'s read and unlike listLedger's page: a
+// session's own effects are already a small, bounded slice of the whole
+// ledger, so there is no flood risk in returning all of them.
+func (g *Gateway) sessionLedger(w http.ResponseWriter, r *http.Request) {
+	if g.Ldg == nil {
+		writeJSON(w, 404, map[string]string{"error": "this node has no effect ledger"})
+		return
+	}
+	session := r.PathValue("id")
+	entries, err := g.St.LedgerEntriesBySession(session)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"session": session, "entries": entries})
+}
+
+// ledgerEntry returns one sealed entry by its own receipt (GET
+// /v1/ledger/entries/{hash}) — what `aura undo <receipt>` (single-effect
+// mode) looks up, and what a session-mode undo uses to check whether an
+// entry it is about to reverse was already undone by an earlier run.
+func (g *Gateway) ledgerEntry(w http.ResponseWriter, r *http.Request) {
+	if g.Ldg == nil {
+		writeJSON(w, 404, map[string]string{"error": "this node has no effect ledger"})
+		return
+	}
+	entry, err := g.St.LedgerEntryByHash(r.PathValue("hash"))
+	if err != nil {
+		writeJSON(w, 404, map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(entry)
+}
+
 func parseSeqParam(v string, fallback uint64) uint64 {
 	if v == "" {
 		return fallback

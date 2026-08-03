@@ -94,6 +94,12 @@ type Entry struct {
 	// the effect actually carried.
 	PayloadSHA256 string        `json:"payload_sha256"`
 	Compensation  *Compensation `json:"compensation,omitempty"`
+	// Compensates is set only on an entry that IS an undo: the receipt (Hash())
+	// of the entry it reverses. Additive C4 field (Phase 2). Its presence is
+	// also what makes an undo idempotent — see ledger.Entry.Compensates usage
+	// in executor.NewSession, which refuses a second undo of the same receipt
+	// by checking whether any entry already carries it here.
+	Compensates string `json:"compensates,omitempty"`
 }
 
 // Hash is this entry's identity in the chain: sha256 of its canonical JSON,
@@ -122,6 +128,9 @@ type SealRequest struct {
 	Policy       string
 	Payload      json.RawMessage
 	Compensation *Compensation
+	// Compensates, when set, marks this entry as the undo of the entry whose
+	// Hash() equals this value. Empty for every ordinary effect.
+	Compensates string
 }
 
 // Ledger is one node's effect ledger: a single writer serialised by mu, so
@@ -203,6 +212,7 @@ func (l *Ledger) Seal(req SealRequest) (receipt string, err error) {
 		Actor: req.Actor, Capability: req.Capability,
 		Decision: req.Decision, Outcome: req.Outcome, Policy: req.Policy,
 		PayloadSHA256: payloadHash, Compensation: req.Compensation,
+		Compensates: req.Compensates,
 	}
 	hash := entry.Hash()
 

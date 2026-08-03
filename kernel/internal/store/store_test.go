@@ -427,6 +427,97 @@ func TestLedgerEntriesReturnsInSeqOrderFromAPoint(t *testing.T) {
 	}
 }
 
+// --- undo read paths (Phase 2, `aura undo`) ------------------------------------
+
+func TestLedgerEntriesBySessionFiltersAndOrders(t *testing.T) {
+	st := open(t)
+	if err := st.AppendLedgerEntry(1, "hash-1", "sess-a", []byte(`{"seq":1}`)); err != nil {
+		t.Fatalf("append 1: %v", err)
+	}
+	if err := st.AppendLedgerEntry(2, "hash-2", "sess-b", []byte(`{"seq":2}`)); err != nil {
+		t.Fatalf("append 2: %v", err)
+	}
+	if err := st.AppendLedgerEntry(3, "hash-3", "sess-a", []byte(`{"seq":3}`)); err != nil {
+		t.Fatalf("append 3: %v", err)
+	}
+
+	got, err := st.LedgerEntriesBySession("sess-a")
+	if err != nil {
+		t.Fatalf("LedgerEntriesBySession: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d entries for sess-a; want 2 (sess-b's must be excluded)", len(got))
+	}
+	var first, second struct {
+		Seq int `json:"seq"`
+	}
+	_ = json.Unmarshal(got[0], &first)
+	_ = json.Unmarshal(got[1], &second)
+	if first.Seq != 1 || second.Seq != 3 {
+		t.Fatalf("got seq order (%d, %d); want (1, 3)", first.Seq, second.Seq)
+	}
+}
+
+func TestLedgerEntryByHash(t *testing.T) {
+	st := open(t)
+	if err := st.AppendLedgerEntry(1, "sha256:abc", "sess-a", []byte(`{"seq":1}`)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	entry, err := st.LedgerEntryByHash("sha256:abc")
+	if err != nil {
+		t.Fatalf("LedgerEntryByHash: %v", err)
+	}
+	var got struct {
+		Seq int `json:"seq"`
+	}
+	_ = json.Unmarshal(entry, &got)
+	if got.Seq != 1 {
+		t.Fatalf("got seq %d; want 1", got.Seq)
+	}
+	if _, err := st.LedgerEntryByHash("sha256:does-not-exist"); err == nil {
+		t.Fatal("an unknown receipt was not reported as an error")
+	}
+}
+
+// This is the idempotency check that keeps an undo a one-time action —
+// executor.validateUndo calls it before ever building an undo session.
+func TestLedgerFindByCompensates(t *testing.T) {
+	st := open(t)
+	if err := st.AppendLedgerEntry(1, "sha256:original", "sess-a", []byte(`{"seq":1}`)); err != nil {
+		t.Fatalf("append original: %v", err)
+	}
+	if _, found, err := st.LedgerFindByCompensates("sha256:original"); err != nil || found {
+		t.Fatalf("found=%v err=%v before any undo was sealed; want found=false", found, err)
+	}
+
+	deniedUndo := []byte(`{"seq":2,"compensates":"sha256:original","outcome":"denied"}`)
+	if err := st.AppendLedgerEntry(2, "sha256:denied-undo", "sess-a", deniedUndo); err != nil {
+		t.Fatalf("append denied undo: %v", err)
+	}
+	if _, found, err := st.LedgerFindByCompensates("sha256:original"); err != nil || found {
+		t.Fatalf("found=%v err=%v after only a DENIED undo attempt; a denial must not block a retry", found, err)
+	}
+
+	deliveredUndo := []byte(`{"seq":3,"compensates":"sha256:original","outcome":"delivered"}`)
+	if err := st.AppendLedgerEntry(3, "sha256:delivered-undo", "sess-a", deliveredUndo); err != nil {
+		t.Fatalf("append delivered undo: %v", err)
+	}
+	entry, found, err := st.LedgerFindByCompensates("sha256:original")
+	if err != nil {
+		t.Fatalf("LedgerFindByCompensates: %v", err)
+	}
+	if !found {
+		t.Fatal("the delivered undo entry was not found by its compensates value")
+	}
+	var got struct {
+		Seq int `json:"seq"`
+	}
+	_ = json.Unmarshal(entry, &got)
+	if got.Seq != 3 {
+		t.Fatalf("found entry has seq %d; want 3 (the delivered undo, not the denied attempt)", got.Seq)
+	}
+}
+
 func TestCheckpointRoundTrip(t *testing.T) {
 	st := open(t)
 

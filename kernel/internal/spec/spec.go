@@ -27,7 +27,7 @@ var SkillTypes = []string{TypeSensorial, TypeCognitive, TypeMotor, TypeMemory, T
 // Skill formats (C1).
 const (
 	FormatSource     = "source"     // Runs from source in a language runtime.
-	FormatWasm       = "wasm"       // A sandboxed Wasm module (executor not yet implemented).
+	FormatWasm       = "wasm"       // A sandboxed Wasm module (wazero, WASI command model; one ingress/egress port; filesystem and egress_http both enforced).
 	FormatModel      = "model"      // A model artifact behind a driver.
 	FormatProjection = "projection" // An existing system exposed as a skill.
 )

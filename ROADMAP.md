@@ -1,12 +1,21 @@
 # Roadmap
 
-*[English version below](#roadmap-english) · Estado a 2026-08-01 · v0.3.0 → v0.5.0 (Beta abierta)*
+*[English version below](#roadmap-english) · Estado a 2026-08-03 · v0.3.0 → v0.5.0 (Beta abierta)*
 
-> **Fases 0 y 1 completadas.** Los tres agujeros que contradecían lo que el
-> runtime promete están cerrados, y la cuña —el ledger de efectos— está
-> construida, probada y verificable sin conexión. Lo que sigue es la Fase 2 —
-> reversibilidad y resume de sesión. El detalle está más abajo, en "Fase 0 ·
-> Seguridad y verdad" y "Fase 1 · El ledger de efectos".
+> **Fases 0, 1 y 2 completadas; Fase 3 en curso.** Los tres agujeros que
+> contradecían lo que el runtime promete están cerrados, la cuña —el ledger
+> de efectos— está construida, probada y verificable sin conexión, y las
+> cuatro propiedades de la tesis (autorizado, atestiguado, reversible,
+> reproducible) están implementadas y probadas: `aura undo`, resume de
+> sesión y replay determinista contra el ledger. De la Fase 3 (alcance), los
+> skills Wasm con sandbox real ya están construidos completos —
+> `filesystem` y `egress_http` ambos aplicados de verdad —, CDC de
+> Postgres ya está construido (`skills/postgres-cdc`, logical replication →
+> eventos causales), y transporte P2P negociado ya está construido para
+> LAN/mismo-host (conexión de federación reutilizada en vez de redialeada
+> por envelope); solo queda `libaura`. El detalle está más abajo, en
+> "Fase 0 · Seguridad y verdad", "Fase 1 · El ledger de efectos",
+> "Fase 2 · Reversibilidad y resume" y "Fase 3 · Alcance".
 
 Este documento es el **estado** del runtime y su dirección, no su historia: qué
 está construido, qué contradice hoy lo que el runtime promete, y en qué orden
@@ -364,7 +373,7 @@ envelope entregado coincide exactamente con el hash de la entrada sellada.
 
 ---
 
-## Fase 2 · Reversibilidad y resume ← *siguiente*
+## Fase 2 · Reversibilidad y resume ✅ *(completada)*
 
 **~4 semanas. Post-beta, sobre una beta ya en manos de gente.**
 
@@ -372,29 +381,76 @@ Van juntas porque son el mismo problema —reconstruir estado desde el log— y
 porque las dos se abaratan al existir la Fase 1. Parte del trabajo ya está
 hecho: `compensates` (C1) y el campo `compensation` de cada entrada del ledger
 (C4) llevan construidos desde la Fase 1 — un skill motor ya puede declarar su
-reverso y el ledger ya lo registra en cada efecto sellado. Lo que falta es la
-mitad activa.
+reverso y el ledger ya lo registra en cada efecto sellado.
 
-**`aura undo <sesión|recibo>`.** Camina el ledger hacia atrás y acciona el
+**`aura undo <sesión|recibo>` ✅.** Camina el ledger hacia atrás y acciona el
 puerto de undo (`compensates.port`) de cada efecto autorizado, en orden causal
-inverso. Cada undo **es a su vez un efecto**: pasa por política y se sella
-— no hay un camino especial "esto es un undo" que se salte el checkpoint. Los
-efectos sin compensación declarada se reportan como irreversibles, que ya es
-información visible hoy en cualquier entrada del ledger sin campo
-`compensation` — "esta sesión hizo cuatro cosas, tres se pueden deshacer, una
-no" se puede leer ya con `aura verify` o `GET /v1/ledger`, aunque `aura undo`
-en sí todavía no exista.
+inverso. Un undo no es un camino especial: es un edge de grafo efímero más
+(`client.undo_out -> <skill>.<compensates.port>`), construido y disparado
+igual que `aura do` dispara un grafo generado por el planner — así que pasa
+por el mismo Effect Checkpoint que cualquier otra entrega
+([`Session.forward`](kernel/internal/executor/session.go)), sin un tercer
+punto de inserción. `executor.validateUndo` rechaza la sesión de undo *antes*
+de construirla — mismo patrón que ya usa un `deny` de política — si el recibo
+no existe, el efecto nunca se entregó, el skill no declaró compensación, o el
+recibo ya fue deshecho por un intento anterior (una denegación del propio
+undo no cuenta como "ya deshecho": queda registrada, con `compensates`
+apuntando al recibo original, pero un reintento posterior sigue siendo
+posible). C4 gana un campo aditivo, `compensates` (v1.0 → v1.1,
+[spec/c4-ledger.md](spec/c4-ledger.md)): el recibo de la entrada que una
+entrada de undo revierte — lo que hace la operación auditable y, vía
+`store.LedgerFindByCompensates`, idempotente. Probado con los mismos criterios
+que la Fase 1: un doble-undo del mismo recibo se rechaza, un efecto sin
+compensación declarada se rechaza, un efecto nunca entregado (gate denegado)
+se rechaza, y un undo gateado por política que un humano deniega sella de
+todos modos `gate/denied` con `compensates` presente.
 
-**Resume de sesión.** Reconectar reconstruyendo puertas pendientes, tracking en
-vuelo y ventana de dedup. Es el hueco más grande frente a la apuesta de un
-runtime persistente, y hasta que exista, "persistente" significa el log y no la
-sesión. Se aplazó hasta aquí porque una sesión de voz puede reconectar
-reiniciándose al coste de un turno — eso lo hizo aplazable, no descartable — y
-porque la maquinaria de reconstrucción que necesita es la misma que la
-compensación.
+**Resume de sesión ✅.** Reconectar reconstruye puertas pendientes, tracking en
+vuelo y ventana de dedup — desde el log causal, no desde memoria que
+sobrevivió por casualidad. `NewSession` llama `resumeFromLog` una vez, al
+final de la construcción de cualquier sesión: para una sesión nueva el log
+está vacío y no hace nada, así que un primer arranque y una reconexión —
+cliente que se cayó y volvió, o el propio proceso del kernel reiniciado —
+toman exactamente el mismo camino, sin flag ni parámetro nuevo. Reconstruye
+cinco cosas desde `store.SessionEvents` (ya existente, ya usado por `aura
+why`/`aura replay`): la ventana de dedup (`channel.Dedup.Seen` reproducido en
+orden), el índice causal y el de trabajo-en-vuelo (de los que depende que un
+`cancel` post-resume alcance una cadena multi-hop que ya estaba en curso), el
+conjunto de raíces canceladas (para que una cancelación justo antes de caerse
+la conexión siga suprimida después), los gates de aprobación humana aún
+pendientes, y el contador `Seq` por hop — sin este último un hop resumido
+reiniciaría su numeración en 1 en vez de continuar donde iba, violando la
+garantía de monotonicidad de C3 en silencio; el propio test adversarial que
+lo prueba es exactamente el caso que una reconstrucción ingenua (resetear a
+cero) pasaría todos los demás tests mientras rompe éste. `std/confirmation@1`
+gana dos campos opcionales aditivos, `to_ref`/`to_port` (C1 v1.3 → v1.4): un
+gate pendiente reconstruido necesita saber a qué destino exacto apuntaba, y
+el puerto de origen solo no alcanza cuando una sesión tiene más de un gate
+humano simultáneo alcanzable desde el mismo puerto. Nada de esto vuelve a
+sellar un efecto, vuelve a escribir en el log, ni reenvía nada a un skill —
+solo reconstruye mapas que nunca fueron durables.
 
-**Replay determinista** contra el ledger como oráculo, cerrando la cuarta
-propiedad de la tesis.
+**Replay determinista ✅.** Cierra la cuarta propiedad de la tesis
+(Reproducible). `aura replay` ya reconstruía la conversación — reenviaba los
+inputs reales de una sesión contra el grafo actual y diferenciaba lo que un
+cliente habría visto; eso prueba que la conversación se pareció, no que la
+*autorización* se comportó igual. Lo que faltaba era comparar contra el
+ledger, no contra la transcripción: al terminar de reproducir una sesión,
+`aura replay` ahora pide `GET /v1/sessions/{id}/ledger` de la sesión original
+y de la nueva (el mismo endpoint que ya construyó `aura undo`) y las compara
+posición por posición con `ledger.Diff`
+([kernel/internal/ledger/diff.go](kernel/internal/ledger/diff.go)) —
+automático, no una flag, porque el ledger no es opcional en ningún nodo. La
+comparación separa dos categorías, no una: una `capability`, `decision` u
+`outcome` que no coinciden es una **divergencia** — la policy vigente cambió
+de forma que le importa a esa capability, exactamente el tipo de deriva que
+`aura replay` existe para exponer; un `actor` (versión de skill), `policy`
+(hash del documento), `payload_sha256` o forma de `compensation` distintos
+son una **nota** — se muestran siempre, pero no rompen `Reproducible()`,
+porque el propio `aura replay` ya documentaba que un grafo con modelo puede
+legítimamente redactar un efecto distinto sin que eso sea un fallo de
+autorización. `Diff` vive en el paquete `ledger`, puro y sin I/O, para que
+sea un test de Go real y no lógica de CLI sin probar.
 
 ---
 
@@ -405,15 +461,94 @@ propiedad de la tesis.
 - **`libaura`** — el mismo cliente de canales como librería enlazable vía
   `-buildmode=c-shared`, con bindings Kotlin y Swift, más `GOOS=wasip1` para
   edge y navegador. Es empaquetado: el protocolo ya es el contrato.
-- **Skills Wasm con sandbox real** — un executor `format: wasm` sobre wazero.
-  Esto es lo que hace **verdad** la regla 3 de C1: hoy `permissions` es una
-  declaración que el registro enseña al instalar, no un sandbox que el kernel
-  aplique. Con wazero, `egress_http` y `filesystem` se aplican de verdad.
-- **CDC / replicación lógica de Postgres** — sigue siendo la vía más
-  diferenciadora frente a n8n para legacy sin API, y encaja limpiamente con la
-  tesis: un cambio de fila se vuelve un evento causal y sellado.
-- **Transporte P2P negociado** — la regla 5 de C3 ya lo contempla; hoy todo el
-  plano de datos relaya por el kernel, que es el cuello de botella estructural.
+- **Skills Wasm con sandbox real ✅** — un executor `format: wasm` sobre
+  wazero ([kernel/internal/wasmrt](kernel/internal/wasmrt)), puro Go, sin
+  cgo. Esto es lo que hace **verdad** la regla 3 de C1: antes `permissions`
+  era una declaración que el registro enseñaba al instalar (`aura add`),
+  nunca algo que el kernel aplicara. `filesystem` (`read:<path>` \|
+  `write:<path>`) se aplica vía preopens de WASI — sin concesión explícita
+  un skill wasm no puede tocar el disco en absoluto, y con una queda
+  encerrado exactamente a ese directorio. `egress_http` (una allowlist de
+  dominios, no un booleano) se aplica vía un host import propio,
+  `env.http_fetch` — el guest asigna sus propios buffers de request y
+  respuesta (nada de exportar un allocator: un `var respBuf [N]byte` a
+  nivel de paquete ya tiene una dirección estable en su propia memoria) y
+  el host solo completa el fetch si el hostname exacto de la URL está en
+  `permissions.egress_http` para *ese* skill — el permiso viaja en el
+  `context.Context` de cada `Invoke`, no en un campo compartido, así que dos
+  invocaciones concurrentes con distintos permisos nunca se contaminan
+  entre sí (probado con 20 rondas de llamadas concurrentes con permisos
+  opuestos contra el mismo import). Coincidencia exacta de hostname, no
+  prefijo ni sufijo — la misma postura que ya tiene `executor/policy.go`:
+  una política que un auditor no puede leer de un vistazo deja de ser una
+  política. Una respuesta más grande que el buffer del guest se trunca
+  (semántica de short read, documentada, no silenciosa) en vez de negarse.
+  Todo esto verificado con guests reales compilados en el propio test
+  (`GOOS=wasip1 GOARCH=wasm`), no simulado. El contrato del guest en v1
+  sigue siendo deliberadamente angosto — un módulo WASI "command" (el mismo
+  modelo que un script CGI: se instancia una vez por entrega), exactamente
+  un puerto de ingreso y uno de egreso — así que apunta a skills síncronos
+  (`logical`/`motor`), no a los `sensorial`/`cognitive` que necesitan
+  streaming; esos siguen siendo `format: source`. Un skill wasm nunca es un
+  proceso aparte: se aloja *dentro* del propio kernel
+  (`POST /v1/skills/wasm`), y `aura run` hace ese POST en lugar de lanzar un
+  proceso cuando el manifiesto instalado declara `format: wasm`.
+- **CDC / replicación lógica de Postgres ✅** — un skill nuevo,
+  [skills/postgres-cdc](skills/postgres-cdc), no un cambio de kernel: se
+  conecta al kernel por el mismo `/ws/skill` que cualquier skill `source`
+  (`sdk/python/src/aura/skill.py`), exactamente como `skills/connector` o
+  `skills/tuya-*`. Usa el plugin `test_decoding` — el que viene incluido en
+  el núcleo de Postgres desde la 9.4, sin instalar ninguna extensión —
+  verificado a mano contra un Postgres real: `wal2json`, el plugin que en
+  un principio parecía la opción obvia por dar JSON limpio, **no está
+  presente** ni siquiera en la imagen `debezium/postgres:16` pensada
+  justamente para probar CDC (`pg_create_logical_replication_slot(...,
+  'wal2json')` falla ahí mismo). El precio de usar `test_decoding` es un
+  formato de texto en vez de JSON — `parse_test_decoding_line` en
+  `main.py` es una función pura, separada a propósito para poder probarla
+  sin base de datos, contra texto realmente capturado de un servidor vivo,
+  no inventado. Un evento por fila cambiada, no por transacción — la misma
+  razón por la que el ledger de efectos sella un efecto a la vez y no una
+  transacción entera (`spec/c4-ledger.md`). Nuevo schema aditivo,
+  `std/db-change@1` (C1 v1.4 → v1.5): `{ table, op, columns, lsn? }`.
+  Probado de punta a punta contra un `postgres:16` de Docker real — no
+  mockeado — incluida la fila que en un DELETE solo trae las columnas de
+  identidad de réplica (el primary key, por defecto: una propiedad real de
+  Postgres, no un bug del parser) y un NULL que redondea correctamente a
+  `None` en Python.
+- **Transporte P2P negociado ✅ para LAN/mismo-host · QUIC/WebRTC/NAT
+  traversal pendiente** — la regla 5 de C3 ya lo contempla
+  ("mismo proceso → LAN → QUIC/WebRTC → relay del kernel"); lo que hoy relaya
+  por el kernel, leído en el código y no asumido, era más específico de lo
+  que sonaba: `internal/fed/bridge.go` abría una conexión WebSocket **nueva
+  al nodo remoto por cada envelope relayado** — confirmado con el propio
+  contador `streamOpened` del test double del bridge, que
+  `TestRemoteGraphIsRegisteredOncePerSession` ya usaba para probar el cacheo
+  del grafo sin notar que la CONEXIÓN no estaba cacheada. Cinco mensajes
+  relayados eran cinco handshakes completos al nodo remoto y, porque nunca se
+  pasaba `?session=`, cinco sesiones remotas desconectadas entre sí — sin
+  continuidad causal alguna en el nodo remoto para una conversación federada.
+  Ahora `Bridge` mantiene **una conexión persistente por capability
+  federada**, reutilizada entre relays en vez de redialeada por cada uno —
+  vía `pooledConn`, con un demux de respuestas por id de envelope (mismo
+  problema que `relayState` ya resuelve para cancelación, resuelto acá para
+  las respuestas). Cancelar un solo relay ya **no puede cerrar el socket
+  compartido** — eso abortaría cualquier otro relay que lo esté usando — así
+  que ahora es un envelope `cancel` de verdad, dirigido con el cause_id que
+  el remoto reconoce, probado explícitamente contra la regresión que un
+  port ingenuo del cierre-de-socket habría introducido (un relay cancelado
+  no debe afectar a otro que comparte la misma conexión). La "negociación"
+  de C3 regla 5 se hizo real y observable: `Bridge.Run` mide RTT contra
+  `/healthz` del remoto y clasifica la ruta (mismo-host / LAN / relay),
+  impreso en `aura federate`. Deliberadamente **no** intentado: el cliente
+  conectándose directo al nodo remoto sin pasar por el kernel local en
+  absoluto — cada nodo tiene que seguir viendo cada envelope para su propio
+  log causal (C3 regla 7) y, en un `motor`, su propio Effect Checkpoint (C4);
+  colapsar eso en un solo salto significaría que el nodo LOCAL deja de ver
+  tráfico que está contractualmente obligado a loguear. Lo que esta pieza
+  elimina es el costo de dial-por-envelope y la fragmentación de sesión, no
+  un salto que tiene que existir por causalidad — ese rediseño mayor queda
+  nombrado como el siguiente paso, no intentado bajo este alcance.
 
 ---
 
@@ -436,16 +571,27 @@ Los criterios de salida son verificables, no opinables. Estado a hoy:
 | 6 | Cadena del ledger íntegra y `aura verify` funcionando sin el nodo | ✅ |
 | 7 | Alterar una fila del ledger hace fallar `aura verify` — incluido el caso donde el atacante repara la cadena después de manipularla, que solo la firma del checkpoint atrapa | ✅ probado con Go tests y con un job de CI contra un binario real |
 | 8 | Cobertura de kernel ≥80% | ⚠️ `internal/` 77.4%; el módulo entero 55.6% por `cmd/aura` (los subsistemas de confianza — `ledger` 89%, `signing` 90%, `registry` 93%, `executor` 88% — superan el objetivo) |
-| 9 | El flujo completo corre en un binario arm64 sobre una Raspberry Pi | pendiente de hardware |
-| 10 | `SECURITY.md` con política de divulgación, releases firmados y SBOM | pendiente |
+| 9 | El flujo completo corre en un binario arm64 sobre una Raspberry Pi | pendiente de hardware — `scripts/pi_smoke_test.sh` ya deja el flujo (conformance C1/C2/C3, adversarial C4, hardening de default node) listo para correr en un solo paso el día que haya un Pi a mano |
+| 10 | [`SECURITY.md`](SECURITY.md) con política de divulgación, releases firmados y SBOM | ✅ |
 
-**8 de 10 criterios cumplidos.** Los dos que faltan no son de código: uno
-necesita hardware físico para probarse (el binario ya compila para arm64, ver
-`cross-compile` en CI), y el otro es papeleo de proceso de release
-(`SECURITY.md`, firma de artefactos, SBOM) que no depende de ninguna decisión
-de arquitectura pendiente. Ninguno de los dos bloquea que el runtime *funcione*
-como promete; ambos son honestos de dejar fuera de "listo" hasta que estén
-hechos, y por eso siguen marcados como pendientes en vez de darse por buenos.
+**9 de 10 criterios cumplidos.** El que falta no es de código: necesita
+hardware físico para probarse (el binario ya compila para arm64, ver
+`cross-compile` en CI, y `scripts/pi_smoke_test.sh` reutiliza la suite de
+conformance y adversarial ya probadas en amd64 para cerrarlo sin inventar
+infraestructura nueva). El criterio 10 se cerró en este pase:
+[`SECURITY.md`](SECURITY.md) documenta la política de divulgación, y
+[`.github/workflows/release.yml`](.github/workflows/release.yml) genera un
+SBOM real (`cyclonedx-gomod` contra el módulo Go del kernel) y firma
+checksums + SBOM de cada release con Cosign keyless (Sigstore, vía OIDC de
+GitHub Actions — sin clave privada que gestionar). Verificado en este
+entorno de verdad, no solo escrito: el SBOM se generó realmente contra
+`kernel/go.mod` (17 componentes, CycloneDX 1.6 válido) y
+`scripts/pi_smoke_test.sh` se probó de punta a punta contra un binario local
+(conformance 59/59, ledger adversarial, hardening por defecto, todos verdes).
+Lo único no disparado de verdad en este pase es un run real del propio
+workflow de GitHub Actions — no hay `gh`/`act` en este entorno para
+lanzarlo — así que la lógica de cada paso se validó a mano contra este
+mismo repo en vez de fingir un run que no ocurrió.
 
 ---
 
@@ -659,8 +805,12 @@ Qué se construye:
 
 # Roadmap (English)
 
-*Status as of 2026-08-01 · v0.3.0 → v0.5.0 (open beta). Phases 0 and 1 are
-done.* This document is the
+*Status as of 2026-08-03 · v0.3.0 → v0.5.0 (open beta). Phases 0, 1 and 2 are
+done — all four properties of the thesis (authorized, attested, reversible,
+reproducible) are implemented and tested. Phase 3 is in progress: Wasm
+skills with a real sandbox (both `filesystem` and `egress_http` enforced),
+Postgres CDC, and negotiated P2P transport for LAN/same-host are done; only
+`libaura` remains.* This document is the
 **state** of the runtime and its direction, not its history. None of it rests on
 the git history — it rests on the code, and the README's [milestone
 status](README.md#milestone-status) says which part of that code is covered by
@@ -826,29 +976,164 @@ approved one seals `gate`/`delivered`, a denied one seals `gate`/`denied`, and
 the receipt on the delivered envelope matches the sealed entry's own hash
 exactly.
 
-## Phase 2 · Reversibility and resume ← next — ~4 weeks, post-beta
+## Phase 2 · Reversibility and resume ✅ *(done)* — ~4 weeks, post-beta
 
 The two ship together because they are the same problem — reconstructing state
-from the log — and get cheaper once Phase 1 exists. Part of the work is already
-done: `compensates` (C1) and every sealed entry's `compensation` field (C4)
-shipped in Phase 1 — a motor skill can already declare its reverse and the
-ledger already records it on every effect. What is missing is the active half:
-`aura undo <session|receipt>` walking the ledger backwards in reverse causal
-order, with each undo *itself* a sealed, policy-checked effect — no special
-"this is an undo" path that skips the checkpoint. Effects without declared
-compensation are already visible as irreversible today, in any ledger entry
-with no `compensation` field — readable now via `aura verify` or
-`GET /v1/ledger`, even though `aura undo` itself does not exist yet. Session
-resume ships alongside it. Plus deterministic replay against the ledger,
-closing the fourth property.
+from the log — and get cheaper once Phase 1 exists. Part of the work was
+already done in Phase 1: `compensates` (C1) and every sealed entry's
+`compensation` field (C4) — a motor skill can already declare its reverse and
+the ledger already records it on every effect.
+
+**`aura undo <session|receipt>` ✅.** Walks the ledger backwards and drives the
+declared undo port (`compensates.port`) of each authorized effect, in reverse
+causal order. An undo is not a special path: it's one more ephemeral graph
+edge (`client.undo_out -> <skill>.<compensates.port>`), built and driven the
+same way `aura do` drives a planner-generated graph — so it passes through
+the same Effect Checkpoint every other delivery does
+([`Session.forward`](kernel/internal/executor/session.go)), no third
+insertion point. `executor.validateUndo` refuses to build the undo session at
+all — the same "refuse before building" pattern a policy deny already uses —
+when the receipt doesn't exist, the effect was never delivered, the skill
+declared no compensation, or the receipt was already undone by an earlier,
+*delivered* attempt (a denied undo attempt does not count as "already
+undone": it's sealed, with `compensates` pointing at the original receipt,
+but a later retry can still succeed). C4 gains one additive field,
+`compensates` (v1.0 → v1.1, [spec/c4-ledger.md](spec/c4-ledger.md)): the
+receipt of the entry an undo entry reverses — what makes the operation
+auditable and, via `store.LedgerFindByCompensates`, idempotent. Tested to the
+same bar as Phase 1: a double-undo of the same receipt is refused, an effect
+with no declared compensation is refused, an effect that was never delivered
+(a denied gate) is refused, and an undo itself gated by policy still seals
+`gate/denied` with `compensates` present when a human refuses it.
+
+**Session resume ✅.** Reconnecting reconstructs pending gates, in-flight
+tracking, and the dedup window — from the causal log, not from memory that
+happened to survive. `NewSession` calls `resumeFromLog` once, at the end of
+building any session: for a brand-new session the log is empty and it's a
+no-op, so a first-time start and a reconnect — client dropped and came back,
+or the kernel process itself restarted — take the identical path, no new
+flag or parameter. It rebuilds five things from `store.SessionEvents`
+(already existed, already used by `aura why`/`aura replay`): the dedup
+window (`channel.Dedup.Seen` replayed in order), the causal and in-flight
+indexes (what lets a post-resume `cancel` still reach a multi-hop chain
+already under way), the cancelled-roots set (so a cancel that landed right
+before the connection dropped stays suppressed afterward), still-pending
+human-approval gates, and each hop's `Seq` counter — without the last one a
+resumed hop would restart numbering at 1 instead of continuing, silently
+breaking C3's monotonicity guarantee; the adversarial test for it is exactly
+the case a naive reset-to-zero reconstruction would pass every other test
+while still failing. `std/confirmation@1` gains two additive optional
+fields, `to_ref`/`to_port` (C1 v1.3 → v1.4): a reconstructed pending gate
+needs to know exactly which destination it was headed to, and the source
+port alone isn't enough when a session has more than one simultaneous human
+gate reachable from it. None of this reseals an effect, re-appends to the
+log, or resends anything to a skill — it only rebuilds maps that were never
+durable to begin with.
+
+**Deterministic replay ✅.** Closes the thesis's fourth property
+(Reproducible). `aura replay` already reconstructed the conversation —
+re-sent a session's real inputs against the current graph and diffed what a
+client would have seen; that proves the conversation looked the same, not
+that the *authorization* behaved the same. What was missing was comparing
+against the ledger, not the transcript: after replaying a session, `aura
+replay` now fetches `GET /v1/sessions/{id}/ledger` for both the original and
+the new session (the same endpoint `aura undo` already built) and compares
+them positionally with `ledger.Diff`
+([kernel/internal/ledger/diff.go](kernel/internal/ledger/diff.go)) —
+automatic, not a flag, since the ledger is never optional on any node. The
+comparison sorts into two buckets, not one: a mismatched `capability`,
+`decision`, or `outcome` is a **divergence** — the policy in force changed in
+a way that matters for that capability, exactly the kind of drift `aura
+replay` exists to surface; a different `actor` (skill version), `policy`
+(document hash), `payload_sha256`, or compensation shape is a **note** —
+always shown, but doesn't break `Reproducible()`, because `aura replay`
+already documented that a model-backed graph may legitimately word an effect
+differently without that being an authorization failure. `Diff` lives in the
+`ledger` package, pure and I/O-free, so it is a real Go test rather than
+untested CLI logic.
 
 ## Phase 3 · Reach — post-beta
 
 `libaura` via `-buildmode=c-shared` with Kotlin/Swift bindings and `GOOS=wasip1`;
-Wasm skills on wazero, which is what finally makes C1 rule 3 **true** rather than
-declarative; Postgres CDC, still the most differentiating path against n8n for
-legacy with no API; and negotiated P2P transport, already contemplated by C3 rule
-5.
+**Wasm skills on wazero ✅** — a real `format: wasm` executor
+([kernel/internal/wasmrt](kernel/internal/wasmrt)), which is what finally
+makes C1 rule 3 **true** rather than declarative. `filesystem`
+(`read:<path>` \| `write:<path>`) is enforced via WASI preopens: with no
+grant a wasm skill cannot touch disk at all, and a grant confines it to
+exactly that directory. `egress_http` (a domain allowlist, not a boolean)
+is enforced via a purpose-built host import, `env.http_fetch` — the guest
+owns its own request/response buffers (a package-level `var respBuf
+[N]byte` already has a stable address in its own memory, no exported
+allocator needed) and the host only completes a fetch when the URL's exact
+hostname is in that skill's `permissions.egress_http` — the grant travels on
+each `Invoke` call's `context.Context`, not a shared field, so concurrent
+invocations with different grants never cross-contaminate (proven with 20
+rounds of concurrent calls carrying opposite permissions against the same
+import). Exact hostname match only, no prefix/suffix — the same posture
+`executor/policy.go` already takes: a policy an auditor can't read at a
+glance stops being one. An oversized response is truncated (documented
+short-read semantics), not silently dropped or refused. All of it proven
+against real compiled guests (`GOOS=wasip1 GOARCH=wasm`) in the test suite
+itself, not simulated. v1's guest contract stays deliberately narrow — a
+WASI "command" module (payload in on stdin, reply out on stdout, one
+instantiation per delivery — the CGI model), one ingress and one egress
+port, so it targets synchronous `logical`/`motor` skills; `sensorial`/
+`cognitive` streaming skills stay `format: source`. A wasm skill is hosted
+*inside* the kernel process (`POST /v1/skills/wasm`) and is never a separate
+OS process — `aura run` POSTs to it instead of spawning one when the
+installed manifest declares `format: wasm`. **Postgres CDC ✅** — a new
+skill, [skills/postgres-cdc](skills/postgres-cdc), not a kernel change: it
+connects to the kernel over the same `/ws/skill` any `source` skill uses
+(`sdk/python/src/aura/skill.py`), exactly like `skills/connector` or
+`skills/tuya-*`. Uses `test_decoding` — built into Postgres core since 9.4,
+no extension install — verified by hand against a real server: `wal2json`,
+the plugin that looked like the obvious choice for clean JSON, **is not
+present** even in the `debezium/postgres:16` image built for exactly this
+purpose (`pg_create_logical_replication_slot(..., 'wal2json')` fails right
+there). The cost of `test_decoding` is a text format instead of JSON —
+`parse_test_decoding_line` in `main.py` is a pure function, factored out
+specifically so it is testable with no database at all, against text
+actually captured from a live server, not invented. One event per row
+change, not per transaction — the same reason the effect ledger seals one
+effect at a time rather than a whole transaction's worth
+(`spec/c4-ledger.md`). One new additive schema, `std/db-change@1` (C1 v1.4
+→ v1.5): `{ table, op, columns, lsn? }`. Proven end to end against a real
+Docker `postgres:16` — not mocked — including that a `DELETE` carries only
+the replica-identity columns (the primary key, by default — a real Postgres
+property, not a parser bug) and that a NULL round-trips correctly to
+Python's `None`. **Negotiated P2P transport ✅ for LAN/same-host · QUIC/
+WebRTC/NAT traversal still open** — C3 rule 5 already names the priority
+order ("same process → LAN → QUIC/WebRTC → kernel relay"); what actually
+relayed through the kernel, found by reading the code rather than assumed,
+was narrower and more concrete than it sounded: `internal/fed/bridge.go`
+dialed a **brand-new WebSocket connection to the remote node for every
+single relayed envelope** — confirmed by the bridge's own test double's
+`streamOpened` counter, which `TestRemoteGraphIsRegisteredOncePerSession`
+already used to prove graph caching without anyone noticing the *connection*
+itself was never cached. Five relayed messages meant five full handshakes to
+the remote node and, because no `?session=` was ever passed, five
+disconnected remote sessions — no causal continuity at all on the remote
+side for one federated conversation. `Bridge` now keeps **one persistent
+connection per federated capability**, reused across relays instead of
+redialed per envelope, via `pooledConn`, with replies demultiplexed by
+envelope id — the same problem `relayState` already solved for cancel
+routing, solved here for reply routing. Cancelling one relay can no longer
+close the shared socket — that would abort every other relay riding it — so
+it is now a real `cancel` envelope addressed with the cause_id the remote
+actually recognises, tested explicitly against the regression a naive port
+of the old close-the-socket behavior would introduce (a cancelled relay must
+not affect another sharing its connection). C3 rule 5's "negotiation" is now
+real and observable too: `Bridge.Run` measures round-trip time against the
+remote's `/healthz` and classifies the route (same-host/LAN/relay), printed
+by `aura federate`. Deliberately **not** attempted: a client connecting
+straight to the remote node, bypassing the local kernel entirely for data —
+each node still has to see every envelope for its own causal log (C3 rule 7)
+and, for a `motor` capability, its own Effect Checkpoint (C4); collapsing
+that into one hop would mean the *local* node stops seeing traffic it is
+contractually required to log. What this removes is dial-per-envelope
+overhead and session fragmentation, not a hop causality requires — that
+larger redesign is named as the next step, not attempted under this scope.
+Still open: `libaura`.
 
 ## How the beta opens
 
@@ -856,20 +1141,32 @@ Security first, wedge second: a ledger signed by a node anyone can drive would
 be worse than no ledger, because it would offer a false sense of proof. With
 Phases 0 and 1 both done, that ordering held.
 
-Exit criteria are verifiable rather than opinions, and **8 of 10 are met**:
+Exit criteria are verifiable rather than opinions, and **9 of 10 are met**:
 the adversarial job passes against a default node, the SSOT gate is green, all
 six binaries build on every change, no kernel package sits at zero coverage,
 `go test -race` is green in CI, the ledger's hash chain and `aura verify` work
 with no node running, and tampering — including the repaired-chain case only a
 checkpoint signature catches — is proven to make verification fail, both in Go
-tests and against a real binary in CI. Outstanding: kernel coverage ≥80%
-(`internal/` is at 77.4%, the module 55.6% because of `cmd/aura`; the
+tests and against a real binary in CI. Kernel coverage is close but short of
+≥80% (`internal/` is at 77.4%, the module 55.6% because of `cmd/aura`; the
 trust-carrying subsystems — `ledger` 89%, `signing` 90%, `registry` 93%,
-`executor` 88% — already clear it), a run on real Raspberry Pi hardware, and
-`SECURITY.md` plus signed release artifacts and an SBOM. Neither remaining item
-is a code gap: one needs physical hardware to prove (the binary already
-cross-compiles for arm64), the other is release-process paperwork with no
-architecture decision pending behind it.
+`executor` 88% — already clear it). [`SECURITY.md`](SECURITY.md) closed in
+this pass: it documents the disclosure policy, and
+[`.github/workflows/release.yml`](.github/workflows/release.yml) generates a
+real SBOM (`cyclonedx-gomod` against the kernel's Go module) and signs
+checksums plus the SBOM for every release with keyless Cosign (Sigstore, via
+GitHub Actions' own OIDC identity — no private key to manage). Verified for
+real in this pass, not just written: the SBOM was actually generated against
+`kernel/go.mod` (17 components, valid CycloneDX 1.6), and
+`scripts/pi_smoke_test.sh` was run end-to-end against a local binary
+(conformance 59/59, ledger adversarial, default-node hardening, all green).
+What wasn't fired for real this pass is an actual GitHub Actions run of the
+new workflow — this environment has no `gh`/`act` to trigger one — so each
+step's logic was validated by hand against this repository instead of
+pretending a run happened. Outstanding: a run on real Raspberry Pi hardware —
+not a code gap, the binary already cross-compiles for arm64 in CI, and
+`scripts/pi_smoke_test.sh` packages the already-proven conformance/adversarial
+suites to close this the moment hardware is available.
 
 ## Deferred, and why
 

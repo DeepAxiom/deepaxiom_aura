@@ -80,7 +80,7 @@ func TestMotorEdgeIsGatedWhenGraphDeclaresNoGate(t *testing.T) {
 
 	var toClient []channel.Envelope
 	sess, err := NewSession("s1", graphInto("w", "motor.api.writer", ""),
-		reg, testStore(t), "local", DefaultPolicy(), nil, func(raw []byte, _ string) error {
+		reg, testStore(t), "local", DefaultPolicy(), nil, "", func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
 			toClient = append(toClient, env)
@@ -107,7 +107,7 @@ func TestNonMotorEdgeIsNotGated(t *testing.T) {
 	delivered := liveSkill(t, reg, "acme/logical/echo", "logical", "logical.echo")
 
 	sess, err := NewSession("s2", graphInto("e", "logical.echo", ""),
-		reg, testStore(t), "local", DefaultPolicy(), nil, func([]byte, string) error { return nil }, testLogger())
+		reg, testStore(t), "local", DefaultPolicy(), nil, "", func([]byte, string) error { return nil }, testLogger())
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestExplicitGateOnMotorEdgeIsPreserved(t *testing.T) {
 
 	var toClient []channel.Envelope
 	sess, err := NewSession("s3", graphInto("w", "motor.api.writer", GateHumanApproval),
-		reg, testStore(t), "local", DefaultPolicy(), nil, func(raw []byte, _ string) error {
+		reg, testStore(t), "local", DefaultPolicy(), nil, "", func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
 			toClient = append(toClient, env)
@@ -159,7 +159,7 @@ func TestExplicitGateNoneOptsOutOfTheMotorInvariant(t *testing.T) {
 
 	var toClient []channel.Envelope
 	sess, err := NewSession("s6", graphInto("w", "motor.api.writer", GateNone),
-		reg, testStore(t), "local", DefaultPolicy(), nil, func(raw []byte, _ string) error {
+		reg, testStore(t), "local", DefaultPolicy(), nil, "", func(raw []byte, _ string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)
 			toClient = append(toClient, env)
@@ -205,7 +205,7 @@ func TestPublishedModeRefusesUngatedMotorEdge(t *testing.T) {
 	liveSkill(t, reg, "acme/motor/writer", "motor", "motor.api.writer")
 
 	_, err := NewSession("s4", graphInto("w", "motor.api.writer", ""),
-		reg, testStore(t), "published", DefaultPolicy(), nil, func([]byte, string) error { return nil }, testLogger())
+		reg, testStore(t), "published", DefaultPolicy(), nil, "", func([]byte, string) error { return nil }, testLogger())
 	if err == nil {
 		t.Fatal("want published mode to refuse an ungated motor edge, got nil error")
 	}
@@ -227,7 +227,7 @@ func TestGateApprovalDeliversAndDenialDoesNot(t *testing.T) {
 
 			var toClient []channel.Envelope
 			sess, err := NewSession("s", graphInto("w", "motor.api.writer", ""),
-				reg, testStore(t), "local", DefaultPolicy(), nil, func(raw []byte, _ string) error {
+				reg, testStore(t), "local", DefaultPolicy(), nil, "", func(raw []byte, _ string) error {
 					var env channel.Envelope
 					_ = json.Unmarshal(raw, &env)
 					toClient = append(toClient, env)

@@ -206,6 +206,66 @@ func TestNoCompensationLeavesTheFieldAbsent(t *testing.T) {
 	}
 }
 
+// --- undo marking (Phase 2, `aura undo`) ---------------------------------------
+
+// A second entry that undoes the first must carry `compensates` pointing at
+// the first entry's own receipt, and the chain must still verify — undo
+// marking rides the same hash-chained entry as everything else, not a
+// side channel.
+func TestCompensatesIsCarriedAndTheChainStillVerifies(t *testing.T) {
+	st, _ := testStore(t)
+	l := testLedger(t, st)
+
+	original := req("motor.erp.write")
+	original.Compensation = &Compensation{Capability: "motor.erp.write", Port: "undo_in", Schema: "acme/undo@1"}
+	receipt, err := l.Seal(original)
+	if err != nil {
+		t.Fatalf("Seal (original): %v", err)
+	}
+
+	undo := req("motor.erp.write")
+	undo.Compensates = receipt
+	undoReceipt, err := l.Seal(undo)
+	if err != nil {
+		t.Fatalf("Seal (undo): %v", err)
+	}
+
+	entries, _ := st.LedgerEntries(1, 0)
+	var second Entry
+	if err := json.Unmarshal(entries[1], &second); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if second.Compensates != receipt {
+		t.Fatalf("Compensates = %q, want the original receipt %q", second.Compensates, receipt)
+	}
+	if second.Hash() != undoReceipt {
+		t.Fatalf("recomputed hash %q does not match the receipt Seal returned %q", second.Hash(), undoReceipt)
+	}
+
+	report, err := Verify(st, l.NodePublicKey())
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !report.ChainIntact {
+		t.Fatalf("chain broken at seq %d: %s", report.BrokenAtSeq, report.BrokenReason)
+	}
+}
+
+// An ordinary effect — the overwhelming majority — must not mention
+// `compensates` at all, the same way TestNoCompensationLeavesTheFieldAbsent
+// already holds for `compensation`.
+func TestOrdinaryEffectLeavesCompensatesAbsent(t *testing.T) {
+	st, _ := testStore(t)
+	l := testLedger(t, st)
+	if _, err := l.Seal(req("motor.tts.speak")); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	entries, _ := st.LedgerEntries(1, 0)
+	if bytesContain(entries[0], "compensates") {
+		t.Fatalf("an ordinary effect mentions compensates: %s", entries[0])
+	}
+}
+
 // --- validation ----------------------------------------------------------------
 
 // A bad caller (a typo'd decision string, say) must be refused before it

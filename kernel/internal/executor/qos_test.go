@@ -34,7 +34,7 @@ func qosSession(t *testing.T, qos string, st *store.Store) (*Session, *[]sent, *
 	toSkill := liveSkill(t, reg, "acme/logical/a", "logical", "logical.a")
 
 	var toClient []sent
-	sess, err := NewSession("q1", qosGraph(qos), reg, st, "local", DefaultPolicy(), nil,
+	sess, err := NewSession("q1", qosGraph(qos), reg, st, "local", DefaultPolicy(), nil, "",
 		func(raw []byte, q string) error {
 			var env channel.Envelope
 			_ = json.Unmarshal(raw, &env)

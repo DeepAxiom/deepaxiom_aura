@@ -246,3 +246,75 @@ func TestVerifyLedgerReturns409WhenTampered(t *testing.T) {
 		t.Fatal("report.chain_intact is true despite the tamper")
 	}
 }
+
+// --- GET /v1/sessions/{id}/ledger --------------------------------------------
+// (Phase 2, `aura undo`: what a session-mode undo walks backwards.)
+
+func TestSessionLedgerReturns404WhenNotWired(t *testing.T) {
+	_, h := testGateway(t)
+	code, _ := do(t, h, "GET", "/v1/sessions/sess-1/ledger", nil)
+	if code != 404 {
+		t.Fatalf("status = %d, want 404 for a node with no ledger", code)
+	}
+}
+
+func TestSessionLedgerFiltersToOneSession(t *testing.T) {
+	g, h, _ := testGatewayWithLedger(t)
+	sealTestEffect(t, g.Ldg, "motor.erp.write") // session "sess-1", per sealTestEffect
+
+	code, body := do(t, h, "GET", "/v1/sessions/sess-1/ledger", nil)
+	if code != 200 {
+		t.Fatalf("status = %d, body %v", code, body)
+	}
+	if got, _ := body["session"].(string); got != "sess-1" {
+		t.Errorf("session = %q, want sess-1", got)
+	}
+	entries, _ := body["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+
+	code, body = do(t, h, "GET", "/v1/sessions/no-such-session/ledger", nil)
+	if code != 200 {
+		t.Fatalf("status = %d, want 200 (an empty page, not an error)", code)
+	}
+	entries, _ = body["entries"].([]any)
+	if len(entries) != 0 {
+		t.Fatalf("got %d entries for an unknown session, want 0", len(entries))
+	}
+}
+
+// --- GET /v1/ledger/entries/{hash} -------------------------------------------
+// (Phase 2, `aura undo <receipt>`: single-effect mode, and the lookup
+// executor.validateUndo needs before an undo session is ever built.)
+
+func TestLedgerEntryReturns404WhenNotWired(t *testing.T) {
+	_, h := testGateway(t)
+	code, _ := do(t, h, "GET", "/v1/ledger/entries/sha256:doesnotmatter", nil)
+	if code != 404 {
+		t.Fatalf("status = %d, want 404 for a node with no ledger", code)
+	}
+}
+
+func TestLedgerEntryReturnsTheEntryByReceipt(t *testing.T) {
+	g, h, _ := testGatewayWithLedger(t)
+	receipt := sealTestEffect(t, g.Ldg, "motor.erp.write")
+
+	code, body := do(t, h, "GET", "/v1/ledger/entries/"+receipt, nil)
+	if code != 200 {
+		t.Fatalf("status = %d, body %v", code, body)
+	}
+	if got, _ := body["capability"].(string); got != "motor.erp.write" {
+		t.Errorf("capability = %q, want motor.erp.write", got)
+	}
+}
+
+func TestLedgerEntryReturns404ForAnUnknownReceipt(t *testing.T) {
+	g, h, _ := testGatewayWithLedger(t)
+	sealTestEffect(t, g.Ldg, "motor.erp.write")
+
+	code, _ := do(t, h, "GET", "/v1/ledger/entries/sha256:not-a-real-receipt", nil)
+	if code != 404 {
+		t.Fatalf("status = %d, want 404 for a receipt that was never sealed", code)
+	}
+}

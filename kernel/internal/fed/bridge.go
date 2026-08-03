@@ -85,6 +85,17 @@ type Bridge struct {
 	LocalToken  string
 	RemoteToken string
 	Log         *slog.Logger
+
+	// Route is what Run() measured about the path to the remote node —
+	// same-host, LAN, or relay (see route.go). Set once at startup;
+	// exported so `aura federate` and tests can observe it.
+	Route RouteClass
+
+	// pool holds one persistent /v1/stream connection per federated
+	// capability, reused across every relay instead of dialed fresh per
+	// envelope — see pooledConn and relay().
+	poolMu sync.Mutex
+	pool   map[string]*pooledConn
 }
 
 func (b *Bridge) localHeader() http.Header {
@@ -108,6 +119,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("cannot reach remote node %s: %w", b.RemoteHTTP, err)
 	}
+	b.Route = classifyRoute(b.RemoteHTTP, b.measureRTT())
 	proxied := 0
 	var wg sync.WaitGroup
 	for _, sk := range skills {
@@ -128,10 +140,42 @@ func (b *Bridge) Run(ctx context.Context) error {
 	if proxied == 0 {
 		return fmt.Errorf("remote node exposes no skills matching %q", b.CapFilter)
 	}
-	b.Log.Info("federation active", "remote", b.RemoteHTTP, "proxied", proxied)
-	fmt.Printf("federating %s → %d skill(s) proxied into the local node\n", b.RemoteHTTP, proxied)
+	b.Log.Info("federation active", "remote", b.RemoteHTTP, "proxied", proxied, "route", b.Route)
+	fmt.Printf("federating %s → %d skill(s) proxied into the local node (route: %s)\n",
+		b.RemoteHTTP, proxied, b.Route)
 	wg.Wait()
 	return nil
+}
+
+// measureRTT times a handful of round trips to the remote's /healthz — the
+// same endpoint every node already answers with no token required — and
+// returns the fastest one, so one slow outlier (a cold TCP stack, first-
+// connection DNS) does not misclassify an otherwise-fast route. Failing to
+// measure at all degrades to RouteRelay via classifyRoute rather than
+// aborting federation over what is only an observability signal.
+func (b *Bridge) measureRTT() time.Duration {
+	client := &http.Client{Timeout: 2 * time.Second}
+	best := time.Duration(0)
+	measured := false
+	for i := 0; i < 3; i++ {
+		req, err := http.NewRequest(http.MethodGet, b.RemoteHTTP+"/healthz", nil)
+		if err != nil {
+			continue
+		}
+		start := time.Now()
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if elapsed := time.Since(start); !measured || elapsed < best {
+			best, measured = elapsed, true
+		}
+	}
+	if !measured {
+		return time.Hour // deliberately large: classifyRoute falls through to RouteRelay
+	}
+	return best
 }
 
 func (b *Bridge) remoteSkills() ([]remoteSkill, error) {
@@ -216,40 +260,205 @@ func (b *Bridge) serveProxy(ctx context.Context, s remoteSkill) {
 // This is the federation-side counterpart of the kernel's causal index, and it
 // exists for the same reason: the remote end knows the work by an id the local
 // cancel does not carry, so something has to hold the mapping.
+//
+// Two things a cancel now has to do, where one used to be enough: unblock
+// *this* relay's own wait loop immediately (stop, same as before — a plain
+// context cancellation), and tell the *remote* node to actually stop, which
+// on a connection shared with other relays (see pooledConn) can no longer be
+// "close the socket" — that would abort every other relay sharing it. The
+// remote id and pool are not known until relay() has dialed/reused a
+// connection and sent its envelope, which can race a cancel that arrives
+// first; setRemote resolves that race by sending the cancel immediately if
+// one was already recorded.
 type relayState struct {
 	mu      sync.Mutex
-	byCause map[string]context.CancelFunc
+	byLocal map[string]*trackedRelay
+}
+
+type trackedRelay struct {
+	cancelled bool
+	remoteID  string
+	pool      *pooledConn
+	stop      context.CancelFunc
 }
 
 func newRelayState() *relayState {
-	return &relayState{byCause: map[string]context.CancelFunc{}}
+	return &relayState{byLocal: map[string]*trackedRelay{}}
 }
 
-func (r *relayState) track(causeID string, cancel context.CancelFunc) {
-	if causeID == "" {
+func (r *relayState) track(localID string, stop context.CancelFunc) {
+	if localID == "" {
 		return
 	}
 	r.mu.Lock()
-	r.byCause[causeID] = cancel
+	r.byLocal[localID] = &trackedRelay{stop: stop}
 	r.mu.Unlock()
 }
 
-func (r *relayState) done(causeID string) {
+func (r *relayState) setRemote(localID, remoteID string, pool *pooledConn) {
 	r.mu.Lock()
-	delete(r.byCause, causeID)
+	t, ok := r.byLocal[localID]
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+	t.remoteID, t.pool = remoteID, pool
+	cancelled := t.cancelled
+	r.mu.Unlock()
+	if cancelled {
+		sendCancel(pool, remoteID)
+	}
+}
+
+func (r *relayState) done(localID string) {
+	r.mu.Lock()
+	delete(r.byLocal, localID)
 	r.mu.Unlock()
 }
 
-// cancel aborts the relay for a cause id and reports whether one was running.
-func (r *relayState) cancel(causeID string) bool {
+// cancel marks a tracked relay cancelled — sending the wire cancel envelope
+// now if the remote id is already known, or leaving it for setRemote to send
+// the moment it is — and unblocks the relay's own local wait loop. Reports
+// whether anything was being tracked under this id at all.
+func (r *relayState) cancel(localID string) bool {
 	r.mu.Lock()
-	stop, ok := r.byCause[causeID]
-	delete(r.byCause, causeID)
+	t, ok := r.byLocal[localID]
+	if !ok {
+		r.mu.Unlock()
+		return false
+	}
+	t.cancelled = true
+	remoteID, pool, stop := t.remoteID, t.pool, t.stop
 	r.mu.Unlock()
-	if ok {
+	if pool != nil {
+		sendCancel(pool, remoteID)
+	}
+	if stop != nil {
 		stop()
 	}
-	return ok
+	return true
+}
+
+func sendCancel(pool *pooledConn, remoteID string) {
+	_ = pool.write(channel.Envelope{
+		V: channel.ProtocolMajor, ID: channel.NewID(), CauseID: remoteID, Kind: channel.KindCancel,
+	})
+}
+
+// pooledConn is one persistent /v1/stream connection to the remote node,
+// shared across every relay for one federated capability — the fix for the
+// dial-per-envelope cost this package used to accept as a given (see the
+// package doc comment and ROADMAP.md, Phase 3). A background readLoop
+// demultiplexes replies to whichever relay's channel is registered under
+// the *local* envelope id that relay sent, the same problem relayState
+// already solves for cancel routing, solved here for reply routing.
+type pooledConn struct {
+	conn *websocket.Conn
+
+	writeMu sync.Mutex
+
+	mu      sync.Mutex
+	waiters map[string]chan channel.Envelope
+	closed  bool
+}
+
+func (pc *pooledConn) readLoop(log *slog.Logger) {
+	for {
+		var reply channel.Envelope
+		if pc.conn.ReadJSON(&reply) != nil {
+			pc.closeAndDrain()
+			return
+		}
+		pc.mu.Lock()
+		ch, ok := pc.waiters[reply.CauseID]
+		pc.mu.Unlock()
+		if !ok {
+			continue // nobody is waiting for this any more — already done or cancelled
+		}
+		select {
+		case ch <- reply:
+		default:
+			// A slow (or already-gone) receiver must not stall every other
+			// relay sharing this connection.
+			log.Debug("federation: dropped a reply, receiver too slow or gone")
+		}
+	}
+}
+
+func (pc *pooledConn) closeAndDrain() {
+	pc.mu.Lock()
+	if pc.closed {
+		pc.mu.Unlock()
+		return
+	}
+	pc.closed = true
+	waiters := pc.waiters
+	pc.waiters = map[string]chan channel.Envelope{}
+	pc.mu.Unlock()
+	_ = pc.conn.Close()
+	for _, ch := range waiters {
+		close(ch)
+	}
+}
+
+func (pc *pooledConn) isClosed() bool {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	return pc.closed
+}
+
+func (pc *pooledConn) register(id string) chan channel.Envelope {
+	ch := make(chan channel.Envelope, 8)
+	pc.mu.Lock()
+	pc.waiters[id] = ch
+	pc.mu.Unlock()
+	return ch
+}
+
+func (pc *pooledConn) unregister(id string) {
+	pc.mu.Lock()
+	delete(pc.waiters, id)
+	pc.mu.Unlock()
+}
+
+func (pc *pooledConn) write(env channel.Envelope) error {
+	pc.writeMu.Lock()
+	defer pc.writeMu.Unlock()
+	return pc.conn.WriteJSON(env)
+}
+
+// pooledConnFor returns the shared connection for one capability, dialing
+// and starting it the first time — or after a previous one died — rather
+// than once per envelope. Holding poolMu across the dial serializes
+// concurrent first-relays for the *same* capability (a one-time cost) in
+// exchange for never leaking a duplicate connection; that trade favours
+// correctness over the rare-case latency of a cold start.
+func (b *Bridge) pooledConnFor(ctx context.Context, s remoteSkill, graphID string) (*pooledConn, error) {
+	b.poolMu.Lock()
+	defer b.poolMu.Unlock()
+
+	if b.pool == nil {
+		b.pool = map[string]*pooledConn{}
+	}
+	if pc, ok := b.pool[s.Capability]; ok && !pc.isClosed() {
+		return pc, nil
+	}
+
+	conn, _, err := websocket.DefaultDialer.DialContext(
+		ctx, b.RemoteWS+"/v1/stream?graph="+graphID, b.remoteHeader())
+	if err != nil {
+		return nil, err
+	}
+	var hello channel.Envelope
+	if conn.ReadJSON(&hello) != nil || hello.Kind == channel.KindError {
+		_ = conn.Close()
+		return nil, fmt.Errorf("remote session rejected")
+	}
+
+	pc := &pooledConn{conn: conn, waiters: map[string]chan channel.Envelope{}}
+	go pc.readLoop(b.Log)
+	b.pool[s.Capability] = pc
+	return pc, nil
 }
 
 func (b *Bridge) proxySession(ctx context.Context, s remoteSkill) error {
@@ -304,7 +513,7 @@ func (b *Bridge) proxySession(ctx context.Context, s remoteSkill) error {
 			go func(in channel.Envelope) {
 				defer stop()
 				defer state.done(in.ID)
-				b.relay(relayCtx, in, s, graphID, conn, &writeMu)
+				b.relay(relayCtx, in, s, graphID, conn, &writeMu, state)
 			}(env)
 		}
 	}
@@ -354,9 +563,13 @@ func (b *Bridge) ensureRemoteGraph(s remoteSkill) (string, error) {
 }
 
 // relay drives the capability on the remote node for one ingress envelope,
-// forwarding every reply back to the local caller.
+// forwarding every reply back to the local caller. It no longer owns a
+// connection of its own — it borrows the capability's shared pooledConn
+// (dialing it the first time, via pooledConnFor) and is handed replies
+// through a channel that connection's single reader goroutine demultiplexes
+// by envelope id, rather than reading a private socket directly.
 func (b *Bridge) relay(ctx context.Context, in channel.Envelope, s remoteSkill,
-	graphID string, local *websocket.Conn, writeMu *sync.Mutex) {
+	graphID string, local *websocket.Conn, writeMu *sync.Mutex, state *relayState) {
 
 	ingress := s.Ports.Ingress[0]
 	fallbackPort := "text_out"
@@ -364,24 +577,9 @@ func (b *Bridge) relay(ctx context.Context, in channel.Envelope, s remoteSkill,
 		fallbackPort = s.Ports.Egress[0].Name
 	}
 
-	remote, _, err := websocket.DefaultDialer.DialContext(
-		ctx, b.RemoteWS+"/v1/stream?graph="+graphID, b.remoteHeader())
+	pc, err := b.pooledConnFor(ctx, s, graphID)
 	if err != nil {
 		b.emitError(in, fallbackPort, local, writeMu, "federation link failed: "+err.Error())
-		return
-	}
-	defer remote.Close()
-	// Close the remote socket the moment the relay is cancelled, so a cancel
-	// stops the remote node's work instead of merely stopping us listening
-	// to it.
-	go func() { <-ctx.Done(); remote.Close() }()
-
-	deadline := time.Now().Add(120 * time.Second)
-	_ = remote.SetReadDeadline(deadline)
-
-	var hello channel.Envelope
-	if remote.ReadJSON(&hello) != nil || hello.Kind == channel.KindError {
-		b.emitError(in, fallbackPort, local, writeMu, "remote session rejected")
 		return
 	}
 
@@ -394,34 +592,53 @@ func (b *Bridge) relay(ctx context.Context, in channel.Envelope, s remoteSkill,
 		Idem:   in.Idem + ":fed",
 		Schema: ingress.Schema, Kind: channel.KindData, Payload: in.Payload,
 	}
-	if remote.WriteJSON(out) != nil {
+
+	replies := pc.register(out.ID)
+	defer pc.unregister(out.ID)
+	// Resolves the race against a cancel that arrives before this line runs
+	// — see relayState's doc comment.
+	state.setRemote(in.ID, out.ID, pc)
+
+	if pc.write(out) != nil {
 		b.emitError(in, fallbackPort, local, writeMu, "could not forward to remote")
 		return
 	}
 
+	timer := time.NewTimer(120 * time.Second)
+	defer timer.Stop()
+
 	seq := uint64(0)
-	for ctx.Err() == nil && time.Now().Before(deadline) {
-		var reply channel.Envelope
-		if remote.ReadJSON(&reply) != nil {
+	for {
+		select {
+		case <-ctx.Done():
 			return
-		}
-		switch reply.Kind {
-		case channel.KindData, channel.KindError, channel.KindStatus:
-			seq++
-			// The reply's own port is preserved where the remote named one, so
-			// a multi-port skill stays multi-port across the bridge.
-			replyPort := reply.Port
-			if replyPort == "" || replyPort == "text_in" {
-				replyPort = fallbackPort
-			}
-			b.emit(in, replyPort, reply.Kind, reply.Schema, reply.Payload, seq, local, writeMu)
-			if reply.Kind == channel.KindError {
+		case <-timer.C:
+			return
+		case reply, ok := <-replies:
+			if !ok { // the pooled connection died
+				if seq == 0 {
+					b.emitError(in, fallbackPort, local, writeMu, "federation link lost")
+				}
 				return
 			}
-		case channel.KindDone:
-			seq++
-			b.emit(in, fallbackPort, channel.KindDone, reply.Schema, nil, seq, local, writeMu)
-			return
+			switch reply.Kind {
+			case channel.KindData, channel.KindError, channel.KindStatus:
+				seq++
+				// The reply's own port is preserved where the remote named one, so
+				// a multi-port skill stays multi-port across the bridge.
+				replyPort := reply.Port
+				if replyPort == "" || replyPort == "text_in" {
+					replyPort = fallbackPort
+				}
+				b.emit(in, replyPort, reply.Kind, reply.Schema, reply.Payload, seq, local, writeMu)
+				if reply.Kind == channel.KindError {
+					return
+				}
+			case channel.KindDone:
+				seq++
+				b.emit(in, fallbackPort, channel.KindDone, reply.Schema, nil, seq, local, writeMu)
+				return
+			}
 		}
 	}
 }
