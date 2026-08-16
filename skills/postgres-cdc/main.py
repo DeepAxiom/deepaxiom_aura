@@ -24,6 +24,16 @@ tell this skill (a change, or Postgres's own keepalive) — the SDK's own
 when to notice" for exactly this kind of reason, so this is consistent with
 that contract, not an exception to it.
 
+Reconnection: earlier versions of this skill connected once and let any
+failure (network blip, Postgres restart, replication slot momentarily busy)
+end the whole `watch_in` stream — simplest possible code, but it meant a
+transient failure needed a human to notice the stream died and restart it
+by hand. `_replication_worker` now retries in a loop bounded by
+`stop_event`, sleeping `reconnect_delay_s` between attempts, because a CDC
+feed silently going dark is worse than a few seconds of extra log noise,
+and every failure mode here (the ones worth retrying, at least) is the kind
+that clears up on its own.
+
 Setup, once, on the source database:
 
     ALTER SYSTEM SET wal_level = logical;   -- then restart Postgres
@@ -40,7 +50,6 @@ import asyncio
 import logging
 import os
 import queue
-import re
 import threading
 
 import psycopg2
@@ -48,70 +57,12 @@ import psycopg2.extras
 
 from aura import Context, Skill
 
+from parser import _format_lsn, parse_test_decoding_line
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("postgres-cdc")
 
 skill = Skill()
-
-# --- parsing test_decoding's text output ------------------------------------
-#
-# Real captured shapes (probed by hand against a live Postgres — see the
-# design note above and test_parser.py):
-#
-#   table public.t: INSERT: id[integer]:2 name[text]:'world'
-#   table public.t: UPDATE: id[integer]:2 name[text]:'wo''rld  updated' amount[numeric]:12.50 note[text]:null
-#   table public.t: DELETE: id[integer]:2
-#
-# DELETE (and UPDATE on a table that is not REPLICA IDENTITY FULL) only
-# carries the replica-identity columns — the primary key, by default. That
-# is a property of the source database, not something this parser lost.
-
-_LINE_RE = re.compile(r"^table (?P<table>\S+): (?P<op>INSERT|UPDATE|DELETE): (?P<cols>.*)$")
-_COL_RE = re.compile(r"(?P<name>\w+)\[(?P<type>[^\]]+)\]:(?P<value>'(?:[^']|'')*'|\S+)")
-
-
-def _parse_value(raw: str):
-    if raw == "null":
-        return None
-    if len(raw) >= 2 and raw.startswith("'") and raw.endswith("'"):
-        return raw[1:-1].replace("''", "'")
-    if re.fullmatch(r"-?\d+", raw):
-        return int(raw)
-    try:
-        return float(raw)
-    except ValueError:
-        return raw  # booleans (t/f), dates, and anything else: pass through as text
-
-
-def parse_test_decoding_line(line: str) -> dict | None:
-    """One `test_decoding` output line -> {"table", "op", "columns"}, or None
-    for a transaction boundary (BEGIN/COMMIT), a DDL statement (which
-    test_decoding does not emit a data line for at all), or anything else
-    that does not match the row-change shape.
-
-    A column token that does not match `_COL_RE` is skipped, not raised on —
-    a CDC feed staying up despite one unparseable column matters more than a
-    clean exception on it, and this function is pure specifically so a
-    caller can log the original line before deciding what to do about it.
-    """
-    line = line.strip()
-    if not line:
-        return None
-    m = _LINE_RE.match(line)
-    if not m:
-        return None
-    columns = {}
-    for col in _COL_RE.finditer(m.group("cols")):
-        columns[col.group("name")] = _parse_value(col.group("value"))
-    return {"table": m.group("table"), "op": m.group("op").lower(), "columns": columns}
-
-
-def _format_lsn(lsn: int) -> str:
-    """Postgres's own LSN notation (e.g. "16/B374D848"), not the bare
-    integer psycopg2 hands back — this is what an operator resuming from it
-    by hand, or comparing against `pg_current_wal_lsn()`, expects to see."""
-    return f"{lsn >> 32:X}/{lsn & 0xFFFFFFFF:08X}"
-
 
 # --- the replication worker (a background thread, not the asyncio loop) ----
 #
@@ -121,36 +72,59 @@ def _format_lsn(lsn: int) -> str:
 
 
 def _replication_worker(dsn: str, slot: str, out_queue: "queue.Queue[dict | None]",
-                         stop_event: threading.Event) -> None:
-    conn = psycopg2.connect(dsn, connection_factory=psycopg2.extras.LogicalReplicationConnection)
-    cur = conn.cursor()
+                         stop_event: threading.Event, connect_timeout_s: int,
+                         reconnect_delay_s: int) -> None:
+    # The sentinel must reach out_queue exactly once, no matter how the loop
+    # below exits — retrying, cancelling, or connecting cleanly — so it lives
+    # in this outer finally, not the per-attempt one.
     try:
-        cur.create_replication_slot(slot, output_plugin="test_decoding")
-        log.info("created replication slot %s", slot)
-    except psycopg2.errors.DuplicateObject:
-        conn.rollback()
-        log.info("reusing existing replication slot %s", slot)
+        while not stop_event.is_set():
+            conn = None
+            cur = None
+            try:
+                conn = psycopg2.connect(
+                    dsn, connect_timeout=connect_timeout_s,
+                    connection_factory=psycopg2.extras.LogicalReplicationConnection,
+                )
+                cur = conn.cursor()
+                try:
+                    cur.create_replication_slot(slot, output_plugin="test_decoding")
+                    log.info("created replication slot %s", slot)
+                except psycopg2.errors.DuplicateObject:
+                    conn.rollback()
+                    log.info("reusing existing replication slot %s", slot)
 
-    cur.start_replication(slot_name=slot, decode=True)
+                cur.start_replication(slot_name=slot, decode=True)
 
-    def consume(msg) -> None:
-        change = parse_test_decoding_line(msg.payload)
-        if change is not None:
-            change["lsn"] = _format_lsn(msg.data_start)
-            out_queue.put(change)
-        msg.cursor.send_feedback(flush_lsn=msg.data_start)
-        if stop_event.is_set():
-            raise psycopg2.extras.StopReplication()
+                def consume(msg) -> None:
+                    change = parse_test_decoding_line(msg.payload)
+                    if change is not None:
+                        change["lsn"] = _format_lsn(msg.data_start)
+                        out_queue.put(change)
+                    msg.cursor.send_feedback(flush_lsn=msg.data_start)
+                    if stop_event.is_set():
+                        raise psycopg2.extras.StopReplication()
 
-    try:
-        cur.consume_stream(consume)
-    except psycopg2.extras.StopReplication:
-        pass
-    except Exception:  # noqa: BLE001
-        log.exception("replication stream for slot %s failed", slot)
+                try:
+                    cur.consume_stream(consume)
+                except psycopg2.extras.StopReplication:
+                    pass
+                return  # cancelled cleanly, or the stream ended on its own — no retry
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "replication stream for slot %s failed; retrying in %ds",
+                    slot, reconnect_delay_s,
+                )
+                if stop_event.wait(timeout=reconnect_delay_s):
+                    return  # cancelled while waiting to retry
+            finally:
+                if cur is not None:
+                    cur.close()
+                if conn is not None:
+                    conn.close()
+        # loop exited because stop_event was already set before an attempt
+        # even started (checked at the top of the `while`) — nothing to close.
     finally:
-        cur.close()
-        conn.close()
         out_queue.put(None)  # sentinel: the worker has stopped, one way or another
 
 
@@ -163,11 +137,15 @@ async def handle(ctx: Context) -> None:
 
     slot = skill.config["slot"]
     allowed_tables = {t.strip() for t in skill.config["tables"].split(",") if t.strip()}
+    connect_timeout_s = skill.config["connect_timeout_s"]
+    reconnect_delay_s = skill.config["reconnect_delay_s"]
 
     out_queue: "queue.Queue[dict | None]" = queue.Queue()
     stop_event = ctx.cancel_event
     worker = threading.Thread(
-        target=_replication_worker, args=(dsn, slot, out_queue, stop_event), daemon=True,
+        target=_replication_worker,
+        args=(dsn, slot, out_queue, stop_event, connect_timeout_s, reconnect_delay_s),
+        daemon=True,
     )
     worker.start()
     await ctx.status("change_out", "working", f"watching slot {slot!r}")

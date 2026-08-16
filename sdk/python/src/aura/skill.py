@@ -51,6 +51,7 @@ from .envelope import (
     Envelope,
     new_id,
 )
+from .attest import Attestation
 from .manifest import load_manifest, validate_manifest
 
 _logger = logging.getLogger("aura.skill")
@@ -126,8 +127,24 @@ class Context:
         """This skill's node ref inside the running graph."""
         return self._incoming.node
 
-    async def emit(self, port: str, payload: Any, *, kind: str = KIND_DATA) -> None:
-        """Emit on an egress port, causally linked to the incoming envelope."""
+    async def emit(
+        self, port: str, payload: Any, *, kind: str = KIND_DATA,
+        attest: "Attestation | dict | None" = None,
+    ) -> None:
+        """Emit on an egress port, causally linked to the incoming envelope.
+
+        `attest` is an optional C5 inference attestation: what this skill
+        claims about how it produced `payload` — engine, model, revision,
+        quantization, sampling parameters, seed. The kernel content-addresses
+        it and binds the hash into every `motor.*` effect this output causally
+        leads to, so the ledger can answer "on what basis did this happen"
+        and not only "who authorized it". See aura.attest.
+
+        A streaming skill should attest **once per reply, not once per
+        token**: the attestation describes the inference, and the kernel
+        de-duplicates identical records anyway, so attaching it to the first
+        or final chunk is enough and keeps the wire quiet.
+        """
         schema = self._skill.egress_schema(port)
         seq = self._skill._next_seq(self.session, port)
         env = Envelope(
@@ -140,6 +157,7 @@ class Context:
             idem=f"{self._incoming.idem}:{self.node}:{port}:{seq}",
             schema=schema,
             payload=payload,
+            attest=_attest_wire(attest),
         )
         await self._skill._send(env)
 
@@ -153,13 +171,30 @@ class Context:
         await self.emit(port, {"state": "error", "detail": detail}, kind=KIND_ERROR)
 
 
+def _attest_wire(attest: "Attestation | dict | None") -> dict | None:
+    """Normalize what a caller passed to `emit(attest=...)`.
+
+    A dict is accepted alongside an Attestation so a skill wrapping an engine
+    with fields this SDK does not model can still attest, without waiting for
+    the dataclass to grow. A malformed one raises here — at the call site,
+    where the traceback points at the skill's own code — rather than being
+    dropped silently by the kernel three hops away.
+    """
+    if attest is None:
+        return None
+    if isinstance(attest, dict):
+        return attest
+    return attest.to_wire()
+
+
 class Skill:
     """One skill: a C1 manifest plus handlers for its ingress ports.
 
     The manifest normally comes from a `skill.yaml` next to the code. Pass
-    `manifest=` instead to build one at runtime — that is how a single process
-    turns a declarative spec into several skills (see `skills/connector/`)
-    without writing throwaway YAML files to disk first.
+    `manifest=` instead to build one at runtime — that is how a single
+    process can turn a declarative spec (e.g. an OpenAPI-less connector
+    definition) into several skills without writing throwaway YAML files to
+    disk first.
     """
 
     def __init__(self, manifest_path: str = "skill.yaml", *,
@@ -202,6 +237,31 @@ class Skill:
         self.config: dict[str, Any] = {
             p["key"]: p.get("default") for p in self.manifest.get("config", [])
         }
+        # Decoding grammars for this skill's egress ports, pushed by the kernel
+        # in the registration ack. Each is a GBNF grammar compiled from the
+        # schema the port declares (C1), so a skill that generates with a model
+        # can constrain it and then *cannot* emit a shape the port would
+        # reject. Empty against a kernel that predates the feature, or for a
+        # port whose schema this kernel does not know.
+        #
+        # Read it with `skill.grammar_for("text_out")`.
+        self.grammars: dict[str, str] = {}
+
+    def grammar_for(self, port: str) -> str | None:
+        """The decoding grammar for one of this skill's egress ports.
+
+        Feed it to a constrained decoder and the model physically cannot
+        produce a payload the port would reject::
+
+            grammar = skill.grammar_for("plan_out")
+            out = llm.create_completion(prompt, grammar=grammar)
+
+        Returns None when the kernel supplied none — an older kernel, or a port
+        whose schema it does not know. Callers should treat that as "generate
+        normally", never as an error: a skill that refused to run without a
+        grammar would stop working the moment someone declared a custom schema.
+        """
+        return self.grammars.get(port)
 
     def on(self, port: str) -> Callable:
         """Register the async handler for a declared ingress port."""
@@ -318,6 +378,7 @@ class Skill:
                         raise RuntimeError(f"kernel rejected manifest: {ack.payload}")
                     _logger.info("registered: %s", ack.payload)
                     self._apply_config((ack.payload or {}).get("config"))
+                    self.grammars = (ack.payload or {}).get("grammars") or {}
                     async for raw in ws:
                         task = asyncio.create_task(self._dispatch(json.loads(raw)))
                         self._tasks.add(task)

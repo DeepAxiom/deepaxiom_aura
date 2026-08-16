@@ -17,8 +17,9 @@ import (
 
 // Deriving a connector from traffic instead of writing one.
 //
-// `skills/connector` already reduces connecting a system to a few lines of
-// YAML. This removes those lines too, for the case where the system exists and
+// A declarative connector skill (see "Connecting existing software" in
+// README.md) already reduces connecting a system to a few lines of YAML.
+// This removes those lines too, for the case where the system exists and
 // is already being used: put a proxy in front of it, use the app normally, and
 // the shapes of its real calls become the connector.
 //

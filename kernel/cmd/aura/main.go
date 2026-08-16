@@ -21,6 +21,7 @@ import (
 	"aura/kernel/internal/config"
 	"aura/kernel/internal/executor"
 	"aura/kernel/internal/gateway"
+	"aura/kernel/internal/grammar"
 	"aura/kernel/internal/identity"
 	"aura/kernel/internal/ledger"
 	"aura/kernel/internal/mcpsrv"
@@ -77,6 +78,14 @@ func main() {
 		cmdStatus(os.Args[2:])
 	case "verify":
 		cmdVerify(os.Args[2:])
+	case "witness":
+		cmdWitness(os.Args[2:])
+	case "receipt":
+		cmdReceipt(os.Args[2:])
+	case "bom":
+		cmdBOM(os.Args[2:])
+	case "bundle":
+		cmdBundle(os.Args[2:])
 	case "undo":
 		cmdUndo(os.Args[2:])
 	case "version":
@@ -93,7 +102,7 @@ func usage() {
 
 Usage:
   aura up [--port 9080] [--data <dir>] [--mode local|site|published]
-          [--memory-budget 8Gi] [--config <file>]
+          [--memory-budget 8Gi] [--config <file>] [--open-witness]
   aura chat ["message"] [--graph chat] [--port 9080]
   aura do "natural-language goal" [--yes] [--port 9080]
   aura connect --openapi <url|file> [--name x] [--base-url y] [--header "K: V"]
@@ -111,8 +120,39 @@ Usage:
   aura run <org/cat/name> [--port 9080]
   aura status [--port 9080]
   aura verify [--data <dir>]
+  aura witness <witness-url> [--token <t>] [--port 9080]
+  aura receipt <effect-hash> [--out <f>] | --verify <f>
+  aura bundle <session> [--out <f>] | --verify <f>
+  aura bom [session] [--out <f>]
   aura undo <session|receipt> [--yes] [--port 9080]
   aura version`)
+}
+
+// witnessService builds this node's witnessing role. An open witness gets the
+// default bounds and a background pruner; a closed one needs neither, since
+// every caller already holds a credential.
+func witnessService(st *store.Store, node *identity.Node, open bool, log *slog.Logger) *ledger.Witness {
+	w := ledger.NewWitness(st, node.Keys)
+	if !open {
+		return w
+	}
+	limits := ledger.DefaultWitnessLimits()
+	w.Open(limits)
+	log.Warn("open witness enabled — any node may anchor its ledger here without a token",
+		"max_nodes", limits.MaxNodes, "per_node_per_hour", limits.PerNodePerHour,
+		"retention_days", limits.RetentionDays)
+	go func() {
+		// Retention is enforced on a slow timer rather than per request: a
+		// caller should never pay for someone else's housekeeping.
+		for range time.Tick(6 * time.Hour) {
+			if dropped, err := w.Prune(); err != nil {
+				log.Error("witness prune failed", "err", err)
+			} else if dropped > 0 {
+				log.Info("witness forgot nodes past retention", "dropped", dropped)
+			}
+		}
+	}()
+	return w
 }
 
 func defaultDataDir() string {
@@ -143,6 +183,8 @@ func cmdUp(args []string) {
 	policyPath := fs.String("policy", "", "authorization policy file (default: built-in permissive policy)")
 	maxSessions := fs.Int("max-sessions", 1000, "cap on concurrent live sessions (0 = unlimited)")
 	noAuth := fs.Bool("no-auth", false, "disable the bearer token (single-user loopback nodes only)")
+	openWitness := fs.Bool("open-witness", false,
+		"let any node anchor its ledger here without a token (rate- and capacity-bounded)")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS/WSS)")
 	tlsKey := fs.String("tls-key", "", "TLS private key file")
 	var allowOrigins stringList
@@ -217,6 +259,7 @@ func cmdUp(args []string) {
 			Token:          token,
 			AllowedOrigins: allowOrigins,
 			TrustedProxy:   *tlsCert == "" && public,
+			OpenWitness:    *openWitness,
 		}
 	}
 
@@ -239,6 +282,14 @@ func cmdUp(args []string) {
 	}
 	gw := &gateway.Gateway{Node: node, Reg: reg, St: st, Mgr: mgr, Proj: proj,
 		Adm: adm, Ldg: ldg, Wasm: wasmRT, MCP: mcp.Handler(), Log: log, Auth: auth,
+		// Every node with an identity can witness for others (C4 v1.2). It
+		// costs nothing when unused and means a two-node deployment already
+		// has somewhere to anchor, rather than needing a service nobody has
+		// stood up yet — which is how external anchoring usually dies.
+		Wit: witnessService(st, node, *openWitness, log),
+		// Typed ports made enforceable: a grammar per port schema, so a skill
+		// that generates cannot emit a shape the port would reject.
+		Grammars:   grammar.NewRegistry(),
 		ConfigFile: configFile.Skills}
 
 	seedDefaultGraphs(st, log)

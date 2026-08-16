@@ -103,9 +103,9 @@ func cmdGenerate(args []string) {
   reads start live · writes start disabled
 
 Review it before using it — every operation below is inferred from traffic,
-not declared by the system. Then:
-
-  python skills/connector/main.py %s
+not declared by the system. Then run it with a declarative-connector skill
+built to this spec (see "Connecting existing software" in README.md) — point
+its config at %s.
 `, *out, len(observations), len(groups), reads, writes, *out)
 }
 

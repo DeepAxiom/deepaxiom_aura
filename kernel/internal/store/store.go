@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: no CGO, single-binary friendly
@@ -99,8 +100,69 @@ CREATE TABLE IF NOT EXISTS ledger_checkpoints (
   signature TEXT NOT NULL,
   ts        INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS inference_attestations (
+  hash   TEXT PRIMARY KEY,
+  record TEXT NOT NULL,
+  ts     INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ledger_witnesses (
+  seq         INTEGER NOT NULL,
+  witness_key TEXT NOT NULL,
+  merkle_root TEXT NOT NULL,
+  signature   TEXT NOT NULL,
+  witness_url TEXT,
+  ts          INTEGER NOT NULL,
+  PRIMARY KEY (seq, witness_key)
+);
+CREATE TABLE IF NOT EXISTS witnessed_heads (
+  node        TEXT PRIMARY KEY,
+  seq         INTEGER NOT NULL,
+  merkle_root TEXT NOT NULL,
+  pubkey      TEXT NOT NULL,
+  ts          INTEGER NOT NULL
+);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.addColumns()
+}
+
+// addColumns applies additive column migrations to tables that already exist
+// in the field.
+//
+// `CREATE TABLE IF NOT EXISTS` is a no-op against a data directory written by
+// an older binary, so a column added to the schema above would never appear
+// there — the node would start and then fail on the first read. SQLite has no
+// `ADD COLUMN IF NOT EXISTS`, and the canonical way to ask is to try it and
+// recognise the one error that means "already there".
+//
+// Each migration must stay additive and nullable/defaulted, for the same
+// reason C1-C4 are additive: an older binary pointed at a newer data
+// directory has to keep working, and a column it does not know about is the
+// only kind it can ignore safely.
+func (s *Store) addColumns() error {
+	migrations := []struct{ table, column, ddl string }{
+		// C4 v1.2 — the RFC 6962 tree head a checkpoint commits to, alongside
+		// the linear head_hash it has always carried.
+		{"ledger_checkpoints", "merkle_root", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, m := range migrations {
+		_, err := s.db.Exec(fmt.Sprintf(
+			`ALTER TABLE %s ADD COLUMN %s %s`, m.table, m.column, m.ddl))
+		if err != nil && !isDuplicateColumn(err) {
+			return fmt.Errorf("migrate %s.%s: %w", m.table, m.column, err)
+		}
+	}
+	return nil
+}
+
+// isDuplicateColumn recognises the "already migrated" case. Matching on the
+// message is unpleasant but it is what the driver gives us: modernc's sqlite
+// reports this as a generic error, and re-running a completed migration must
+// not be fatal.
+func isDuplicateColumn(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
 }
 
 // SeenIngressDelivery records a delivery digest and reports whether it had
@@ -525,21 +587,30 @@ type CheckpointRow struct {
 	Pubkey    string `json:"pubkey"`    // base64 Ed25519 public key that signed it
 	Signature string `json:"signature"` // base64 Ed25519 signature
 	TS        int64  `json:"ts"`
+	// MerkleRoot is the RFC 6962 tree head over the first Seq entries (C4
+	// v1.2, additive). Empty on any checkpoint written before the tree
+	// existed, which is why it is a plain string and not a required column:
+	// a node that has been running since v1.1 keeps verifying, and only the
+	// checkpoints written from now on carry a root. Verification picks the
+	// signing payload from this field's presence — see ledger.checkpointPayload.
+	MerkleRoot string `json:"merkle_root,omitempty"`
 }
+
+const checkpointCols = `seq, head_hash, pubkey, signature, ts, COALESCE(merkle_root, '')`
 
 // SaveCheckpoint persists one signed checkpoint.
 func (s *Store) SaveCheckpoint(cp CheckpointRow) error {
 	_, err := s.db.Exec(
-		`INSERT INTO ledger_checkpoints (seq, head_hash, pubkey, signature, ts) VALUES (?,?,?,?,?)`,
-		cp.Seq, cp.HeadHash, cp.Pubkey, cp.Signature, cp.TS)
+		`INSERT INTO ledger_checkpoints (seq, head_hash, pubkey, signature, ts, merkle_root)
+		 VALUES (?,?,?,?,?,?)`,
+		cp.Seq, cp.HeadHash, cp.Pubkey, cp.Signature, cp.TS, cp.MerkleRoot)
 	return err
 }
 
 // LedgerCheckpoints returns every checkpoint in seq order — what `aura
 // verify` walks to check every signature, not just the latest.
 func (s *Store) LedgerCheckpoints() ([]CheckpointRow, error) {
-	rows, err := s.db.Query(
-		`SELECT seq, head_hash, pubkey, signature, ts FROM ledger_checkpoints ORDER BY seq`)
+	rows, err := s.db.Query(`SELECT ` + checkpointCols + ` FROM ledger_checkpoints ORDER BY seq`)
 	if err != nil {
 		return nil, err
 	}
@@ -547,7 +618,7 @@ func (s *Store) LedgerCheckpoints() ([]CheckpointRow, error) {
 	var out []CheckpointRow
 	for rows.Next() {
 		var cp CheckpointRow
-		if err := rows.Scan(&cp.Seq, &cp.HeadHash, &cp.Pubkey, &cp.Signature, &cp.TS); err != nil {
+		if err := rows.Scan(&cp.Seq, &cp.HeadHash, &cp.Pubkey, &cp.Signature, &cp.TS, &cp.MerkleRoot); err != nil {
 			return nil, err
 		}
 		out = append(out, cp)
@@ -561,10 +632,148 @@ func (s *Store) LedgerCheckpoints() ([]CheckpointRow, error) {
 // sealing one immediately.
 func (s *Store) LastCheckpoint() (cp CheckpointRow, ok bool, err error) {
 	err = s.db.QueryRow(
-		`SELECT seq, head_hash, pubkey, signature, ts FROM ledger_checkpoints ORDER BY seq DESC LIMIT 1`,
-	).Scan(&cp.Seq, &cp.HeadHash, &cp.Pubkey, &cp.Signature, &cp.TS)
+		`SELECT `+checkpointCols+` FROM ledger_checkpoints ORDER BY seq DESC LIMIT 1`,
+	).Scan(&cp.Seq, &cp.HeadHash, &cp.Pubkey, &cp.Signature, &cp.TS, &cp.MerkleRoot)
 	if err == sql.ErrNoRows {
 		return CheckpointRow{}, false, nil
 	}
 	return cp, err == nil, err
+}
+
+// Inference attestations (C5). Content-addressed, so identical inference
+// conditions across many deliveries cost one row rather than one per effect.
+
+// SaveAttestation stores one attestation under its content address. Writing
+// the same hash twice is a no-op — by definition the bytes are identical, so
+// there is nothing to update and an error would be noise.
+func (s *Store) SaveAttestation(hash string, record []byte, ts int64) error {
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO inference_attestations (hash, record, ts) VALUES (?,?,?)`,
+		hash, string(record), ts)
+	return err
+}
+
+// Attestation reads one back by content address.
+func (s *Store) Attestation(hash string) (json.RawMessage, error) {
+	var record string
+	err := s.db.QueryRow(
+		`SELECT record FROM inference_attestations WHERE hash = ?`, hash).Scan(&record)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("no inference attestation with hash %q", hash)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(record), nil
+}
+
+// AttestationCount reports how many distinct inference configurations this
+// node has ever sealed against — the /healthz-sized view.
+func (s *Store) AttestationCount() (int64, error) {
+	var n int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM inference_attestations`).Scan(&n)
+	return n, err
+}
+
+// External anchoring (C4 v1.2). Two tables, two directions:
+//
+//	ledger_witnesses  countersignatures OTHERS gave to THIS node's ledger
+//	witnessed_heads   the last head this node vouched for, per other node
+//
+// They are separate because they answer different questions and have
+// different trust properties: the first is evidence this node collected about
+// itself (and could therefore drop), the second is this node's own memory of
+// what it promised about someone else (and is what makes a fork detectable).
+
+// WitnessRow is one third-party countersignature over this node's head.
+type WitnessRow struct {
+	Seq        uint64 `json:"seq"`
+	WitnessKey string `json:"witness_key"`
+	MerkleRoot string `json:"merkle_root"`
+	Signature  string `json:"signature"`
+	WitnessURL string `json:"witness_url,omitempty"`
+	TS         int64  `json:"ts"`
+}
+
+// SaveWitness records a countersignature. Re-witnessing the same head with
+// the same key is idempotent rather than an error: a node may legitimately
+// re-present a head after a restart, and the second countersignature carries
+// no more information than the first.
+func (s *Store) SaveWitness(w WitnessRow) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO ledger_witnesses
+		   (seq, witness_key, merkle_root, signature, witness_url, ts)
+		 VALUES (?,?,?,?,?,?)`,
+		w.Seq, w.WitnessKey, w.MerkleRoot, w.Signature, w.WitnessURL, w.TS)
+	return err
+}
+
+// LedgerWitnesses returns every countersignature in seq order.
+func (s *Store) LedgerWitnesses() ([]WitnessRow, error) {
+	rows, err := s.db.Query(
+		`SELECT seq, witness_key, merkle_root, signature, COALESCE(witness_url, ''), ts
+		   FROM ledger_witnesses ORDER BY seq, witness_key`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WitnessRow
+	for rows.Next() {
+		var w WitnessRow
+		if err := rows.Scan(&w.Seq, &w.WitnessKey, &w.MerkleRoot, &w.Signature, &w.WitnessURL, &w.TS); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// WitnessedHead is the last head this node vouched for on behalf of another.
+type WitnessedHead struct {
+	Node       string `json:"node"`
+	Seq        uint64 `json:"seq"`
+	MerkleRoot string `json:"merkle_root"`
+	Pubkey     string `json:"pubkey"`
+	TS         int64  `json:"ts"`
+}
+
+// SaveWitnessedHead replaces what this node remembers about another node's
+// history. Replace rather than append, deliberately: the value of the record
+// is "the furthest point we vouched for", and the consistency proof at that
+// point already transitively covers every earlier one.
+func (s *Store) SaveWitnessedHead(h WitnessedHead) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO witnessed_heads (node, seq, merkle_root, pubkey, ts)
+		 VALUES (?,?,?,?,?)`,
+		h.Node, h.Seq, h.MerkleRoot, h.Pubkey, h.TS)
+	return err
+}
+
+// WitnessedHeadCount reports how many distinct nodes this witness remembers —
+// what an open witness checks against its capacity bound.
+func (s *Store) WitnessedHeadCount() (int64, error) {
+	var n int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM witnessed_heads`).Scan(&n)
+	return n, err
+}
+
+// PruneWitnessedHeads forgets nodes not heard from since cutoff (unix millis),
+// and reports how many were dropped.
+func (s *Store) PruneWitnessedHeads(cutoff int64) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM witnessed_heads WHERE ts < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// LastWitnessedHead returns what this node last vouched for about nodeID.
+func (s *Store) LastWitnessedHead(nodeID string) (h WitnessedHead, ok bool, err error) {
+	err = s.db.QueryRow(
+		`SELECT node, seq, merkle_root, pubkey, ts FROM witnessed_heads WHERE node = ?`, nodeID,
+	).Scan(&h.Node, &h.Seq, &h.MerkleRoot, &h.Pubkey, &h.TS)
+	if err == sql.ErrNoRows {
+		return WitnessedHead{}, false, nil
+	}
+	return h, err == nil, err
 }

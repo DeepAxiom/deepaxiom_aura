@@ -27,6 +27,27 @@ type Report struct {
 	KeyAvailable     bool `json:"key_available"` // false: chain was checked, signatures were not
 
 	PubkeyFingerprint string `json:"pubkey_fingerprint,omitempty"`
+
+	// MerkleRoot is the recomputed RFC 6962 tree head over every entry (C4
+	// v1.2) — the value a receipt's inclusion proof is checked against, and
+	// the value a witness counter-signs.
+	MerkleRoot string `json:"merkle_root,omitempty"`
+	// MerkleCheckpoints counts checkpoints that carry a root at all; older
+	// v1 checkpoints do not, and are still valid.
+	MerkleCheckpoints int `json:"merkle_checkpoints"`
+	// MerkleMismatches counts checkpoints whose signature verifies but whose
+	// committed root disagrees with the tree recomputed from storage. This
+	// should be impossible without a bug: a valid signature over a wrong root
+	// means the node signed a head it could not have computed from its own
+	// entries.
+	MerkleMismatches int `json:"merkle_mismatches"`
+
+	// Witnesses counts third-party counter-signatures found, and
+	// WitnessesValid how many verify. A ledger with no witnesses is not
+	// unsound — it is unwitnessed, which is a weaker claim, and the CLI says
+	// so rather than passing silently. See witness.go.
+	Witnesses      int `json:"witnesses"`
+	WitnessesValid int `json:"witnesses_valid"`
 }
 
 // Sound reports whether the ledger passed every check this report ran.
@@ -34,8 +55,29 @@ type Report struct {
 // checkpoints do not all verify is not sound, because an attacker capable of
 // rewriting a whole suffix to stay self-consistent is exactly the threat
 // checkpoints exist to catch — see the walkthrough in ledger_test.go.
+//
+// Witnesses enter the verdict, but asymmetrically, because the two states
+// they can be in mean completely different things:
+//
+//   - **No witnesses at all** is not a failure. It means no third party has
+//     attested — a weaker claim, not a corrupt ledger. Treating it as failure
+//     would make every fresh node report itself unsound.
+//   - **A witness row that no longer verifies IS a failure.** Somebody
+//     recorded a third party's signature over this history, and the history
+//     no longer produces the head that was signed. That is direct evidence of
+//     a rewrite, and it is the *only* signal available in the node's own data
+//     directory when the rewriter held the node's key: the chain recomputes,
+//     the checkpoint verifies, and this is what disagrees.
+//
+// The second case is why this is not merely informational. An end-to-end run
+// of the rewrite-repair-and-re-sign attack reported SOUND with `0/1 witness
+// countersignature(s) verify` printed just above it — technically consistent
+// with how this was first written, and exactly the wrong headline.
 func (r Report) Sound() bool {
-	return r.ChainIntact && (!r.KeyAvailable || r.CheckpointsValid == r.Checkpoints)
+	return r.ChainIntact &&
+		r.MerkleMismatches == 0 &&
+		(!r.KeyAvailable || r.CheckpointsValid == r.Checkpoints) &&
+		r.WitnessesValid == r.Witnesses
 }
 
 // Verify recomputes the hash chain from scratch and checks every checkpoint
@@ -55,7 +97,23 @@ func Verify(st *store.Store, pubkeyB64 string) (Report, error) {
 		report.PubkeyFingerprint = Fingerprint(pubkeyB64)
 	}
 
+	checkpoints, err := st.LedgerCheckpoints()
+	if err != nil {
+		return report, fmt.Errorf("read checkpoints: %w", err)
+	}
+	report.Checkpoints = len(checkpoints)
+
+	// Which seqs a checkpoint committed to, so the tree head at exactly those
+	// points can be captured during the single walk below rather than by
+	// recomputing the tree once per checkpoint.
+	wantRootAt := make(map[uint64]bool, len(checkpoints))
+	for _, cp := range checkpoints {
+		wantRootAt[cp.Seq] = true
+	}
+
 	byHash := make(map[string]Entry, len(entries))
+	rootAt := make(map[uint64]Hash, len(checkpoints))
+	var tree CompactTree
 	prevHash := ""
 	for i, raw := range entries {
 		var e Entry
@@ -78,22 +136,20 @@ func Verify(st *store.Store, pubkeyB64 string) (Report, error) {
 		hash := e.Hash()
 		byHash[hash] = e
 		prevHash = hash
+
+		// The leaf is hashed over the stored bytes, matching how Seal built
+		// it — see LeafHash.
+		tree.Append(LeafHash(raw))
+		if wantRootAt[e.Seq] {
+			rootAt[e.Seq] = tree.Root()
+		}
 	}
+	report.MerkleRoot = tree.Root().String()
 
 	if !report.KeyAvailable {
-		checkpoints, err := st.LedgerCheckpoints()
-		if err != nil {
-			return report, fmt.Errorf("read checkpoints: %w", err)
-		}
-		report.Checkpoints = len(checkpoints)
 		return report, nil
 	}
 
-	checkpoints, err := st.LedgerCheckpoints()
-	if err != nil {
-		return report, fmt.Errorf("read checkpoints: %w", err)
-	}
-	report.Checkpoints = len(checkpoints)
 	for _, cp := range checkpoints {
 		entry, ok := byHash[cp.HeadHash]
 		if !ok || entry.Seq != cp.Seq {
@@ -102,11 +158,26 @@ func Verify(st *store.Store, pubkeyB64 string) (Report, error) {
 			// the checkpoint itself was forged. Either way it does not verify.
 			continue
 		}
-		if err := signing.Verify(pubkeyB64, cp.Signature, checkpointPayload(cp.Seq, cp.HeadHash)); err != nil {
+		if err := signing.Verify(pubkeyB64, cp.Signature,
+			checkpointPayload(cp.Seq, cp.HeadHash, cp.MerkleRoot)); err != nil {
 			continue
 		}
 		report.CheckpointsValid++
+
+		if cp.MerkleRoot == "" {
+			continue // a v1 checkpoint, sealed before the tree existed
+		}
+		report.MerkleCheckpoints++
+		if got, ok := rootAt[cp.Seq]; !ok || got.String() != cp.MerkleRoot {
+			// A signature that verifies over a root the entries do not
+			// produce means the signed head and the stored history disagree.
+			// The chain check above can miss this: it only relates each entry
+			// to its neighbour, while the tree commits to all of them at once.
+			report.MerkleMismatches++
+		}
 	}
+
+	report.Witnesses, report.WitnessesValid = verifyWitnesses(st, checkpoints, rootAt)
 	return report, nil
 }
 

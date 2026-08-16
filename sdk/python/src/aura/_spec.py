@@ -65,5 +65,14 @@ EFFECT_OUTCOMES = (
     "denied",
 )
 
+#: C5 — where an attestation's energy figure came from, most to least
+#: trustworthy. Mandatory whenever energy is reported.
+ENERGY_SOURCES = (
+    "nvml",
+    "rapl",
+    "powermetrics",
+    "estimated",
+)
+
 #: C1 `capability` — <type>.<function>[.<subtype>].
 CAPABILITY_PATTERN = r"^(sensorial|cognitive|motor|memory|logical)(\.[a-z0-9_-]+)+$"

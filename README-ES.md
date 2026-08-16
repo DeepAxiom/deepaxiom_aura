@@ -2,8 +2,8 @@
 
 **Estado: v0.3.0 — pre-1.0, pre-producción, Fase 1 de 2 hacia la beta abierta.** · **Construido sobre la arquitectura de kernel AURA · [Apache-2.0 (spec y SDK) · AGPLv3 o comercial (kernel) — ver LICENSE.md](LICENSE.md)** · [English version](README.md)
 
-Deep Axiom es un runtime de código abierto para componer skills — LLMs, visión,
-voz, OCR, APIs de negocio — en grafos que corren como streams tipados y vivos.
+Deep Axiom es un runtime de código abierto para componer skills — LLMs, voz,
+bases de datos, APIs de negocio — en grafos que corren como streams tipados y vivos.
 Un único binario contiene el kernel, la UI del plano de control, el almacén de
 estado, el bus de mensajes y el ledger de efectos; no necesita cuenta, ni nube,
 ni base de datos externa. Los grafos se escriben a mano o los genera un planner
@@ -26,15 +26,25 @@ Zapier, Make) y de los frameworks de agentes:
 - **Cada efecto se sella en un ledger encadenado y firmado — no se registra
   como log, se atestigua.** Un nodo autoriza un efecto por política, lo
   registra en una cadena donde alterar una entrada vieja rompe todos los
-  hashes posteriores, y firma periódicamente la cabeza de la cadena con su
-  propia clave. `aura verify` recalcula todo desde el archivo SQLite, sin el
-  kernel corriendo — evidencia que un auditor puede comprobar sin confiar en
-  el proceso que la produjo. Ver [Modelo de seguridad](#modelo-de-seguridad).
+  hashes posteriores, se compromete a una cabeza Merkle RFC 6962, y la firma.
+  Un **witness** externo puede contrafirmarla, que es lo que descarta que el
+  propio operador del nodo reescriba la historia. Cualquier efecto suelto se
+  exporta como **recibo portátil** que cualquiera verifica sin conexión — sin
+  base de datos, sin nodo, sin red.
+- **El ledger registra qué *argumentó* un acto, no solo quién lo autorizó.**
+  Un skill que corre un modelo lo atestigua — motor, modelo, revisión de
+  Hugging Face, cuantización, parámetros de muestreo, semilla — y el kernel
+  liga ese registro a cada efecto al que la salida llevó causalmente. Así una
+  entrada sellada responde "sobre qué base pasó esto", y un cambio silencioso
+  de modelo altera hashes ya comprometidos en una cadena de solo anexado. Es
+  una *afirmación* ligada de forma infalsificable a sus consecuencias, no una
+  prueba de qué se ejecutó; ver
+  [Modelo de seguridad](#modelo-de-seguridad), que lo explica en detalle.
 
-**Lo que todavía no es.** No hay resume de sesión: un socket caído pierde las
-puertas pendientes y el estado en vuelo, y reconectar arranca una sesión nueva.
-No hay vista multidispositivo de una sesión viva, ni failover si muere el nodo
-propietario. Un nodo se autentica — loopback por defecto, token bearer,
+**Lo que todavía no es.** No hay vista multidispositivo de una sesión viva,
+ni failover si muere el nodo propietario — el estado de una sesión sobrevive
+a un socket caído (ver [Estado de los hitos](#estado-de-los-hitos)), pero no
+a que desaparezca el proceso del nodo. Un nodo se autentica — loopback por defecto, token bearer,
 comprobación de origen del WebSocket, TLS opcional — pero el aislamiento de
 procesos para skills sigue sin existir, así que un skill corre con los
 privilegios de quien lo arrancó. Lee [Modelo de
@@ -46,9 +56,10 @@ decidir si esto encaja con tu problema.
 Para agregar una capacidad, escribe un skill y regístralo — no hay cola de
 revisión, porque el registry lo alojas tú. Mira [`skills/`](skills/) para
 patrones ([`skills/echo/`](skills/echo/) es el mínimo,
-[`skills/tuya-status/`](skills/tuya-status/) un wrapper de API de solo lectura,
-[`skills/tuya-command/`](skills/tuya-command/) uno que actúa sobre el mundo) y
-[`CONTRIBUTING.md`](CONTRIBUTING.md) para el kernel/SDK/spec en sí.
+[`skills/postgres-cdc/`](skills/postgres-cdc/) un skill `sensorial` que envuelve
+un sistema externo, [`skills/model-manager/`](skills/model-manager/) uno
+`motor` que actúa sobre el mundo) y [`CONTRIBUTING.md`](CONTRIBUTING.md) para
+el kernel/SDK/spec en sí.
 
 ---
 
@@ -69,19 +80,25 @@ patrones ([`skills/echo/`](skills/echo/) es el mínimo,
 13. [Conectar software existente](#conectar-software-existente)
 14. [Hablarle](#hablarle)
 15. [Operación en lenguaje natural](#operación-en-lenguaje-natural)
-16. [Drivers de modelos y admisión de recursos](#drivers-de-modelos-y-admisión-de-recursos)
-17. [El marketplace](#el-marketplace)
-18. [Explicabilidad y replay](#explicabilidad-y-replay)
-19. [Federar nodos](#federar-nodos)
-20. [Estándares en las fronteras](#estándares-en-las-fronteras)
-21. [Los tres contratos](#los-tres-contratos)
-22. [Modelo de seguridad](#modelo-de-seguridad)
-23. [API HTTP y WebSocket](#api-http-y-websocket)
-24. [Estructura del repositorio](#estructura-del-repositorio)
-25. [Compilación y release](#compilación-y-release)
-26. [Estado de los hitos](#estado-de-los-hitos)
-27. [Diseñado, aún no construido](#diseñado-aún-no-construido)
-28. [Licencia y gobernanza](#licencia-y-gobernanza)
+16. [Puertos tipados, forzados](#puertos-tipados-forzados)
+17. [Scheduling: especulación, deadlines, presupuestos](#scheduling-especulación-deadlines-presupuestos)
+18. [Drivers de modelos y admisión de recursos](#drivers-de-modelos-y-admisión-de-recursos)
+19. [Audit bundles](#audit-bundles)
+20. [Un entorno OpenEnv](#un-entorno-openenv)
+21. [Aislamiento de skills](#aislamiento-de-skills)
+22. [Witnessing abierto](#witnessing-abierto)
+23. [El marketplace](#el-marketplace)
+24. [Explicabilidad y replay](#explicabilidad-y-replay)
+25. [Federar nodos](#federar-nodos)
+26. [Estándares en las fronteras](#estándares-en-las-fronteras)
+27. [Los cinco contratos](#los-cinco-contratos)
+28. [Modelo de seguridad](#modelo-de-seguridad)
+29. [API HTTP y WebSocket](#api-http-y-websocket)
+30. [Estructura del repositorio](#estructura-del-repositorio)
+31. [Compilación y release](#compilación-y-release)
+32. [Estado de los hitos](#estado-de-los-hitos)
+33. [Diseñado, aún no construido](#diseñado-aún-no-construido)
+34. [Licencia y gobernanza](#licencia-y-gobernanza)
 
 ---
 
@@ -111,17 +128,17 @@ De esa decisión se derivan cuatro cosas:
   "crea un proyecto". Apúntalo a una especificación OpenAPI y sus operaciones
   se convierten en skills — de solo lectura por defecto, con aprobación humana
   obligatoria antes de cualquier escritura.
-- **Una sola interfaz para cada modelo.** LLMs, visión, ASR, OCR, TTS,
-  embeddings — todos tras el mismo contrato de skill, en local o remoto. Mover
-  un skill a otra máquina cambia la colocación, no el grafo.
+- **Una sola interfaz para cada modelo.** LLMs, ASR, TTS — y cualquier modelo
+  que un skill envuelva — todos tras el mismo contrato de skill, en local o
+  remoto. Mover un skill a otra máquina cambia la colocación, no el grafo.
 - **Distribución federable.** La especificación, el kernel y los SDKs son
   abiertos; el registry es federable, así que el catálogo del que instalas
   puedes alojarlo tú.
 
 Esto es **pre-1.0**, y la historia de persistencia está a medias. Lo que se
 sostiene hoy: el log de eventos duradero, el protocolo de envelopes en
-streaming, la liveness de conexión y el forzado de QoS por arista. Lo que no:
-resume de conexión, sesiones multidispositivo y failover de nodo.
+streaming, la liveness de conexión, el forzado de QoS por arista y el resume
+de conexión. Lo que no: sesiones multidispositivo y failover de nodo.
 [Estado de los hitos](#estado-de-los-hitos) traza esa línea con precisión.
 
 ---
@@ -133,7 +150,7 @@ madurez, más integraciones, o ambas. Un mapa honesto de dónde encaja:
 
 | Si necesitas | Usa | Posición de Deep Axiom |
 |---|---|---|
-| Cientos de integraciones SaaS listas | **n8n, Zapier, Make** | No compite. Su catálogo *es* el producto; aquí hay ~15 skills de primera parte. |
+| Cientos de integraciones SaaS listas | **n8n, Zapier, Make** | No compite. Su catálogo *es* el producto; aquí hay 9 skills de primera parte. |
 | Workflows largos, duraderos y reproducibles | **Temporal** | No compite en durabilidad. Temporal sobrevive a la muerte del proceso a mitad de workflow; esto todavía no resume una sesión caída. |
 | Agentes de voz en tiempo real en producción | **LiveKit Agents, Pipecat, OpenAI Realtime** | Mucha menos madurez. El primer sonido de una respuesta llega a ~0,41 s en una máquina de desarrollo con modelo local — nunca medido contra estos lado a lado, así que léelo como "usable", no como "competitivo". Elige esos salvo que necesites la voz sobre el *mismo* runtime que el resto. |
 | Una librería de agentes dentro de tu app | **LangGraph, CrewAI, AutoGen** | Forma distinta. Esas son librerías con las que construyes; esto es un proceso que instalas al lado de sistemas existentes. |
@@ -155,7 +172,7 @@ arriba:
 - **Un solo IR para grafos escritos a mano y generados por el planner.** Un
   executor, un modelo de permisos, una ruta de replay, un depurador — en vez de
   un camino aparte para "esto lo decidió el agente".
-- **Un binario, sin servicios externos.** ~18 MB con la UI embebida, y sin
+- **Un binario, sin servicios externos.** ~22 MB con la UI embebida, y sin
   Postgres, sin Redis, sin broker, sin clúster que levantar antes del primer
   mensaje.
 
@@ -178,9 +195,10 @@ demuestra que cumple.
   si el grafo lo escribió un humano como si lo generó un planner, de modo que un
   solo depurador, un solo modelo de permisos y una sola vía de replay cubren
   ambos casos.
-- Cualquier modelo tras una misma interfaz: LLMs (llama.cpp), ASR (whisper),
-  OCR (ONNX Runtime), TTS (voces nativas), embeddings — locales o vía API,
-  intercambiables sin tocar el grafo.
+- Cualquier modelo tras una misma interfaz: LLMs (llama.cpp), ASR
+  (faster-whisper), TTS (piper / voces nativas) — locales o vía API,
+  intercambiables sin tocar el grafo. Un skill que envuelva cualquier otro
+  runtime habla el mismo contrato.
 - Admisión de recursos: un presupuesto de memoria que el nodo hace cumplir,
   rechazando lo que no cabe con una explicación en lugar de un crash.
 - Configuración de skills en tiempo de ejecución: cualquier skill puede
@@ -225,6 +243,26 @@ demuestra que cumple.
   declaración que el registry enseña al instalar, no un sandbox que el kernel
   fuerce en tiempo de ejecución. [Modelo de
   seguridad](#modelo-de-seguridad) traza la línea con precisión.
+- El ledger de efectos (C4): cada efecto autorizado se sella en un registro
+  encadenado por hash, comprometido a una cabeza Merkle RFC 6962 que el nodo
+  firma periódicamente con su clave Ed25519. `aura verify` recalcula cadena y
+  árbol y comprueba cada firma desde el archivo SQLite, sin kernel corriendo.
+- Anclaje externo: `aura witness <peer>` hace que un tercero verifique una
+  prueba de consistencia y contrafirme la cabeza — lo único que la autofirma
+  no puede hacer, porque es lo que descarta que quien tiene la clave reescriba
+  la historia. Cada nodo es un witness, así que no hay servicio que desplegar.
+- Recibos portátiles: `aura receipt <efecto>` exporta la evidencia de un efecto
+  —entrada, prueba de inclusión, cabeza firmada, contrafirmas, atestaciones
+  citadas— como documento que cualquiera verifica sin conexión, sin revelar
+  nada del resto del ledger.
+- Atestación de inferencia (C5): un skill declara motor, modelo, revisión de
+  Hugging Face, cuantización, parámetros de muestreo y semilla detrás de una
+  salida, y el kernel lo liga a cada efecto que esa salida causó. Las
+  revisiones de HF se fijan antes de descargar; los formatos de pesos con
+  pickle se rechazan, no se advierten; la energía se reporta con su fuente para
+  que una estimación no pueda pasar por una medición.
+- `aura bom`: un ML-BOM CycloneDX 1.6 de los modelos y skills que realmente
+  corrieron, construido desde el ledger y no desde la configuración.
 
 **Distribución y operación**
 - Un marketplace federable y firmado: publica con un comando, instala por nombre
@@ -238,10 +276,14 @@ demuestra que cumple.
 - UI del plano de control internacionalizada (inglés + español; más idiomas
   añadiendo un archivo), embebida en el binario.
 
-> El marketplace, la federación, el servidor MCP y el host de proyecciones
-> OpenAPI funcionan pero **no tienen ningún test automatizado** — ver
-> [cobertura de tests](#cobertura-parcial). Todo lo de esta lista existe y se
-> ejecutó a mano; esa tabla dice qué partes detectarían una regresión.
+> Todo lo de esta lista existe y funciona. La cobertura es despareja, no
+> inexistente: el marketplace (`hub` 81%), la federación (`fed` 87%), el
+> servidor MCP (`mcpsrv` 63%) y el host de proyecciones OpenAPI (`projection`
+> 61%) tienen tests automatizados, mientras que los drivers de modelos, el
+> planner y la exportación OTel solo están verificados a mano. Ver
+> [cobertura de tests](#cobertura-parcial) y
+> [estado de los hitos](#estado-de-los-hitos) para saber qué partes
+> detectarían una regresión.
 
 ---
 
@@ -258,10 +300,11 @@ Formas concretas que adopta el mismo runtime. En todas ellas, la IA se añade
   `cognitive.llm.chat` → `motor.tts.speak` en un grafo. Voz de entrada,
   razonamiento, voz de salida, en streaming — las piezas son skills
   intercambiables.
-- **Inteligencia documental.** Un skill de OCR lee facturas/documentos de
-  identidad escaneados; un LLM extrae campos estructurados; una API proyectada
-  archiva el resultado. Los documentos sensibles pueden fijarse a nodos
-  on-premise para que sus datos nunca salgan del edificio.
+- **Captura de cambios hacia el razonamiento.** `skills/postgres-cdc` convierte
+  el propio stream de replicación de una base legacy en eventos causales; un LLM
+  clasifica cada cambio de fila; una API proyectada archiva el resultado. Los
+  datos sensibles pueden fijarse a nodos on-premise para que nunca salgan del
+  edificio.
 - **División edge + nube.** Ejecuta la captura y la inferencia sensible a la
   privacidad en un nodo edge (un Jetson en la planta de fábrica); federa el
   razonamiento pesado a un nodo en la nube. Un solo grafo lógico, con la
@@ -430,8 +473,22 @@ flota.
 |---|---|
 | `aura up [--port 9080] [--data <dir>] [--mode local\|site\|published] [--memory-budget 8Gi] [--config <archivo>]` | Arranca un nodo. `--memory-budget` activa la admisión de recursos; `--config` fija valores por defecto de skills (ver [Configuración de skills en tiempo de ejecución](#configuración-de-skills-en-tiempo-de-ejecución)). |
 | `aura status [--port 9080]` | Salud de un nodo en ejecución más sus skills conectados. |
-| `aura verify [--data <dir>]` | Recalcula la cadena de hashes del ledger de efectos y comprueba cada firma de checkpoint — sin conexión, sin necesitar un kernel corriendo. Sale con código distinto de cero si algo no verifica. Ver [Modelo de seguridad](#modelo-de-seguridad). |
+| `aura verify [--data <dir>]` | Recalcula la cadena de hashes y el árbol Merkle del ledger de efectos, y comprueba cada firma de checkpoint y cada contrafirma de witness — sin conexión, sin necesitar un kernel corriendo. Sale con código distinto de cero si algo no verifica. Ver [Modelo de seguridad](#modelo-de-seguridad). |
 | `aura version` | Versión y los majors de protocolo/IR que habla este binario. |
+
+### Evidencia
+
+Todo esto sirve para probar, después, qué hizo un nodo — ver
+[Modelo de seguridad](#modelo-de-seguridad).
+
+| Comando | Propósito |
+|---|---|
+| `aura witness <url-witness> [--port 9080]` | Ancla el ledger de este nodo con un tercero: presenta la cabeza firmada más una prueba de consistencia, y registra la contrafirma. Cualquier nodo puede actuar como witness. |
+| `aura receipt <hash-efecto> [--out <archivo>] [--data <dir>]` | Construye el documento de evidencia portátil de un efecto sellado — entrada, prueba de inclusión, cabeza firmada, contrafirmas, atestaciones citadas. |
+| `aura receipt --verify <archivo>` | Comprueba un recibo sin base de datos, sin nodo y sin red. Lo que ejecuta un tercero. |
+| `aura bundle <sesión> [--out <archivo>] [--data <dir>]` | Arma el audit bundle de una sesión: trayectoria, un recibo verificable por efecto sellado, y las configuraciones de modelo detrás. |
+| `aura bundle --verify <archivo>` | Comprueba un bundle sin base de datos, sin nodo y sin red. |
+| `aura bom [sesión] [--out <archivo>] [--data <dir>]` | ML-BOM CycloneDX 1.6 de los modelos y skills que realmente corrieron, construido desde el ledger y no desde la configuración. |
 
 ### Hablar con grafos
 
@@ -611,9 +668,9 @@ claude mcp add --transport http aura http://localhost:9080/mcp
 una API, una cámara o un registro que tú aportas. Para un camino que corre tal
 cual, ver [Instalación y arranque rápido](#instalación-y-arranque-rápido);
 para skills que puedes leer y copiar hoy, ver [`skills/`](skills/) —
-[`skills/echo/`](skills/echo/) es el mínimo, [`skills/tuya-status/`](skills/tuya-status/)
-un envoltorio de API de solo lectura, y [`skills/tuya-command/`](skills/tuya-command/)
-uno que actúa sobre el mundo.
+[`skills/echo/`](skills/echo/) es el mínimo, [`skills/postgres-cdc/`](skills/postgres-cdc/)
+un skill `sensorial` que envuelve un sistema externo, y
+[`skills/model-manager/`](skills/model-manager/) uno `motor` que actúa sobre el mundo.
 
 ---
 
@@ -897,8 +954,12 @@ contrario: un endpoint suelto de un backend que nadie documentó. Escribir un
 OpenAPI completo de una API de la que solo necesitas tres llamadas no es un
 precio razonable, y escribir un skill a mano tampoco.
 
-[`skills/connector`](skills/connector/) lee unas pocas líneas de YAML en su
-lugar, y registra cada operación como un skill ordinario:
+Un conector declarativo — un skill chico que lee unas pocas líneas de YAML y
+registra cada operación como un skill ordinario — hace el mismo trabajo que la
+proyección OpenAPI sin un documento OpenAPI. No es parte de los skills de
+primera parte de este repo, pero la forma es apenas un poco de glue
+`Skill`/`Context` (ver [Escribir un skill](#escribir-un-skill-el-sdk)) que lee
+un spec como:
 
 ```yaml
 name: legacy-erp
@@ -910,19 +971,13 @@ operations:
   - { op_id: create-order, method: POST, path: /orders }
 ```
 
-```powershell
-$env:PYTHONPATH = "sdk\python\src"
-python skills\connector\main.py mi-conector.yaml
-#  connector 'legacy-erp' -> 2 operation(s) against http://erp.internal
-#    sensorial.api.legacy_erp.get_order      mode=live
-#    motor.api.legacy_erp.create_order       mode=disabled
-```
-
-Las mismas cuatro salvaguardas, las mismas capacidades, la misma puerta. La
-diferencia está en dónde corre: esto es un **skill**, no código del kernel. Los
-conectores se instalan desde el registro como cualquier otra cosa, así que
-agregar uno nunca engorda el binario que va a un dispositivo de borde ni espera
-a un release del kernel.
+y registra `sensorial.api.legacy_erp.get_order` (activo) y
+`motor.api.legacy_erp.create_order` (deshabilitado hasta promoverse) contra
+él — las mismas cuatro salvaguardas, las mismas capacidades, la misma puerta
+que el camino OpenAPI. La diferencia está en dónde corre: esto es un
+**skill**, no código del kernel, así que se instala desde el registro como
+cualquier otra cosa y nunca engorda el binario que va a un dispositivo de
+borde.
 
 La promoción tampoco necesita mecanismo nuevo — el `mode` por operación es
 [configuración en tiempo de ejecución](#configuración-de-skills-en-tiempo-de-ejecución)
@@ -1153,9 +1208,158 @@ modelo instalado.
 
 ---
 
+## Puertos tipados, forzados
+
+C1 obliga a que cada puerto declare un schema, y la regla 2 de C2 se niega a
+cablear dos puertos cuyos schemas no coinciden. Así que el runtime conoce,
+*estáticamente*, la forma exacta de todo lo que un skill puede emitir. De ahí
+salen dos cosas que ningún otro runtime de agentes está en posición de ofrecer,
+porque ninguno tiene puertos con schema obligatorio.
+
+**Una gramática de decodificación derivada del tipo del puerto.** El kernel
+compila el JSON Schema de cada puerto a una gramática GBNF y se la entrega al
+skill al registrarse. Un skill que genera bajo ella *no puede* emitir una forma
+que el puerto rechace — no "rara vez lo hace", no puede:
+
+```python
+grammar = skill.grammar_for("plan_out")     # la empuja el kernel al registrarse
+out = llm.create_completion(prompt, grammar=grammar)
+```
+
+```powershell
+curl localhost:9080/v1/grammars/std/status@1
+#  root-state-1 ::= "\"working\"" | "\"done\"" | "\"error\""
+```
+
+La decodificación restringida no es nueva — XGrammar, llguidance y Outlines lo
+hacen bien, y todo stack de serving trae uno. Lo inusual es *de dónde sale la
+gramática*. En todos los demás sale de un schema que el autor escribió a mano y
+pasó a la llamada de inferencia, así que solo es tan correcta como su disciplina
+y se desvía de lo que consume la salida. Aquí sale del tipo del puerto al que va
+la salida — lo que efectivamente la va a rechazar.
+
+El orden de propiedades sigue el orden de declaración del schema y no el
+alfabético, deliberadamente: `std/transcript@1` declara `text` antes que
+`final`, y un modelo obligado a comprometerse con `final` antes de escribir el
+texto que describe genera peor — sobre todo los modelos locales pequeños a los
+que apunta este runtime.
+
+**Validación para todo lo que no genera.** El mismo schema comprueba los
+payloads al pasar, así que un skill que arma un dict a mano, una API proyectada
+que devuelve una sorpresa o un cliente que postea cualquier cosa también quedan
+sujetos al tipo del puerto. La gramática vuelve inalcanzable una violación; el
+validador la vuelve rechazada. Hacen falta las dos mitades para que "canal
+tipado" sea una afirmación y no una descripción.
+
+El compilador cubre el subconjunto que usa el namespace `std` y **rechaza
+cualquier cosa fuera de él** en vez de emitir una gramática permisiva — una
+gramática que permite más que el schema es peor que ninguna, porque parece una
+garantía.
+
+---
+
+## Scheduling: especulación, deadlines, presupuestos
+
+### Ejecución especulativa de grafo
+
+El coste dominante en un grafo de agentes es la espera secuencial: un modelo
+transmite dos segundos y solo entonces empieza el siguiente skill. Arrancar ese
+skill temprano sobre el prefijo es una ganancia obvia y muy estudiada — PASTE,
+SPORK, SpecBox y toda una literatura de 2026. Cada uno de esos sistemas gasta
+la mayor parte de su esfuerzo en la misma pregunta: **¿qué pasos son seguros de
+correr antes de estar seguros?** Correr temprano una herramienta que manda un
+email o cobra una tarjeta no es una optimización de latencia, es un bug con
+cronómetro. Responden con heurísticas, listas blancas, o el criterio de un LLM.
+
+Este runtime no tiene que preguntar. Los cinco tipos de skill de C1 son un
+**sistema de tipos de efectos** — `motor` es precisamente "actúa sobre el
+mundo" — así que la respuesta ya está en el manifiesto, estáticamente, para
+cada skill del grafo:
+
+```json
+{ "from": "brain.text_out", "to": "summariser.text_in", "speculative": true }
+```
+
+```
+edge brain.text_out -> writer.text_in declares speculative but
+"acme/motor/erp-writer" is a motor skill; work that acts on the world is never
+run ahead of certainty, because a discarded effect is not discarded
+```
+
+Ese rechazo ocurre al cablear, antes de que exista una sesión. Es la invariante
+del motor-gate vista desde otro ángulo: el tipo de skill que debe esperar a un
+humano es el tipo que nunca debe correr por delante de la certeza.
+
+La reconciliación reutiliza maquinaria que ya existe. El kernel pliega los
+parciales en un valor acumulado según la semántica del propio schema
+(concatenando en `std/text@1`, reemplazando en `std/transcript@1` — la
+distinción que C1 ya traza), lo entrega marcado como completo, y cuando el
+productor termina o suprime la entrega redundante o abandona la cadena
+especulativa por el camino normal de `cancel`. Un skill que maneja bien cancel
+maneja bien un fallo de especulación gratis.
+
+Se reportan aciertos y fallos, porque una funcionalidad que gasta cómputo en
+adivinar debería tener que enseñar su historial. Un nodo puede rechazar la
+especulación entera con `speculation: deny` en su policy.
+
+### Deadlines que se propagan
+
+```json
+{ "from": "client.text_out", "to": "brain.text_in", "deadline_ms": 800 }
+```
+
+Se convierte a un instante absoluto en el hop que lo declara y se hereda hacia
+abajo, así que una cadena de tres hops no puede concederse en silencio tres
+veces el presupuesto añadiendo hops. Un hop puede apretarlo, nunca extenderlo.
+Se espera que el skill receptor **degrade** — menos beams, un modelo más chico,
+una cuantización más gruesa — en vez de abortar: una respuesta peor a tiempo
+gana a una mejor cuando ya nadie escucha.
+
+La propagación de deadlines es estándar en RPC desde hace una década y está
+ausente en todo runtime de agentes, que es por qué allí una herramienta lenta
+degrada en un cuelgue en vez de en una respuesta más barata.
+
+### Qué modelo respondió, decidido por policy
+
+```yaml
+routes:
+  - match: "cognitive.llm.*"
+    prefer: ["deepaxiom/cognitive/llm-chat-small"]
+    reason: "el modelo chico atiende el grafo por defecto; escalar por grafo, no por suerte"
+```
+
+La elección de modelo es una cuestión de gobernanza además de de ingeniería —
+"qué modelo respondió esto" es algo que un auditor pregunta — así que pertenece
+al mismo documento firmado que dice qué puede actuar sobre el mundo, legible por
+inspección.
+
+Esto **no** es un router aprendido, deliberadamente. Los clasificadores estilo
+RouteLLM y el semantic router de vLLM eligen por consulta y son genuinamente
+mejores en coste y calidad; también son inauditables por inspección, que es la
+propiedad que aquí se cambia. Los dos componen: pon un router aprendido detrás
+de una capacidad `cognitive.*` y rutea hacia él.
+
+### Un presupuesto de contexto que el kernel hace cumplir
+
+```json
+{ "ir": "1", "graph_id": "long-session", "context_budget": 8000, "nodes": [] }
+```
+
+Un presupuesto que hace cumplir el skill es un presupuesto que solo vale para
+los skills que se acordaron de implementarlo, y el modo de fallo difiere en cada
+uno — una truncación en uno, un 413 en otro, pérdida silenciosa de datos en un
+tercero. Un solo lugar, una sola regla, un solo mensaje de error.
+
+El conteo de tokens es explícitamente una **estimación** (bytes/4, la regla
+habitual para BPE). El kernel no tiene tokenizador y no debería adquirir uno,
+porque lo acoplaría a una familia de modelos. Un presupuesto presentado como
+exacto se usaría para planificación de capacidad que no puede sostener.
+
+---
+
 ## Drivers de modelos y admisión de recursos
 
-La voz y la visión llegan como skills de primera parte — cada uno un driver fino
+La voz llega como skills de primera parte — cada uno un driver fino
 sobre un runtime nativo, cada uno con una cadena de degradación declarada:
 
 | Skill | Capacidad | Motor |
@@ -1164,31 +1368,15 @@ sobre un runtime nativo, cada uno con una cadena de degradación declarada:
 | [`skills/asr`](skills/asr/) | `sensorial.asr.transcribe` | faster-whisper (CPU int8). Acepta un WAV completo en `audio_in`, o un stream PCM en vivo en `audio_chunk_in` con transcripciones parciales mientras la persona todavía habla. Termina una utterance por señal del cliente, por silencio final, o por un tope duro. |
 | [`skills/tts`](skills/tts/) | `motor.tts.speak` | piper (opcional) → voces del SO (SAPI/espeak). Emite PCM en trozos de ~200ms para un oyente en vivo, sea cual sea el backend, más la cláusula entera como WAV. |
 | [`skills/sentence-chunker`](skills/sentence-chunker/) | `logical.text.sentence_chunk` | Agrupa un stream de tokens en cláusulas. Ponlo entre un LLM en streaming y cualquier cosa que trabaje con frases, o el sintetizador se dispara una vez por token. |
-| [`skills/ocr`](skills/ocr/) | `sensorial.ocr.image` | RapidOCR sobre ONNX Runtime |
 | [`skills/model-manager`](skills/model-manager/) | `motor.models.manage` | listar / catálogo / búsqueda en HF / descargar / borrar |
 | [`skills/memory-context`](skills/memory-context/) | `memory.context.window` | SQLite (embebido, archivo local) — persiste turnos por sesión a través de reinicios, `recall` devuelve una ventana recortada a un presupuesto de tokens configurable (drop-oldest, o resumen vía `aura.llm.ChatBackend`). El historial propio de llm-chat es en proceso y sin límite (ver su `main.py`); este es la alternativa durable y consciente del presupuesto — se cablea a un grafo explícitamente, no se conecta solo. |
+| [`skills/postgres-cdc`](skills/postgres-cdc/) | `sensorial.postgres.cdc` | Convierte el stream de replicación lógica propio de Postgres (`test_decoding`, nada que instalar) en eventos `std/db-change@1`, uno por fila cambiada. |
 
 Como todos comparten la interfaz de puertos/esquemas, a un grafo que pide
 `sensorial.asr.transcribe` nunca le importa qué motor responde — ese es el plano
-de modelos en la práctica.
-
-**Skills de integración.** Estos son los ejemplos trabajados y legibles de
-conectar con un sistema externo. El patrón detrás de ellos (mock primero,
-`_recover_text()` para las rarezas del modelo pequeño) vale la pena copiarlo si
-construyes el tuyo propio — léelo directo de los propios skills:
-
-| Skill | Capacidad | Qué hace |
-|---|---|---|
-| [`skills/tuya-status`](skills/tuya-status/) | `sensorial.api.tuya.status` | Lee el estado de un dispositivo conectado a Tuya vía la Cloud API de Tuya (firma HMAC-SHA256 propia, sin dependencia de SDK). Solo lectura, siempre activo. |
-| [`skills/tuya-command`](skills/tuya-command/) | `motor.api.tuya.command` | Enciende/apaga un dispositivo conectado a Tuya. Es `motor.*`, así que todo grafo generado por el planner o por MCP que llegue a él lleva una puerta de aprobación humana (ver [Modelo de seguridad](#modelo-de-seguridad) para el alcance exacto de esa regla). |
-| [`skills/vision-reasoner`](skills/vision-reasoner/) | `cognitive.vision.reasoner` | Narra un evento de detección de objetos (p. ej. de Frigate) y propone una alerta gateada cuando parece accionable. Mismo backend local-o-nube que `llm-chat`. |
-| [`skills/notify-alert`](skills/notify-alert/) | `motor.notify.alert` | Entrega una alerta ya aprobada — la escribe en disco, opcionalmente llama a un servicio de notificación de Home Assistant. |
-| [`skills/vision-ask`](skills/vision-ask/) | `cognitive.vision.ask` | Preguntas y respuestas de visión bajo demanda contra un snapshot de cámara en vivo. Sin fallback local — necesita `OPENAI_API_KEY` apuntando a un modelo con capacidad de visión. |
-
-Cada uno sigue necesitando aquello que envuelve para hacer algo útil de verdad:
-un proyecto de Tuya IoT Platform, una cámara, una clave de API con capacidad de
-visión. Si quieres algo que corra sin nada en absoluto, empieza por
-[`skills/echo/`](skills/echo/) — sin modelo, sin credenciales, sin red.
+de modelos en la práctica. Si quieres algo que corra sin nada en absoluto para
+envolver un sistema externo nuevo, empieza por [`skills/echo/`](skills/echo/)
+— sin modelo, sin credenciales, sin red.
 
 **Admisión de recursos (hardware finito).** Un nodo arrancado con un presupuesto
 de memoria se niega a admitir skills que no caben, con una explicación en lugar
@@ -1201,6 +1389,147 @@ de una muerte silenciosa por falta de memoria:
 #   "admission rejected: … declares 1.0Gi but only 512Mi of the 1.5Gi budget remains …"
 #   la reserva se libera cuando el skill se desconecta; el uso se muestra en /healthz
 ```
+
+---
+
+## Audit bundles
+
+Un estudio de 2026 sobre protocolos de benchmarks de agentes
+([arXiv 2607.22368](https://arxiv.org/abs/2607.22368)) examinó trazas
+publicadas y encontró que **el 67% contenía "protocol exposures"** — caminos
+por los que se puede ganar una puntuación sin que la capacidad medida
+intervenga. Su conclusión no fue que hagan falta mejores tareas, sino que los
+informes deben incluir la evidencia necesaria para interpretarlos. Y nombra lo
+que un runtime tiene que emitir para que eso sea posible:
+
+| Lo que pide el estudio | Este runtime ya lo tenía, por otras razones |
+|---|---|
+| Logs de trayectoria completos — llamadas, orden, timestamps | El log causal (C3 regla 7) |
+| Procedencia de artefactos, con hashes | El ledger de efectos (C4) |
+| Configuración del modelo, replayable | La atestación de inferencia (C5) |
+| Baselines de comparación de runs pareados | `aura replay` |
+
+Lo que faltaba era un solo documento que llevara las cuatro y verificara solo.
+
+```powershell
+.\kernel\aura.exe bundle sess-8f3a --out caso.json
+#  session    sess-8f3a
+#  steps      412
+#  effects    3 sealed · 2 delivered · 1 denied
+
+.\kernel\aura.exe bundle --verify caso.json     # cualquiera, en cualquier parte
+```
+
+Un **recibo** prueba un efecto. Un **bundle** explica una sesión: la
+trayectoria, un recibo autónomo por efecto sellado, y las configuraciones de
+modelo que los argumentaron. Editar, quitar o reordenar un solo paso hace
+fallar la verificación — que es justo la edición que alguien haría para ocultar
+cómo se ganó una puntuación.
+
+La truncación se declara, nunca se esconde: una sesión más larga que el tope
+produce un bundle que dice que es un prefijo.
+
+---
+
+## Un entorno OpenEnv
+
+[OpenEnv](https://github.com/huggingface/OpenEnv) es el contrato de Hugging
+Face para entornos de RL agéntico: `reset` / `step` / `state` estilo Gymnasium
+sobre HTTP, consumido por TRL, torchforge y SkyRL. Cada grafo registrado en un
+nodo es uno:
+
+```powershell
+curl localhost:9080/openenv/spec
+curl -X POST localhost:9080/openenv/reset -d '{"environment":"chat"}'
+curl -X POST localhost:9080/openenv/step  -d '{"episode_id":"ep-…","action":{"text":"hola"}}'
+```
+
+Es un **border**, como el servidor MCP y la tarjeta A2A: habla el protocolo de
+otro en el borde, sin privilegios dentro del kernel.
+
+Dos decisiones que conviene declarar, porque las dos son negativas:
+
+**El reward es siempre `null`.** Un runtime no puede saber qué cuenta como
+éxito en una tarea, y un número inventado es exactamente la "puntuación sin
+protocolo detrás" de la que trata el estudio. El campo existe para que un
+wrapper lo rellene.
+
+**El audit bundle del episodio está en `/openenv/bundle?episode=<id>`.** Esa es
+la razón de tener este border y no solo cumplirlo: un entorno que devuelve
+evidencia a prueba de manipulación junto a la observación permite que un
+benchmark reporte los supuestos detrás de una puntuación, no solo la
+puntuación.
+
+---
+
+## Aislamiento de skills
+
+Esta ha sido la mayor brecha de seguridad abierta desde la primera release, y
+el README lo decía. Esto la estrecha; no la cierra, y la diferencia merece
+precisión.
+
+```powershell
+.\kernel\aura.exe run acme/vision/invoice-ocr --sandbox process --env PG_CDC_DSN
+#  sandbox: process — scrubbed environment, cwd jail, no inherited handles.
+#    It does NOT contain hostile code — use `format: wasm` for that.
+```
+
+| Backend | Aislamiento | Portátil | Estado |
+|---|---|---|---|
+| `none` | Ninguno — el comportamiento previo, ahora explícito | sí | entregado |
+| `process` | Entorno depurado, jaula de cwd, sin handles heredados | sí | entregado |
+| `wasm` | WASI — `permissions` forzado de verdad por wazero | sí | entregado |
+| `microvm` | Una frontera real | Linux+KVM | **solo interfaz, rechazado al arrancar** |
+
+**Qué compra `process`.** El entorno pasa a ser una allowlist en vez de una
+herencia: un skill instalado desde un registry ya no recibe el
+`AWS_SECRET_ACCESS_KEY`, el `GITHUB_TOKEN` o el `SSH_AUTH_SOCK` del operador
+solo por arrancarse. Un skill que sí necesita una credencial la nombra con
+`--env`. Eso cierra un fallo real y común. **No** es una frontera contra código
+hostil, que todavía puede llegar a la red y al filesystem por syscalls que
+ningún runtime de Go portable intercepta.
+
+**Por qué `microvm` se rechaza en vez de simularse.** El consenso de 2026 es
+inequívoco: los contenedores comparten kernel y no son una frontera de
+aislamiento; lo que usa producción son microVMs (Firecracker, Cloud Hypervisor,
+Kata) o gVisor. Ese consenso es correcto. Implementarlo requiere Linux con KVM,
+y un backend que degradara en silencio a algo más débil sería peor que ninguno,
+porque un operador correría código de terceros creyendo en un aislamiento que
+el runtime le fabricó. Pedirlo produce un error que explica qué usar en su
+lugar.
+
+---
+
+## Witnessing abierto
+
+`aura witness` ancla un ledger con un tercero. Hasta ahora el endpoint estaba
+tras el token del nodo, lo que significaba que el witnessing solo funcionaba
+entre partes que ya habían intercambiado una credencial — un witness dentro del
+mismo dominio de confianza que el log que avala, que es justo lo que el modelo
+de Certificate Transparency necesita que no ocurra.
+
+```powershell
+.\kernel\aura.exe up --open-witness
+#  WARN open witness enabled — any node may anchor its ledger here without a token
+#       max_nodes=10000 per_node_per_hour=12 retention_days=90
+```
+
+Lo que lo hizo seguro de ofrecer no fue el cambio de ruta sino los límites. Un
+witness abierto es una superficie de escritura, y cualquiera puede generar un
+keypair e inventarse un node id:
+
+- **Tasa**: 12 presentaciones por nodo por hora. Un nodo con checkpoints
+  normales presenta muy por debajo.
+- **Capacidad**: 10.000 nodos distintos. En el tope, los nodos ya avalados
+  siguen funcionando y los nuevos se rechazan — el modo de fallo útil, porque
+  el valor del witnessing está en la continuidad de lo ya prometido.
+- **Retención**: 90 días. Olvidar también es honesto: una contrafirma cuya
+  línea base el witness descartó es una que ya no puede contradecir.
+
+El statement se autoautentica —lleva la clave pública del nodo que lo presenta
+y una firma sobre la cabeza— así que un witness abierto verifica antes de
+recordar nada, y rechaza antes de hacer criptografía para quien excede su
+límite.
 
 ---
 
@@ -1348,15 +1677,15 @@ una sesión:
 
 ---
 
-## Los cuatro contratos
+## Los cinco contratos
 
-Todo lo anterior descansa sobre cuatro contratos pequeños, formalmente
+Todo lo anterior descansa sobre cinco contratos pequeños, formalmente
 especificados y con versión congelada, en [`spec/`](spec/). Son lo *único* que
 AURA inventa; una suite de conformidad
 ([`spec/conformance/`](spec/conformance/), 59 comprobaciones, caja negra sobre
 el protocolo crudo) es cómo una implementación demuestra que cumple C1-C3 — las
-garantías propias de C4 las comprueba, por separado, un job de CI adversarial
-(ver [Modelo de seguridad](#modelo-de-seguridad)).
+garantías propias de C4 y C5 las comprueba, por separado, un job de CI
+adversarial (ver [Modelo de seguridad](#modelo-de-seguridad)).
 
 - **C1 — Manifiesto** ([spec/c1-manifest.md](spec/c1-manifest.md)): qué es un
   skill — identidad, tipo, capacidad, puertos tipados con esquemas obligatorios,
@@ -1369,13 +1698,21 @@ garantías propias de C4 las comprueba, por separado, un job de CI adversarial
 - **C3 — Channel** ([spec/c3-channel.md](spec/c3-channel.md)): el envelope de
   mensaje y su semántica normativa — orden FIFO, entrega at-least-once con
   idempotencia, back-pressure obligatorio, `cause_id` causal, cancelación,
-  QoS declarable, transporte negociado, medición, y un recibo de efecto
-  opcional.
+  QoS declarable, transporte negociado, medición, un recibo de efecto
+  opcional, y una atestación de inferencia opcional.
 - **C4 — Ledger de Efectos y Política** ([spec/c4-ledger.md](spec/c4-ledger.md)):
   el Effect Checkpoint por el que pasa toda entrega `motor.*` — autorizar por
-  política de nodo, atestiguar en una entrada encadenada por hash, firmar
-  periódicamente la cabeza de la cadena — y la verificación sin conexión que
-  una implementación conforme debe soportar.
+  política de nodo, atestiguar en una entrada encadenada por hash, comprometer
+  una cabeza Merkle RFC 6962, firmarla periódicamente, y opcionalmente hacer
+  que un tercero la contrafirme — y la verificación sin conexión que una
+  implementación conforme debe soportar.
+- **C5 — Atestación de Inferencia** ([spec/c5-attestation.md](spec/c5-attestation.md)):
+  lo que un skill afirma sobre cómo produjo una salida — motor, modelo,
+  revisión, cuantización, parámetros de muestreo, semilla — direccionado por
+  contenido y citado por cada efecto que esa salida causó. C4 responde *bajo
+  qué autoridad*; C5 responde *sobre qué base*. Es cuidadoso con sus propios
+  límites: una atestación es una afirmación ligada de forma infalsificable a
+  sus consecuencias, no una prueba de qué se ejecutó.
 
 **La interrupción es una garantía, no una petición.** Un cliente puede abandonar
 una cadena a media ejecución — el "para, cambié de idea" de una conversación en
@@ -1452,12 +1789,17 @@ append-only:
   "policy": "sha256:7c1e…", "payload_sha256": "b5b3…" }
 ```
 
-Tres cosas hacen que esto sea evidencia y no logging:
+Cinco cosas hacen que esto sea evidencia y no logging:
 
 - **Encadenado por hash.** Cada entrada cita el hash de la anterior (`prev`),
   calculado sobre el contenido propio de la entrada. Alterar el contenido de
   una entrada vieja cambia su hash, lo que rompe todas las entradas selladas
   después — la cadena o recalcula limpia de punta a punta, o visiblemente no.
+- **Comprometido a una cabeza Merkle.** Junto a la cadena lineal, las entradas
+  forman un árbol RFC 6962 — la construcción de Certificate Transparency,
+  elegida porque da los dos tipos de prueba de abajo sobre una sola forma y
+  cierra el ataque de segunda preimagen que tiene un árbol ingenuo. Cada
+  checkpoint se compromete a la cabeza del árbol además de a la de la cadena.
 - **Firmado periódicamente.** Cada ~100 entradas o 60 segundos, lo que ocurra
   primero, el nodo firma su cabeza actual con su propia clave Ed25519
   (`identity.Node.Keys`, generada al primer arranque como cualquier otro
@@ -1466,16 +1808,155 @@ Tres cosas hacen que esto sea evidencia y no logging:
   una entrada vieja *y* reparar cada puntero `prev` posterior, dejando una
   cadena que sigue recalculando limpia — pero no puede forjar una firma sobre
   la nueva cabeza sin la clave privada del nodo.
+- **Contrafirmado opcionalmente por un tercero.** Ver
+  [anclaje externo](#anclaje-externo) — lo que la autofirma no puede hacer.
 - **Verificable sin conexión.** `aura verify [--data <dir>]` recalcula toda la
-  cadena y comprueba cada firma de checkpoint directamente contra el archivo
-  SQLite — sin ningún proceso del kernel involucrado, y sin tocar nunca la
-  clave privada, solo la pública. `GET /v1/ledger/verify` corre la misma
-  comprobación contra un nodo corriendo, por conveniencia; las dos nunca
-  pueden discrepar en silencio, porque es la misma función. Manipular la
+  cadena *y* el árbol, y comprueba cada firma de checkpoint directamente
+  contra el archivo SQLite — sin ningún proceso del kernel involucrado, y sin
+  tocar nunca la clave privada, solo la pública. `GET /v1/ledger/verify` corre
+  la misma comprobación contra un nodo corriendo, por conveniencia; las dos
+  nunca pueden discrepar en silencio, porque es la misma función. Manipular la
   cadena de cualquiera de las dos formas —editar una entrada, o editarla y
   reparar la cadena después— hace que ambas reporten fallo; esto lo ejercita
   un job de CI que sella un efecto real a través de un nodo corriendo, edita
   `kernel.db` directamente, y comprueba que ambos caminos lo detectan.
+
+### Anclaje externo
+
+Que un nodo firme su propia historia establece que **nadie la alteró sin la
+clave**. No establece que quien tiene la clave no lo hizo: un operador puede
+reescribir entradas y refirmar el resultado, y la cadena recalcula, cada firma
+verifica, y nada en disco registra que hace una hora decía otra cosa. Versiones
+anteriores de este documento describían el ledger como evidencia que "un
+auditor puede comprobar sin confiar en el proceso que la produjo", lo cual lo
+sobrevendía — el auditor todavía tenía que confiar en quien tuviera la clave.
+
+Un **witness** cierra eso, con el mecanismo de Certificate Transparency:
+
+```powershell
+.\kernel\aura.exe witness http://peer.internal:9080
+#  el witness http://peer.internal:9080 vio por última vez 412 entradas;
+#  presentando 587 con una prueba de consistencia de 9 hashes
+#
+#  ATESTIGUADO — el peer avaló 587 entradas en sha256:4b8c1e…
+```
+
+El witness verifica la firma propia del nodo, y después verifica una **prueba
+de consistencia** RFC 6962: *las entradas que ya avalé siguen siendo, sin
+cambios y en el mismo orden, un prefijo de estas*. Un nodo que reescribió la
+entrada 3 no puede producir esa prueba — no hay nada que forjar, o existe
+porque la historia realmente es una extensión, o no. Solo entonces el witness
+contrafirma, y registra lo que firmó.
+
+La propiedad resultante: **un nodo todavía puede mentir, pero no de forma
+consistente a dos partes a lo largo del tiempo.** Cada nodo es un witness (no
+hay servicio aparte que desplegar), así que un despliegue de dos nodos ya
+tiene dónde anclar.
+
+Un nodo cuya propia clave se usó para reescribir la historia sigue pasando sus
+*auto*comprobaciones —cadena intacta, checkpoint válido— y `aura verify` ahora
+reporta esa combinación por lo que es:
+
+```
+  7 entries · chain intact · 1/1 checkpoint(s) valid · key 2b850090b4d4
+  0/1 witness countersignature(s) verify
+
+  NOT SOUND.
+  → 1 of 1 witness countersignatures no longer match.
+     Note: the chain and every checkpoint verify. That combination —
+     internally perfect, externally contradicted — is what a rewrite by the
+     holder of this node's own key looks like. Ask the witness directly.
+```
+
+Dos límites honestos, ya que esta sección existe para declararlos:
+
+- **Las contrafirmas que guarda un nodo las guarda ese nodo**, que puede
+  descartar las incómodas. "0 witnesses" no prueba que no se emitiera ninguna
+  — la copia autoritativa es el registro del propio witness. La herramienta
+  dice "sin atestiguar", nunca "sin atestiguar, por lo tanto bien".
+- **Todavía no hay witness público anónimo.** `/v1/ledger/witness` está tras el
+  token del nodo como toda ruta `/v1`, así que el witnessing funciona entre
+  partes que pueden intercambiar uno — dos nodos de una organización, o dos
+  organizaciones que acordaron anclarse mutuamente
+  (`aura witness <url> --token …`). Abrirlo a cualquiera sería una línea y
+  deliberadamente no es esa línea: una superficie de escritura sin autenticar
+  necesita antes política de retención y rate limits, porque cualquiera puede
+  generar un keypair y presentar un node id nuevo. Hasta que existan, enviarlo
+  cambiaría una garantía real por una denegación de servicio.
+
+### Recibos portátiles
+
+Probar algo sobre un efecto significaba entregar el archivo SQLite entero: cada
+efecto no relacionado venía con él, y quien lo recibía necesitaba una
+herramienta que hablara el formato de almacenamiento. En la práctica la
+evidencia nunca se compartía, lo que vuelve teórico lo de "verificable".
+
+```powershell
+.\kernel\aura.exe receipt sha256:9f2a… --out factura-99.json
+.\kernel\aura.exe receipt --verify factura-99.json      # cualquiera, en cualquier parte
+```
+
+Un recibo es un solo documento JSON autocontenido: la entrada sellada, una
+prueba de inclusión que la ubica en un árbol de tamaño declarado, el checkpoint
+firmado sobre ese árbol, las contrafirmas de witnesses, y las atestaciones C5
+que la entrada cita. `--verify` no abre ninguna base de datos, no contacta
+ningún nodo, y no necesita material de clave más allá de lo que el documento
+lleva. Una prueba de inclusión son ~log₂(n) hashes hermanos, así que un recibo
+revela el efecto del que trata y absolutamente nada sobre las demás entradas.
+
+### Atestación de la inferencia misma ([C5](spec/c5-attestation.md))
+
+C4 registra *qué actuó y quién lo autorizó*. C5 registra **qué lo argumentó**:
+qué modelo, qué revisión, qué cuantización, qué parámetros de muestreo, qué
+semilla.
+
+```json
+{ "engine": "llama.cpp", "model": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+  "model_revision": "f1d2d2f9…", "quantization": "Q4_K_M",
+  "params": { "temperature": 0.7, "seed": 42 },
+  "prompt_sha256": "b221…", "energy": { "millijoules": 4120.5, "source": "nvml" } }
+```
+
+Un skill adjunta una a cualquier envelope que emite (`ctx.emit(..., attest=...)`
+en el SDK de Python). El kernel la direcciona por contenido, la guarda una vez,
+y cita su hash en la entrada del ledger de **cada efecto al que esa salida
+llevó causalmente** — así una entrada responde "sobre qué base pasó esto", y un
+cambio silencioso de modelo altera hashes ya sellados en una cadena de solo
+anexado.
+
+**Qué prueba esto, dicho sin rodeos, porque la exageración es tentadora:** una
+atestación es una *afirmación del skill*, ligada de forma infalsificable a lo
+que causó y al momento en que se hizo. **No** es prueba de que el skill dijo la
+verdad. Un skill que miente sobre su modelo produce un registro inalterable de
+una mentira. Lo garantizado es que la afirmación no puede editarse después, no
+puede desligarse de sus consecuencias, y no puede antedatarse. Cerrar el resto
+requiere atestación por hardware (un quote de TEE); el campo `tee` está
+reservado para eso y está vacío en todos los nodos de hoy.
+
+Vienen con ello dos seguridades relacionadas. Las descargas de pesos resuelven
+y **fijan la revisión de Hugging Face antes de descargar**, así `model_revision`
+nombra los bytes que realmente se trajeron y no lo que `main` apuntara después.
+Y los formatos de pesos basados en pickle (`.bin`, `.pt`, `.ckpt`) se
+**rechazan** en vez de advertirse — ejecutan código arbitrario al cargarse, y
+los dos formatos que este runtime usa de verdad (GGUF, safetensors) son datos
+puros.
+
+### Lista de materiales
+
+```powershell
+.\kernel\aura.exe bom sess-8f3a --out inventario.json
+#  ML-BOM CycloneDX 1.6 · 2 componente(s) de skill, 1 componente(s) de modelo
+```
+
+Toda herramienta de AI-SBOM construye su inventario desde un manifiesto o un
+lockfile — una declaración de lo que *se suponía* que corriera. `aura bom` lo
+construye desde el ledger: lo que corrió de verdad, citado por qué efectos,
+bajo qué política. Un modelo configurado pero nunca invocado no aparece; uno
+intercambiado en tiempo de ejecución sí. La salida es CycloneDX 1.6 con
+componentes `machine-learning-model`, así que encaja en herramientas que ya
+existen — relevante para las obligaciones de registro del Reglamento de IA de
+la UE, en vigor desde el 2 de agosto de 2026. Hereda exactamente el estatus de
+C5: un registro fiel de lo que se *afirmó* y de lo que causó.
 
 El payload mismo nunca se guarda — solo `payload_sha256` — así que el ledger
 se mantiene pequeño (~300–400 bytes/entrada) y un payload con datos personales
@@ -1528,8 +2009,21 @@ Un nodo sirve todo en un solo puerto (9080 por defecto).
 | `POST /v1/projections/{name}/promote` | Cambiar el modo de una operación. |
 | `POST /v1/ingress` · `GET /v1/ingress` | Declarar / listar rutas de webhook entrantes. |
 | `DELETE /v1/ingress/{name}` | Revocar una ruta entrante. |
+| `GET /v1/schemas` | Cada referencia de schema que este nodo puede compilar. |
+| `GET /v1/schemas/{ref}` | Un documento de schema (`/v1/schemas/std/text@1`). |
+| `GET /v1/grammars/{ref}` | La gramática GBNF de ese schema, como `text/plain`. |
 | `GET /v1/ledger?from_seq=&limit=` | Entradas paginadas del ledger de efectos ([C4](spec/c4-ledger.md)). |
-| `GET /v1/ledger/verify` | Recalcula la cadena y comprueba cada firma de checkpoint; `200` si es sólida, `409` si no. |
+| `GET /v1/ledger/verify` | Recalcula la cadena, el árbol Merkle y cada firma; `200` si es sólida, `409` si no. |
+| `GET /v1/ledger/head` | Posición actual: efectos sellados, cabeza de cadena, cabeza Merkle. |
+| `GET /v1/ledger/statement?from_seq=` | Lo que este nodo presenta a un witness: cabeza firmada + prueba de consistencia. |
+| `POST /v1/ledger/witness` | Este nodo actuando como witness de otro. Devuelve una contrafirma, o `409` con el motivo del rechazo. |
+| `GET /v1/ledger/witness/last-seen?node=` | Hasta dónde ha avalado ya este nodo a otro. |
+| `POST /v1/ledger/witness/record` | Registra una contrafirma sobre el ledger propio (se reverifica antes de guardarla). |
+| `GET /v1/sessions/{id}/bundle` | El audit bundle de la sesión. |
+| `GET /openenv/spec` · `POST /openenv/reset` · `POST /openenv/step` | Superficie OpenEnv — cada grafo registrado es un entorno. |
+| `GET /openenv/state` · `GET /openenv/bundle?episode=` | Metadatos del episodio, y su audit bundle. |
+| `GET /v1/ledger/receipt/{hash}` | El documento de evidencia portátil de un efecto sellado. |
+| `GET /v1/ledger/attestations/{hash}` | Una atestación de inferencia C5, reverificada contra su dirección de contenido. |
 | `POST /hooks/{name}` | Recibir un webhook: verificado con HMAC, abre su propia sesión. |
 | `GET /.well-known/agent.json` | Tarjeta de descubrimiento A2A. |
 | `POST /mcp` | Endpoint MCP Streamable HTTP (JSON-RPC). |
@@ -1568,20 +2062,22 @@ CONTRIBUTING.md     Cómo contribuir al kernel, SDK y spec (en inglés) —
 LICENSE.md          Mapa de licencias por componente, licenciamiento comercial.
 LICENSE-APACHE-2.0.txt   Texto completo de Apache-2.0 (spec, SDK, docs).
 LICENSE-AGPL-3.0.txt     Texto completo de AGPLv3 (kernel, UI, skills de primera parte).
-spec/               Los cuatro contratos congelados + JSON Schemas + suite de conformidad.
+spec/               Los cinco contratos congelados + JSON Schemas + suite de conformidad.
   c1-manifest.md      C1 — manifiesto de skill.
   c2-graph-ir.md      C2 — la IR única de grafo.
   c3-channel.md       C3 — el protocolo de channel.
-  c4-ledger.md        C4 — ledger de efectos y política.
-  enums.yaml          Fuente única de verdad de cada enum que usan C1-C4;
+  c4-ledger.md        C4 — ledger de efectos, cabeza Merkle, witnessing, recibos.
+  c5-attestation.md   C5 — atestación de inferencia, y qué NO prueba.
+  enums.yaml          Fuente única de verdad de cada enum que usan C1-C5;
                       genera las constantes Go/Python/TypeScript (scripts/gen_ssot.py).
-  schemas/            JSON Schemas ejecutables para C1-C3.
+  schemas/            JSON Schemas ejecutables para C1-C3 y la atestación C5.
   conformance/        Suite de caja negra (runner.py) + vectores de test reutilizables.
 kernel/             El kernel en Go — el binario único `aura`.
   cmd/aura/           Comandos CLI (up, chat, do, connect, publish, why, federate,
-                      verify, …).
+                      verify, witness, receipt, bom, …).
   internal/           identity · channel · registry · executor · store · gateway
-                      · ledger (el ledger de efectos, C4) · projection · signing
+                      · ledger (ledger de efectos C4 + árbol Merkle, witnessing,
+                      recibos portátiles, atestaciones C5, ML-BOM) · projection · signing
                       · hub (registro) · mcpsrv · fed (federación) · spec
                       (constantes generadas) · config (la capa de archivo
                       --config, ver "Configuración de skills en tiempo de ejecución").
@@ -1591,11 +2087,9 @@ sdk/node/           @deepaxiom/aura — expone las funciones de una app como
                     skills, o maneja un grafo desde TypeScript. Tipos
                     generados desde spec/schemas.
 skills/             Skills de primera parte — los únicos que este repo considera
-                    "publicados": echo (el ejemplo mínimo trabajado), connector
-                    (integraciones declarativas), llm-chat, planner, asr, tts,
-                    ocr, sentence-chunker, model-manager, memory-context, y los skills de
-                    integración: tuya-status, tuya-command,
-                    vision-reasoner, notify-alert, vision-ask.
+                    "publicados": echo (el ejemplo mínimo trabajado), llm-chat,
+                    asr, tts, sentence-chunker, planner, model-manager,
+                    memory-context, postgres-cdc.
 scripts/            release.ps1 — construye un zip distribuible.
 aura-landing/       El sitio de marketing (Astro) — independiente del runtime.
 ```
@@ -1627,7 +2121,7 @@ python spec\conformance\runner.py --port 9080
 **Esto es pre-1.0.** Ver [`ROADMAP.md`](ROADMAP.md) para qué está construido y
 qué no — los cimientos, la conectividad, la voz multicanal en streaming, la
 seguridad del nodo y el ledger de efectos están todos, cliente de navegador
-incluido. Los doce hitos de abajo corren de extremo a extremo; la suite de
+incluido. Los dieciocho hitos de abajo corren de extremo a extremo; la suite de
 conformidad (59 comprobaciones, `spec/conformance/`) cubre C1-C3, no los hitos,
 y las garantías propias del ledger de efectos las comprueba, por separado, un
 job de CI adversarial (ver [Modelo de seguridad](#modelo-de-seguridad)). Existe
@@ -1644,10 +2138,10 @@ regresión.
 | Hito | Qué entregó | Verificación |
 |---|---|---|
 | Kernel de binario único + SDK + distro | `aura up` → UI + chat con LLM local, sin servicios externos | Con tests |
-| Spec + conformidad | Contratos congelados — C1 v1.5, C2 v1.1, C3 v1.4, C4 v1.1; suite de caja negra de 59 comprobaciones | Con tests |
+| Spec + conformidad | Contratos congelados — C1 v1.5, C2 v1.2, C3 v1.6, C4 v1.2, C5 v1.0; suite de caja negra de 59 comprobaciones | Con tests |
 | Voz multicanal en streaming | Grafo `voice` + cliente de navegador: transcripciones parciales, respuestas habladas, barge-in funcionando | Kernel con tests; cliente verificado a mano |
-| Conectividad sin OpenAPI | Conector declarativo, SDK TypeScript, ingreso de webhooks, observación de tráfico | Ingreso y generador con tests; conector a mano |
-| Drivers de modelos + admisión | Skills de ASR / TTS / OCR; `--memory-budget` | Admisión y ASR/chunker con tests; drivers a mano |
+| Conectividad sin OpenAPI | Patrón de conector declarativo, SDK TypeScript, ingreso de webhooks, observación de tráfico | Ingreso y generador con tests; patrón de conector verificado a mano (no se incluye ningún skill de conector de primera parte) |
+| Drivers de modelos + admisión | Skills de ASR / TTS; `--memory-budget` | Admisión y ASR/chunker con tests; drivers a mano |
 | Planner + `aura do` | Objetivo en lenguaje natural → plan → ejecución con puertas | Verificado a mano |
 | Explicabilidad + replay | `aura why` (narrado por LLM), `aura replay` | Verificado a mano |
 | Proyección OpenAPI legacy | `aura connect` → operaciones como skills, cuatro salvaguardas | Con tests (`projection` 61%) |
@@ -1656,6 +2150,10 @@ regresión.
 | Federación de nodos | `aura federate`, resolución entre nodos | Con tests (`fed` 87%) |
 | Transporte negociado, LAN/mismo-host (Fase 3) | Una conexión pooled por capability federada en vez de un dial por envelope; cancel por envelope, no por cierre de socket; clasificación de ruta medida (`aura federate` la imprime) | Con tests — reuso de conexión, demux de relays concurrentes, cancel-no-afecta-a-otro, auto-recuperación tras una caída |
 | Ledger de efectos (C4) | Atestación encadenada por hash y firmada de cada efecto; `aura verify`, `GET /v1/ledger[/verify]` | Con tests (`ledger` 89%); detección de manipulación probada por un job de CI con un binario real |
+| Cabeza Merkle + recibos portátiles (C4 v1.2, Fase 4) | Árbol RFC 6962 sobre cada entrada, comprometido en cada checkpoint; `aura receipt` exporta la evidencia de un efecto y `--verify` la comprueba sin base de datos, nodo ni red | Con tests — pruebas de inclusión en cada posición para árboles de tamaño 1-64, de consistencia para cada par (m,n) hasta 48, y casos negativos incluyendo una entrada reescrita con el hash reparado |
+| Anclaje externo (C4 v1.2, Fase 4) | `aura witness <peer>`: un tercero verifica una prueba de consistencia antes de contrafirmar, así una historia reescrita no puede colarse ante quien ya vio la anterior. Cada nodo es un witness | Con tests — extensión honesta aceptada, historia bifurcada rechazada, contrafirma ligada a su nodo, handshake HTTP entre dos nodos |
+| Atestación de inferencia (C5, Fase 4) | Un skill declara motor/modelo/revisión/cuantización/muestreo/semilla; el kernel la direcciona por contenido y la cita en cada efecto que la salida causó. Revisiones de HF fijadas, formatos de pesos pickle rechazados, energía reportada con su fuente | Con tests — de extremo a extremo por el camino real del ejecutor (entregado, denegado, malformado y sin inferencia), más ida y vuelta del recibo |
+| ML-BOM (Fase 4) | `aura bom` emite CycloneDX 1.6 desde el ledger — modelos y skills que corrieron de verdad, no los configurados | Verificado a mano |
 | Reversibilidad (`aura undo`, Fase 2) | Deshace un efecto vía su puerto `compensates` declarado — a su vez un efecto gateado y sellado; se rechaza antes de construir la sesión si ya fue deshecho, nunca se entregó, o es irreversible | Con tests (adversariales: doble undo, sin compensación, gate denegado) |
 | Resume de sesión (Fase 2) | La ventana de dedup, los índices causal/en-vuelo, los gates pendientes y los contadores `Seq` por hop de una sesión se reconstruyen desde el log causal al reconectar — da igual si el cliente se cayó o si el propio proceso del kernel reinició, ambos casos toman el mismo camino | Con tests (adversariales: un gate pendiente sobrevive, un cancel sigue alcanzando una cadena multi-hop en vuelo, `Seq` continúa en vez de reiniciarse) |
 | Replay determinista (Fase 2) | `aura replay` compara las entradas selladas del ledger de la sesión original y la reproducida, no solo la transcripción visible al cliente — cierra la cuarta propiedad de la tesis (Reproducible) | Con tests (`ledger.Diff`, puro, 8 casos tabulares) |
@@ -1691,14 +2189,13 @@ cae la línea:
   descripción de sí mismo — un minuto de habla son megabytes de base64 y una
   grabación permanente de alguien hablando, y ni `aura why` ni `aura replay`
   necesitan las muestras para hacer su trabajo.
+- **Resume de sesión.** Reconectar un cliente con el mismo id de sesión
+  reconstruye la ventana de dedup, los índices causal/en-vuelo, las puertas
+  pendientes y los contadores `Seq` por hop desde el log causal de eventos —
+  da igual si el cliente se cayó o si el propio proceso del kernel reinició,
+  ambos casos toman el mismo camino. Ver [Estado de los hitos](#estado-de-los-hitos).
 
 **Todavía no cierto:**
-- **No hay resume de conexión.** Reconectar un cliente con el mismo id de
-  sesión arranca una sesión en memoria completamente nueva; las puertas de
-  aprobación humana pendientes, el tracking de cancelación en vuelo, y la
-  ventana de dedup no sobreviven a un socket caído. No existe un handshake
-  de Resume. Este es el hueco más grande: sin él, "persistente" se refiere al
-  log, no a la sesión.
 - **El QoS `bulk` sigue sin definir.** `reliable` y `realtime` están
   especificados y forzados (ver arriba); `bulk` es un nombre en el enum sin
   comportamiento detrás, y se trata como `reliable` para no perder nada en
@@ -1712,33 +2209,42 @@ cae la línea:
 
   | Paquete | Cobertura | | Paquete | Cobertura |
   |---|---|---|---|---|
-  | `config` | 100,0% | | `signing` | 90,4% |
-  | `channel` | 97,5% | | `registry` | 92,6% |
-  | `ledger` | 89,2% | | `fed` | 87,1% |
-  | `executor` | 88,0% | | `store` | 81,7% |
-  | `hub` | 81,2% | | `identity` | 78,3% |
-  | `gateway` | 68,5% | | `mcpsrv` | 62,7% |
-  | `projection` | 61,0% | | `cmd/aura` | **13,3%** |
+  | `config` | 100,0% | | `registry` | 92,6% |
+  | `channel` | 97,5% | | `signing` | 90,4% |
+  | `executor` | 86,2% | | `fed` | 86,4% |
+  | `wasmrt` | 85,6% | | `hub` | 81,2% |
+  | `identity` | 78,3% | | `ledger` | 71,9% |
+  | `store` | 71,6% | | `gateway` | 67,6% |
+  | `mcpsrv` | 62,7% | | `projection` | 61,0% |
+  | `cmd/aura` | **10,8%** | | | |
 
-  **Ningún paquete está en cero.** `internal/` está en **77,4%**; el agregado
-  del módulo entero (`go test ./...`, todos los paquetes) es **55,6%**, y la
-  diferencia es enteramente `cmd/aura`: unas 2.700 líneas de CLI al 13,3%, que
+  **Ningún paquete está en cero.** `internal/` está en **75,3%**; el agregado
+  del módulo entero (`go test ./...`, todos los paquetes) es **54,5%**, y la
+  diferencia es enteramente `cmd/aura`: unas 3.000 líneas de CLI al 10,8%, que
   se prueban levantando nodos de verdad y no con tests unitarios — la lógica
   central de `aura verify` es la excepción, probada directamente (ver [Modelo
-  de seguridad](#modelo-de-seguridad)). La UI sigue sin suite de tests. La
-  suite de conformidad ejercita el kernel de punta a punta sobre el cable; la
-  garantía de detección de manipulación del ledger de efectos se ejercita por
-  separado, contra un binario real, con un job de CI adversarial dedicado.
-  Trátalo como pre-producción.
+  de seguridad](#modelo-de-seguridad)).
+
+  `ledger` bajó de 89% y `store` de 82% en esta release: ambos crecieron
+  bastante (árbol Merkle, witnessing, recibos, atestaciones, ML-BOM) y los
+  tests nuevos, aunque exhaustivos con la criptografía, todavía no cubren los
+  caminos de error de cada accesor nuevo. Las garantías están cubiertas; la
+  fontanería alrededor está más floja de lo que el número viejo sugería, y
+  citar el número viejo sería la mentira más cómoda.
+
+  La UI sigue sin suite de tests. La suite de conformidad ejercita el kernel de
+  punta a punta sobre el cable; la garantía de detección de manipulación del
+  ledger de efectos se ejercita por separado, contra un binario real, con un
+  job de CI adversarial dedicado. Trátalo como pre-producción.
 
 ---
 
 ## Diseñado, aún no construido
 
 Alcance honesto. Todas estas piezas descansan sobre los mismos contratos
-congelados — ninguna cambia C1, C2, C3 ni C4 — pero aún no están implementadas.
-Las dos primeras son las que impiden que esto sea seguro fuera de una red de
-confianza:
+congelados — ninguna cambia C1, C2, C3, C4 ni C5 — pero aún no están
+implementadas. El sandboxing de skills es la que impide que esto sea seguro
+fuera de una red de confianza:
 
 - ~~**Autenticación del nodo y loopback por defecto**~~ — hecho en la Fase 0
   (ver [ROADMAP.md](ROADMAP.md)). El texto anterior decía: hoy `aura up` escucha en
@@ -1754,17 +2260,13 @@ confianza:
   comportamiento (rechazar una arista `motor.*` sin puerta en `published`); el
   resto del diseño de seguridad progresiva no está implementado, y la tabla del
   [Modelo de seguridad](#modelo-de-seguridad) así lo dice.
-- **Resume de sesión** — reconstruir las puertas pendientes, el tracking en
-  vuelo y la ventana de dedup de una sesión caída, en vez de arrancar una en
-  blanco. Este es el hueco más grande entre dónde está el runtime hoy y la
-  persistencia que declara; [`ROADMAP.md`](ROADMAP.md) lo agenda junto con la
-  compensación, porque las dos son el mismo problema de reconstruir estado
-  desde el log.
-- **`aura undo`** — un skill ya puede declarar cómo se revierte uno de sus
-  efectos (`compensates`, C1) y el ledger ya guarda esa metadata en cada
-  entrada sellada (C4), pero nada recorre la cadena hacia atrás y la invoca
-  todavía. Delimitado deliberadamente al runtime, no al contrato de cable —
-  ver [c4-ledger.md](spec/c4-ledger.md#what-this-contract-deliberately-does-not-specify).
+- **Atestación por hardware (TEE)** — la brecha que mantiene una atestación C5
+  como *afirmación* en vez de prueba. Un quote de Intel TDX, AMD SEV-SNP o
+  NVIDIA Confidential Computing, ligando una medición del proceso que
+  realmente corrió el modelo, la cerraría. El registro ya tiene un campo
+  `tee`, así que aterrizarlo es aditivo; lo que falta es la integración y el
+  hardware para probarla. Hasta entonces la documentación dice "afirmado",
+  nunca "probado" — ver [Modelo de seguridad](#modelo-de-seguridad).
 - **Un editor visual de grafos** — hoy un grafo se escribe como IR C2 crudo en
   JSON o lo genera el planner; la vista de Grafos de la UI del plano de
   control es un visor de JSON de solo lectura, no un canvas de arrastrar y
@@ -1816,8 +2318,8 @@ contribuir nunca de vuelta.
 *Todo lo descrito en este README se ha ejecutado; nada de aquí es un plan
 disfrazado de funcionalidad — lo que solo está diseñado vive en su propia
 sección. Es pre-1.0: `cmd/aura` tiene cobertura delgada de tests unitarios (se
-ejercita levantando nodos reales en su lugar), no hay resume de sesión,
-`aura undo` todavía no existe, y el catálogo de integraciones es pequeño.
+ejercita levantando nodos reales en su lugar), no hay editor visual de grafos,
+y el catálogo de integraciones es pequeño.
 [Estado de los hitos](#estado-de-los-hitos) es el resumen exacto; si ese
 apartado y este documento se contradicen alguna vez, el que tiene razón es
 Estado de los hitos.*

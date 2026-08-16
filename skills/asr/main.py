@@ -25,19 +25,23 @@ when the user started speaking without a round trip. This skill still carries
 its own safety net — trailing silence and a hard cap — so it stays usable from
 curl, from a test, and from a client that forgets.
 
+The faster-whisper wrapper, utterance buffering and the abandoned-utterance
+sweep live in `engine.py`, kept separate so they can be unit tested without
+the model installed. This module stays the C1 glue: the `@skill.on` handlers,
+plus reading `skill.config` and handing plain values to `engine`.
+
 Config (see skill.yaml): model_size, language, partials_enabled,
-partial_interval_ms, max_utterance_s, silence_endpoint_ms, silence_rms.
+partial_interval_ms, max_utterance_s, silence_endpoint_ms, silence_rms,
+preload_on_boot, beam_size_final, beam_size_partial.
 """
 import asyncio
 import base64
 import io
 import logging
-import math
-import os
 import threading
 import time
-from dataclasses import dataclass, field
 
+import engine
 from aura import Context, Skill, run_all
 
 logging.basicConfig(level=logging.INFO)
@@ -47,119 +51,6 @@ skill = Skill()
 
 # Below this much speech a hypothesis is not worth showing anyone.
 MIN_PARTIAL_SECONDS = 1.0
-
-_model = None
-_model_lock = threading.Lock()
-_model_ready = threading.Event()
-
-
-def _load():
-    """Load once. Called from a warm-up thread at start so the first utterance
-    does not pay a 10-30 second model load and time out."""
-    global _model
-    with _model_lock:
-        if _model is None:
-            from faster_whisper import WhisperModel
-
-            size = skill.config["model_size"]
-            log.info("loading whisper %s (CPU int8) ...", size)
-            _model = WhisperModel(size, device="cpu", compute_type="int8")
-            log.info("model ready")
-        _model_ready.set()
-        return _model
-
-
-# ── per-utterance state ───────────────────────────────────────────────────
-
-@dataclass
-class Utterance:
-    """One in-progress utterance for one (session, node).
-
-    Chunks are kept by `seq` rather than appended, so a gap left by a dropped
-    frame on a realtime channel is visible instead of silently splicing two
-    unrelated moments of speech together.
-    """
-    id: str
-    sample_rate: int = 16000
-    chunks: dict[int, bytes] = field(default_factory=dict)
-    started: float = field(default_factory=time.monotonic)
-    bytes_at_last_partial: int = 0
-    last_decode_cost: float = 0.0
-    decoding: bool = False
-    silent_ms: float = 0.0
-    next_seq: int = 0
-
-    def add(self, pcm: bytes, seq: int | None) -> None:
-        if seq is None:
-            seq = self.next_seq
-        self.next_seq = max(self.next_seq, seq + 1)
-        self.chunks[seq] = pcm
-
-    def pcm(self, max_seconds: float | None = None) -> bytes:
-        data = b"".join(self.chunks[k] for k in sorted(self.chunks))
-        if max_seconds is not None:
-            keep = int(max_seconds * self.sample_rate) * 2
-            if len(data) > keep:
-                data = data[-keep:]
-        return data
-
-    def gaps(self) -> int:
-        return self.next_seq - len(self.chunks)
-
-    def duration(self) -> float:
-        return len(self.pcm()) / 2 / max(self.sample_rate, 1)
-
-
-_utterances: dict[tuple[str, str], Utterance] = {}
-_last_seen: dict[tuple[str, str], float] = {}
-
-
-def _sweep() -> None:
-    """Drop abandoned utterances. The SDK has no session-end hook, so without
-    this a node that runs for weeks accumulates the tail of every conversation
-    that was cut off mid-sentence."""
-    cutoff = time.monotonic() - 120
-    for key, seen in list(_last_seen.items()):
-        if seen < cutoff:
-            _utterances.pop(key, None)
-            _last_seen.pop(key, None)
-
-
-def _rms(pcm: bytes) -> float:
-    """Loudness of a chunk, without a model. Used only to notice that the
-    speaker stopped — cheap enough to run on every chunk."""
-    if len(pcm) < 2:
-        return 0.0
-    import array
-
-    samples = array.array("h")
-    samples.frombytes(pcm[: len(pcm) // 2 * 2])
-    if not samples:
-        return 0.0
-    return math.sqrt(sum(float(s) * s for s in samples) / len(samples))
-
-
-def _transcribe(pcm: bytes, sample_rate: int, language: str | None,
-                beam: int, stop: threading.Event | None) -> str:
-    """Blocking decode. Runs in a worker thread; `stop` lets a barge-in abandon
-    a partial nobody is waiting for any more."""
-    if stop is not None and stop.is_set():
-        return ""
-    model = _load()
-    if not pcm:
-        return ""
-    import numpy as np
-
-    audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    if sample_rate != 16000:
-        # whisper wants 16k; resampling badly is worse than saying so.
-        idx = np.linspace(0, len(audio) - 1, int(len(audio) * 16000 / sample_rate))
-        audio = np.interp(idx, np.arange(len(audio)), audio).astype(np.float32)
-    segments, _ = model.transcribe(
-        audio, beam_size=beam, language=language or None,
-        condition_on_previous_text=False,
-    )
-    return " ".join(seg.text.strip() for seg in segments).strip()
 
 
 def _wav_pcm(wav_bytes: bytes) -> tuple[bytes, int]:
@@ -178,13 +69,15 @@ async def handle_document(ctx: Context) -> None:
     if not b64:
         await ctx.error("status_out", "audio_in expects std/document@1 with bytes_b64")
         return
-    if not _model_ready.is_set():
+    if not engine.model_ready.is_set():
         await ctx.status("status_out", "working", "loading the speech model...")
     try:
         pcm, rate = await asyncio.to_thread(_wav_pcm, base64.b64decode(b64))
         language = payload.get("language") or skill.config["language"]
         text = await asyncio.to_thread(
-            _transcribe, pcm, rate, language, 5, ctx.cancel_event)
+            engine.transcribe, pcm, rate, language,
+            skill.config["beam_size_final"], skill.config["model_size"],
+            ctx.cancel_event)
         await ctx.emit("text_out", {"text": text, "final": True})
         await ctx.emit("transcript_out", {"text": text, "final": True, "replace": True})
     except Exception as exc:  # noqa: BLE001
@@ -205,11 +98,11 @@ async def handle_chunk(ctx: Context) -> None:
     # Everything that mutates shared state happens BEFORE the first await.
     # The SDK starts one task per envelope, and tasks run to their first
     # suspension in arrival order — so this is what keeps chunks in order.
-    utt = _utterances.get(key)
+    utt = engine.utterances.get(key)
     if utt is None:
-        utt = Utterance(id=f"{ctx.session}:{int(time.time() * 1000)}")
-        _utterances[key] = utt
-    _last_seen[key] = time.monotonic()
+        utt = engine.Utterance(id=f"{ctx.session}:{int(time.time() * 1000)}")
+        engine.utterances[key] = utt
+    engine.last_seen[key] = time.monotonic()
 
     try:
         pcm = base64.b64decode(b64)
@@ -221,7 +114,7 @@ async def handle_chunk(ctx: Context) -> None:
     utt.add(pcm, payload.get("seq"))
 
     chunk_ms = (len(pcm) / 2 / max(utt.sample_rate, 1)) * 1000
-    if _rms(pcm) < skill.config["silence_rms"]:
+    if engine.rms(pcm) < skill.config["silence_rms"]:
         utt.silent_ms += chunk_ms
     else:
         utt.silent_ms = 0.0
@@ -231,17 +124,17 @@ async def handle_chunk(ctx: Context) -> None:
     too_long = utt.duration() >= skill.config["max_utterance_s"]
 
     if client_final or hit_silence or too_long:
-        _utterances.pop(key, None)
-        _last_seen.pop(key, None)
+        engine.utterances.pop(key, None)
+        engine.last_seen.pop(key, None)
         await _finalize(ctx, utt, reason="client" if client_final
                         else "silence" if hit_silence else "max-length")
         return
 
-    _sweep()
+    engine.sweep()
     await _maybe_partial(ctx, utt)
 
 
-async def _maybe_partial(ctx: Context, utt: Utterance) -> None:
+async def _maybe_partial(ctx: Context, utt: engine.Utterance) -> None:
     """Emit a partial if enough new audio has arrived and the machine kept up.
 
     whisper has no incremental decode: a partial costs a full re-decode of the
@@ -274,8 +167,9 @@ async def _maybe_partial(ctx: Context, utt: Utterance) -> None:
     started = time.monotonic()
     try:
         text = await asyncio.to_thread(
-            _transcribe, utt.pcm(max_seconds=10), utt.sample_rate,
-            skill.config["language"], 1, ctx.cancel_event)
+            engine.transcribe, utt.pcm(max_seconds=10), utt.sample_rate,
+            skill.config["language"], skill.config["beam_size_partial"],
+            skill.config["model_size"], ctx.cancel_event)
     except Exception as exc:  # noqa: BLE001
         log.warning("partial decode failed: %s", exc)
         return
@@ -288,7 +182,7 @@ async def _maybe_partial(ctx: Context, utt: Utterance) -> None:
             "text": text, "final": False, "replace": True, "utterance": utt.id})
 
 
-async def _finalize(ctx: Context, utt: Utterance, reason: str) -> None:
+async def _finalize(ctx: Context, utt: engine.Utterance, reason: str) -> None:
     if utt.gaps():
         # Say so rather than pretend: the transcript is of audio with holes.
         log.warning("utterance %s is missing %d chunk(s)", utt.id, utt.gaps())
@@ -296,8 +190,9 @@ async def _finalize(ctx: Context, utt: Utterance, reason: str) -> None:
                          f"{utt.gaps()} audio chunk(s) were dropped in transit")
     try:
         text = await asyncio.to_thread(
-            _transcribe, utt.pcm(), utt.sample_rate,
-            skill.config["language"], 5, ctx.cancel_event)
+            engine.transcribe, utt.pcm(), utt.sample_rate,
+            skill.config["language"], skill.config["beam_size_final"],
+            skill.config["model_size"], ctx.cancel_event)
     except Exception as exc:  # noqa: BLE001
         await ctx.error("status_out", f"transcription failed: {exc}")
         return
@@ -311,7 +206,17 @@ async def _finalize(ctx: Context, utt: Utterance, reason: str) -> None:
     await ctx.emit("text_out", {"text": text, "final": True})
 
 
+def _preload_if_configured() -> None:
+    """Warm the model in a background thread when `preload_on_boot` is set, so
+    the first utterance does not pay a 10-30s model load and time out.
+    Replaces the old AURA_ASR_PRELOAD env var read (skill.config carries the
+    effective value from boot, per Skill.__init__)."""
+    if skill.config["preload_on_boot"]:
+        threading.Thread(
+            target=engine.load_model, args=(skill.config["model_size"],),
+            daemon=True).start()
+
+
 if __name__ == "__main__":
-    if os.environ.get("AURA_ASR_PRELOAD", "1") != "0":
-        threading.Thread(target=_load, daemon=True).start()
+    _preload_if_configured()
     run_all([skill])

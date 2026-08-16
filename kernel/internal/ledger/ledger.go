@@ -31,6 +31,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -100,6 +101,23 @@ type Entry struct {
 	// in executor.NewSession, which refuses a second undo of the same receipt
 	// by checking whether any entry already carries it here.
 	Compensates string `json:"compensates,omitempty"`
+	// Inference lists the content addresses of every C5 attestation upstream
+	// in this effect's causal chain — what the models that argued for this
+	// act claimed about themselves (see attest.go). Sorted, so the entry hash
+	// is a function of the set and not of goroutine timing.
+	//
+	// This is the field that makes the ledger answer "on what basis" rather
+	// than only "by whose authority". It is a []string of hashes rather than
+	// inline records for three reasons: entries stay small and uniform, the
+	// same configuration across a thousand effects costs one stored record,
+	// and the binding stays cryptographic — editing an attestation breaks its
+	// content address, and editing the list breaks the entry hash and every
+	// hash after it.
+	//
+	// Empty on an effect no attested inference contributed to: a webhook that
+	// fires a write directly, a hand-driven CLI call. Absence is meaningful
+	// and is not the same as "unknown".
+	Inference []string `json:"inference,omitempty"`
 }
 
 // Hash is this entry's identity in the chain: sha256 of its canonical JSON,
@@ -131,6 +149,10 @@ type SealRequest struct {
 	// Compensates, when set, marks this entry as the undo of the entry whose
 	// Hash() equals this value. Empty for every ordinary effect.
 	Compensates string
+	// Inference is the set of C5 attestation hashes upstream of this effect.
+	// Seal sorts and de-duplicates it, so callers may pass it in whatever
+	// order they collected it.
+	Inference []string
 }
 
 // Ledger is one node's effect ledger: a single writer serialised by mu, so
@@ -147,6 +169,14 @@ type Ledger struct {
 	lastHash         string
 	sinceCheckpoint  int
 	lastCheckpointAt time.Time
+	// tree is the RFC 6962 head over every entry sealed so far (C4 v1.2). It
+	// is maintained incrementally — O(log n) hashes per effect — because the
+	// alternative, rehashing the whole history at each checkpoint, would make
+	// sealing cost grow with the ledger's age. See merkle.go for why the tree
+	// exists at all: the linear chain proves the whole ledger to someone
+	// holding the whole ledger; the tree proves one entry to someone holding
+	// one receipt.
+	tree CompactTree
 }
 
 // Open resumes (or starts) a node's ledger. It reads the current head and the
@@ -165,6 +195,23 @@ func Open(st *store.Store, nodeID string, keys *signing.Keypair) (*Ledger, error
 		st: st, nodeID: nodeID, keys: keys, pubkeyB6: keys.PublicB64(),
 		lastSeq: seq, lastHash: hash, lastCheckpointAt: time.Now(),
 	}
+	// Rebuild the Merkle tree from storage. This is the one O(n) step at
+	// startup, and it is deliberate: the tree has to be a function of what is
+	// durably on disk, not of what this process remembers, or a node that
+	// restarted mid-write would sign a head no verifier could reproduce.
+	entries, err := st.LedgerEntries(1, 0)
+	if err != nil {
+		return nil, fmt.Errorf("rebuild merkle tree: %w", err)
+	}
+	for _, raw := range entries {
+		l.tree.Append(LeafHash(raw))
+	}
+	if uint64(len(entries)) != seq {
+		return nil, fmt.Errorf(
+			"ledger is inconsistent: head is at seq %d but %d entries are stored — "+
+				"run `aura verify` against this data directory", seq, len(entries))
+	}
+
 	if last, ok, err := st.LastCheckpoint(); err != nil {
 		return nil, fmt.Errorf("read last checkpoint: %w", err)
 	} else if ok {
@@ -178,6 +225,33 @@ func Open(st *store.Store, nodeID string, keys *signing.Keypair) (*Ledger, error
 		l.sinceCheckpoint = checkpointEveryN
 	}
 	return l, nil
+}
+
+// Head is the node's current position: how many effects it has sealed, the
+// linear chain head, and the Merkle tree head over all of them.
+//
+// This is what a node hands a witness (see witness.go) and what a witness
+// counter-signs. It is deliberately cheap and lock-scoped: asking for the
+// head must never contend with sealing an effect for longer than reading
+// three fields takes.
+type Head struct {
+	Seq        uint64 `json:"seq"`
+	HeadHash   string `json:"head_hash"`
+	MerkleRoot string `json:"merkle_root"`
+	Node       string `json:"node"`
+	Pubkey     string `json:"pubkey"`
+}
+
+// Head returns the current head. A ledger that has sealed nothing reports
+// seq 0 with the empty tree's root, which is a real signable value rather
+// than a special case callers have to branch on.
+func (l *Ledger) Head() Head {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return Head{
+		Seq: l.lastSeq, HeadHash: l.lastHash, MerkleRoot: l.tree.Root().String(),
+		Node: l.nodeID, Pubkey: l.pubkeyB6,
+	}
 }
 
 // NodePublicKey is the base64 Ed25519 public key this ledger signs
@@ -213,6 +287,7 @@ func (l *Ledger) Seal(req SealRequest) (receipt string, err error) {
 		Decision: req.Decision, Outcome: req.Outcome, Policy: req.Policy,
 		PayloadSHA256: payloadHash, Compensation: req.Compensation,
 		Compensates: req.Compensates,
+		Inference:   normalizeInference(req.Inference),
 	}
 	hash := entry.Hash()
 
@@ -225,6 +300,11 @@ func (l *Ledger) Seal(req SealRequest) (receipt string, err error) {
 	}
 
 	l.lastSeq, l.lastHash = seq, hash
+	// The leaf is hashed over exactly the bytes that were persisted, not over
+	// a re-marshalling of the struct, so the tree this node signs and the tree
+	// a verifier rebuilds from the database cannot diverge on an encoding
+	// detail.
+	l.tree.Append(LeafHash(raw))
 	l.sinceCheckpoint++
 
 	if l.sinceCheckpoint >= checkpointEveryN || time.Since(l.lastCheckpointAt) >= checkpointEveryT {
@@ -271,20 +351,73 @@ func oneOf(v string, set []string) bool {
 	return false
 }
 
+// normalizeInference sorts and de-duplicates the attestation hashes bound
+// into an entry.
+//
+// Determinism is the point. The executor collects these by walking a causal
+// chain whose deliveries are concurrent, so the same effect could otherwise
+// produce two different orderings — and the entry hash is over the marshalled
+// struct, so a different ordering is a different hash, which is a different
+// chain, which no verifier could reproduce. Sorting makes the field a
+// function of the *set* of inferences involved, which is what it means
+// semantically anyway.
+//
+// Returning nil rather than an empty slice for the empty case keeps
+// `omitempty` working, so an effect with no upstream inference serializes
+// exactly as it did before C5 existed — old entries rehash unchanged.
+func normalizeInference(hashes []string) []string {
+	if len(hashes) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(hashes))
+	out := make([]string, 0, len(hashes))
+	for _, h := range hashes {
+		if h == "" {
+			continue
+		}
+		if _, dup := seen[h]; dup {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
 // checkpointPayload is the domain-separated byte string a checkpoint's
 // signature covers — same pattern as signing.Payload for package artifacts,
 // so a checkpoint signature can never be replayed as a package signature or
 // vice versa.
-func checkpointPayload(seq uint64, headHash string) []byte {
-	return []byte(fmt.Sprintf("aura-ledger-checkpoint-v1:%d:%s", seq, headHash))
+//
+// Two versions exist, and which one applies is decided by the data rather
+// than by a flag: a checkpoint carrying a Merkle root is a v2 checkpoint and
+// its signature covers that root; one without is a v1 checkpoint written
+// before the tree existed, and it verifies exactly as it always did. That is
+// what lets a node upgraded in place keep every signature it ever made
+// instead of orphaning its own history.
+//
+// The version lives inside the signed bytes, so a v2 checkpoint's signature
+// can never be re-presented as a v1 signature over the same seq and head —
+// stripping the Merkle root from a row does not yield a valid v1 checkpoint,
+// it yields one that fails to verify.
+func checkpointPayload(seq uint64, headHash, merkleRoot string) []byte {
+	if merkleRoot == "" {
+		return []byte(fmt.Sprintf("aura-ledger-checkpoint-v1:%d:%s", seq, headHash))
+	}
+	return []byte(fmt.Sprintf("aura-ledger-checkpoint-v2:%d:%s:%s", seq, headHash, merkleRoot))
 }
 
 // sealCheckpointLocked signs the current head. Caller must hold mu.
 func (l *Ledger) sealCheckpointLocked() error {
-	sig := l.keys.Sign(checkpointPayload(l.lastSeq, l.lastHash))
+	root := l.tree.Root().String()
+	sig := l.keys.Sign(checkpointPayload(l.lastSeq, l.lastHash, root))
 	cp := store.CheckpointRow{
 		Seq: l.lastSeq, HeadHash: l.lastHash, Pubkey: l.pubkeyB6,
-		Signature: sig, TS: time.Now().UnixMilli(),
+		Signature: sig, TS: time.Now().UnixMilli(), MerkleRoot: root,
 	}
 	if err := l.st.SaveCheckpoint(cp); err != nil {
 		return err

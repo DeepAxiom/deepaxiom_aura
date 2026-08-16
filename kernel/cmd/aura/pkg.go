@@ -20,6 +20,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"aura/kernel/internal/sandbox"
+
 	"aura/kernel/internal/hub"
 	"aura/kernel/internal/signing"
 )
@@ -231,14 +233,13 @@ func cmdAdd(args []string) {
 func cmdRun(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	port := fs.Int("port", 9080, "kernel port")
-	_ = fs.Parse(args)
-	rest := fs.Args()
-	if len(rest) > 1 {
-		_ = fs.Parse(rest[1:])
-		rest = rest[:1]
-	}
+	sandboxBackend := fs.String("sandbox", string(sandbox.BackendNone),
+		"isolation backend: none|process|wasm|microvm (see `aura run --help`)")
+	var passthrough stringList
+	fs.Var(&passthrough, "env", "environment variable to pass through the sandbox (repeatable)")
+	rest := parseWithOperands(fs, args, 1)
 	if len(rest) != 1 {
-		fatal(fmt.Errorf("usage: aura run <org/cat/name> [--port 9080]"))
+		fatal(fmt.Errorf("usage: aura run <org/cat/name> [--sandbox process] [--env NAME] [--port 9080]"))
 	}
 	base := filepath.Join(defaultDataDir(), "skills", strings.ReplaceAll(rest[0], "/", "-"))
 	versions, err := os.ReadDir(base)
@@ -269,13 +270,26 @@ func cmdRun(args []string) {
 		return
 	}
 
+	format, _ := manifest["format"].(string)
+	perms, _ := manifest["permissions"].(map[string]any)
+	spec, err := sandbox.Resolve(sandbox.Backend(*sandboxBackend), rest[0], format, dir, perms)
+	if err != nil {
+		fatal(err)
+	}
+
 	cmd := exec.Command("python", "main.py")
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
-	cmd.Env = append(os.Environ(),
+	// The two coordination variables are appended after the sandbox has
+	// decided what survives from the parent environment, so a scrubbed launch
+	// still finds the kernel.
+	cmd.Env = append(
+		sandbox.EnvFor(spec, os.Environ(), passthrough),
 		fmt.Sprintf("AURA_WS_URL=ws://localhost:%d/ws/skill", *port),
 		fmt.Sprintf("AURA_HTTP_URL=http://localhost:%d", *port))
+
 	fmt.Printf("running %s (%s) against :%d — Ctrl+C to stop\n", rest[0], dir, *port)
+	fmt.Println("  " + strings.ReplaceAll(sandbox.Describe(spec), "\n", "\n  "))
 	if err := cmd.Run(); err != nil {
 		fatal(fmt.Errorf("skill exited: %w (is python + aura-sdk installed?)", err))
 	}

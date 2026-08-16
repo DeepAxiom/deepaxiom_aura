@@ -11,8 +11,9 @@ the kernel and the conformance suite use, so they cannot drift from the wire.
 
 ## Expose your app
 
-The connector (`skills/connector`) is for systems you cannot change. This is the
-other half: when the code is yours, the cheapest integration is the app
+A declarative connector is for systems you cannot change (see "Connecting
+existing software" in the [README](../../README.md)). This is the other
+half: when the code is yours, the cheapest integration is the app
 announcing itself. There is no spec to write and no adapter to maintain — the
 function that already exists becomes the skill.
 

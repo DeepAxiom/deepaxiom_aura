@@ -15,7 +15,7 @@ import unittest
 import psycopg2
 import psycopg2.extras
 
-import main
+import parser
 
 
 def _docker_available() -> bool:
@@ -123,7 +123,7 @@ class TestAgainstRealPostgres(unittest.TestCase):
             conn.close()
         changes = []
         for line in lines:
-            change = main.parse_test_decoding_line(line)
+            change = parser.parse_test_decoding_line(line)
             if change is not None:
                 changes.append(change)
         return changes

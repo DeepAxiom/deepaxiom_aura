@@ -25,12 +25,7 @@ func cmdWhy(args []string) {
 	fs := flag.NewFlagSet("why", flag.ExitOnError)
 	port := fs.Int("port", 9080, "kernel port")
 	noExplain := fs.Bool("no-explain", false, "skip the LLM narration")
-	_ = fs.Parse(args)
-	rest := fs.Args()
-	if len(rest) > 1 {
-		_ = fs.Parse(rest[1:])
-		rest = rest[:1]
-	}
+	rest := parseWithOperands(fs, args, 1)
 
 	session := ""
 	if len(rest) == 1 {

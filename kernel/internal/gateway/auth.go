@@ -52,6 +52,12 @@ type Auth struct {
 	// TrustedProxy relaxes the origin check for deployments that terminate TLS
 	// upstream. Off by default.
 	TrustedProxy bool
+	// OpenWitness exempts the witnessing endpoints from the bearer token, so
+	// nodes outside this trust domain can anchor their ledgers here. Set by
+	// --open-witness. Off by default, because it turns a read-mostly control
+	// surface into one with an unauthenticated write path — bounded by
+	// ledger.WitnessLimits, but a deliberate decision either way.
+	OpenWitness bool
 }
 
 // LoadOrCreateToken returns the node's bearer token, generating and persisting
@@ -87,6 +93,15 @@ func LoadOrCreateToken(dataDir string) (token string, created bool, err error) {
 //   - /hooks/* — the inbound webhook surface. Stripe and GitHub will never
 //     hold a node token; these requests authenticate with their own HMAC over
 //     a signed timestamp, which is a stronger check than a shared bearer.
+//   - /v1/ledger/witness and its last-seen probe, ONLY when the node was
+//     started with --open-witness. A witness that only serves parties who
+//     already exchanged a bearer token is a witness inside the same trust
+//     domain as the log it vouches for, which is most of what makes
+//     Certificate Transparency's model work. The statement is
+//     self-authenticating (it carries the presenting node's key and a
+//     signature over the head), and the rate, capacity and retention bounds
+//     in ledger.WitnessLimits are what keep an open write surface from being
+//     a free database. Off by default.
 //   - the UI's static assets — a browser must be able to load the page before
 //     it can present a token. The assets contain no data; everything the page
 //     then *asks for* goes through /v1/* and is authenticated.
@@ -94,13 +109,17 @@ func LoadOrCreateToken(dataDir string) (token string, created bool, err error) {
 // Note what is deliberately absent: /v1/skills and the A2A card. The
 // capability catalog tells an attacker exactly which effects this node can
 // produce, which is the most useful thing they could learn.
-func openPath(p string) bool {
+func openPath(p string, openWitness bool) bool {
 	switch {
 	case p == "/healthz":
 		return true
 	case strings.HasPrefix(p, "/hooks/"):
 		return true
 	case isUIAsset(p):
+		return true
+	case openWitness && p == "/v1/ledger/witness":
+		return true
+	case openWitness && p == "/v1/ledger/witness/last-seen":
 		return true
 	}
 	return false
@@ -126,7 +145,7 @@ func isUIAsset(p string) bool {
 // up in an HTTP access log for ordinary API traffic.
 func (a *Auth) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.Token == "" || openPath(r.URL.Path) {
+		if a.Token == "" || openPath(r.URL.Path, a.OpenWitness) {
 			next.ServeHTTP(w, r)
 			return
 		}

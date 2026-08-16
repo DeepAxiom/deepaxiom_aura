@@ -26,12 +26,7 @@ func cmdReplay(args []string) {
 	port := fs.Int("port", 9080, "kernel port")
 	graphOverride := fs.String("graph", "", "replay against a different graph (A/B)")
 	denyGates := fs.Bool("deny-gates", false, "deny human-approval gates instead of approving")
-	_ = fs.Parse(args)
-	rest := fs.Args()
-	if len(rest) > 1 {
-		_ = fs.Parse(rest[1:])
-		rest = rest[:1]
-	}
+	rest := parseWithOperands(fs, args, 1)
 	if len(rest) != 1 {
 		fatal(fmt.Errorf("usage: aura replay <session> [--graph <id>] [--deny-gates]"))
 	}

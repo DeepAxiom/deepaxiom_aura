@@ -5,13 +5,18 @@ Serves a local GGUF via llama.cpp by default (downloads a small model on
 first start, no account and no network needed after that), or any
 OpenAI-compatible cloud model — including Gemini — if OPENAI_API_KEY is set.
 Per-session conversation history, token streaming. See aura.llm.ChatBackend
-for the backend-selection logic shared with skills/vision-reasoner.
+for the backend-selection logic — shared with skills/memory-context's
+summarizer, the other first-party consumer of the same local-or-cloud chat
+client.
 
 Runtime-tunable (C1 `config`, see skill.yaml): temperature, max_tokens,
-system_prompt (hot — applied on the next message) and context_window
-(restart_required — only takes effect on the next process start, since
-the local model's context size is fixed at load time). Set via the
-control-plane UI, a --config file, or PUT /v1/skills/config?id=<id>.
+top_p, top_k, repeat_penalty, history_limit and system_prompt (all hot —
+applied on the next message) and context_window (restart_required — only
+takes effect on the next process start, since the local model's context
+size is fixed at load time). top_k/repeat_penalty only affect the local
+GGUF backend — the cloud (OpenAI-compatible) path silently ignores them,
+see aura.llm.ChatBackend. Set via the control-plane UI, a --config file,
+or PUT /v1/skills/config?id=<id>.
 
 Config (env, model selection only — not runtime-tunable):
   AURA_MODEL_PATH   absolute path to a local .gguf (skips download)
@@ -29,7 +34,7 @@ import os
 import threading
 from dataclasses import dataclass, field
 
-from aura import ChatBackend, Context, Skill, run_all
+from aura import ChatBackend, Context, Skill, run_all, sha256_text
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("llm-chat")
@@ -64,7 +69,42 @@ class Generation:
 _current: dict[str, Generation] = {}
 
 
-def _produce(messages, max_tokens, temperature, stop, queue, loop) -> None:
+def _generation_kwargs(config: dict) -> dict:
+    """Map `skill.config` to the kwargs `ChatBackend.stream_chat` accepts.
+
+    Pure so it can be tested without a live backend or kernel connection.
+    """
+    return {
+        "max_tokens": config["max_tokens"],
+        "temperature": config["temperature"],
+        "top_p": config["top_p"],
+        "top_k": config["top_k"],
+        "repeat_penalty": config["repeat_penalty"],
+    }
+
+
+def _attestation(config: dict, messages: list[dict], reply: str):
+    """Build the C5 record for the reply just produced.
+
+    The prompt is hashed rather than carried: an attestation must not become a
+    permanent, undeletable copy of what a user typed. The hash still binds the
+    record to that exact input, which is all an auditor comparing two runs
+    needs.
+
+    Only the last user turn is hashed, not the whole history — the history is
+    already reconstructable from the session's causal event log, and hashing
+    it would make the attestation change every turn for reasons unrelated to
+    the inference.
+    """
+    last_user = next(
+        (m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
+    att = backend.attestation(**_generation_kwargs(config))
+    att.prompt_sha256 = sha256_text(last_user)
+    att.output_sha256 = sha256_text(reply)
+    return att
+
+
+def _produce(messages, generation_kwargs, stop, queue, loop) -> None:
     """Run the model in a worker thread, pushing tokens to the event loop.
 
     `stream_chat` is a synchronous generator. Iterating it on the loop blocks
@@ -74,8 +114,7 @@ def _produce(messages, max_tokens, temperature, stop, queue, loop) -> None:
     is bounded by a queue hop rather than by however long a token takes.
     """
     try:
-        for token in backend.stream_chat(
-                messages, max_tokens=max_tokens, temperature=temperature):
+        for token in backend.stream_chat(messages, **generation_kwargs):
             if stop.is_set():
                 break
             loop.call_soon_threadsafe(queue.put_nowait, token)
@@ -119,8 +158,8 @@ async def handle(ctx: Context) -> None:
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     worker = asyncio.create_task(asyncio.to_thread(
-        _produce, list(messages), skill.config["max_tokens"],
-        skill.config["temperature"], generation.stop, queue, loop))
+        _produce, list(messages), _generation_kwargs(skill.config),
+        generation.stop, queue, loop))
 
     reply_parts: list[str] = []
     interrupted = False
@@ -150,14 +189,27 @@ async def handle(ctx: Context) -> None:
         with contextlib.suppress(Exception):
             await worker
 
-    await ctx.emit("text_out", {"text": "", "final": True})
+    reply_text = "".join(reply_parts) + (" [interrupted]" if interrupted else "")
+
+    # C5: attest on the final chunk, once per reply rather than once per token.
+    # The kernel de-duplicates identical records anyway, but a per-token
+    # attestation would put a few hundred redundant bytes on every frame of a
+    # streaming reply for nothing.
+    #
+    # This is what makes any downstream effect — a TTS clause spoken, an ERP
+    # row written — cite the model that argued for it. Bound to the *whole*
+    # reply, which is why prompt/output hashes are computed here and not
+    # mid-stream.
+    await ctx.emit(
+        "text_out", {"text": "", "final": True},
+        attest=_attestation(skill.config, messages, reply_text),
+    )
 
     # Record what was actually said, marked if it was cut short — otherwise the
     # next turn is answered against a reply the listener never heard in full.
-    reply_text = "".join(reply_parts) + (" [interrupted]" if interrupted else "")
     messages.append({"role": "assistant", "content": reply_text})
 
-    if len(messages) > 40:
+    if len(messages) > skill.config["history_limit"]:
         del messages[1:3]
 
 

@@ -3,17 +3,39 @@
   "$id": "aura:spec:graph-ir@1",
   "title": "C2 Graph IR",
   "type": "object",
-  "required": ["ir", "graph_id", "origin", "nodes", "edges"],
+  "required": [
+    "ir",
+    "graph_id",
+    "origin",
+    "nodes",
+    "edges"
+  ],
   "properties": {
-    "ir": { "const": "1" },
-    "graph_id": { "type": "string", "minLength": 1 },
+    "ir": {
+      "const": "1"
+    },
+    "graph_id": {
+      "type": "string",
+      "minLength": 1
+    },
     "origin": {
       "type": "object",
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
-        "kind": { "enum": ["declared", "planner"] },
-        "skill": { "type": "string" },
-        "cause": { "type": "string" }
+        "kind": {
+          "enum": [
+            "declared",
+            "planner"
+          ]
+        },
+        "skill": {
+          "type": "string"
+        },
+        "cause": {
+          "type": "string"
+        }
       }
     },
     "nodes": {
@@ -21,14 +43,36 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["ref"],
+        "required": [
+          "ref"
+        ],
         "properties": {
-          "ref": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
-          "resolve": { "type": "string" },
-          "use": { "type": "string" },
-          "constraints": { "type": "object" }
+          "ref": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "resolve": {
+            "type": "string"
+          },
+          "use": {
+            "type": "string"
+          },
+          "constraints": {
+            "type": "object"
+          }
         },
-        "anyOf": [ { "required": ["resolve"] }, { "required": ["use"] } ]
+        "anyOf": [
+          {
+            "required": [
+              "resolve"
+            ]
+          },
+          {
+            "required": [
+              "use"
+            ]
+          }
+        ]
       }
     },
     "edges": {
@@ -36,18 +80,67 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["from", "to"],
+        "required": [
+          "from",
+          "to"
+        ],
         "properties": {
-          "from": { "type": "string", "pattern": "^[a-z0-9_-]+\\.[a-z0-9_]+$" },
-          "to": { "type": "string", "pattern": "^[a-z0-9_-]+\\.[a-z0-9_]+$" },
-          "gate": { "enum": ["human-approval", "none"] },
-          "qos": { "enum": ["reliable", "realtime", "bulk"] }
+          "from": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+\\.[a-z0-9_]+$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+\\.[a-z0-9_]+$"
+          },
+          "gate": {
+            "enum": [
+              "human-approval",
+              "none"
+            ]
+          },
+          "qos": {
+            "enum": [
+              "reliable",
+              "realtime",
+              "bulk"
+            ]
+          }
         }
       }
     },
     "waves": {
       "type": "array",
-      "items": { "type": "array", "items": { "type": "string" } }
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "context_budget": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "C2 v1.2: cap, in estimated tokens, on context a session of this graph may accumulate."
+    }
+  },
+  "$defs": {
+    "edge": {
+      "properties": {
+        "speculative": {
+          "type": "boolean",
+          "description": "C2 v1.2: deliver on partial upstream output and discard the work if the final output differs. Refused on an edge into a motor skill."
+        },
+        "deadline_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "C2 v1.2: how long a delivery here is worth waiting for. Absolute once on the wire; inheritable, never extendable."
+        },
+        "priority": {
+          "type": "integer",
+          "description": "C2 v1.2: preemption order when chains contend. Higher wins."
+        }
+      }
     }
   }
 }

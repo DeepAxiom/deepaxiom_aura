@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,6 +57,54 @@ func newNodeClient(port int) *nodeClient {
 		ws:    fmt.Sprintf("ws://localhost:%d", port),
 		token: nodeToken(""),
 	}
+}
+
+// parseWithOperands parses flags that may appear before *or after* up to
+// maxOperands positional arguments, and returns the operands.
+//
+// Go's flag package stops parsing at the first non-flag argument, so
+// `aura receipt <hash> --data /tmp/x` silently ignored `--data` and read the
+// default data directory instead — the worst kind of bug, because it looked
+// like it worked and answered about the wrong ledger. The same trap applied to
+// `aura undo <session> --yes`.
+//
+// `why`, `replay` and `trace` each carried their own inline fix for the
+// one-operand case. This is that fix, generalised and in one place, so the
+// next command with a positional argument inherits it instead of rediscovering
+// the problem.
+//
+// `aura chat` and `aura do` deliberately do NOT use this: their operand is a
+// free-text message that may legitimately begin with a dash, and quietly
+// reinterpreting part of someone's prompt as a flag would be worse than the
+// documented "flags go first" rule they already carry.
+func parseWithOperands(fs *flag.FlagSet, args []string, maxOperands int) []string {
+	if err := fs.Parse(args); err != nil {
+		return nil
+	}
+	operands := make([]string, 0, maxOperands)
+	rest := fs.Args()
+	for len(rest) > 0 && len(operands) < maxOperands {
+		operands = append(operands, rest[0])
+		if err := fs.Parse(rest[1:]); err != nil {
+			return operands
+		}
+		rest = fs.Args()
+	}
+	return operands
+}
+
+// getJSON GETs a path and decodes the response into out. A thin wrapper over
+// do, but a common enough shape that every caller writing its own two-step
+// was noise.
+func (c *nodeClient) getJSON(path string, out any) error {
+	body, err := c.do("GET", path, nil)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("unreadable response from %s: %w", path, err)
+	}
+	return nil
 }
 
 func (c *nodeClient) authorize(h http.Header) {

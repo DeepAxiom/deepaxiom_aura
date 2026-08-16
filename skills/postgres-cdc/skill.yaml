@@ -38,5 +38,17 @@ config:
     type: string
     default: ""
     description: "Comma-separated schema.table allowlist (e.g. \"public.orders,public.invoices\"). Empty means every table in the database."
+  - key: "connect_timeout_s"
+    type: int
+    min: 1
+    max: 60
+    default: 10
+    description: "Seconds to wait for the replication connection to Postgres before giving up (passed as connect_timeout to psycopg2.connect)."
+  - key: "reconnect_delay_s"
+    type: int
+    min: 1
+    max: 300
+    default: 5
+    description: "Seconds to wait before retrying the replication stream after it fails (e.g. a network blip or a Postgres restart)."
 
 signature: null

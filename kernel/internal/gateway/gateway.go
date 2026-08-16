@@ -25,6 +25,7 @@ import (
 
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/executor"
+	"aura/kernel/internal/grammar"
 	"aura/kernel/internal/identity"
 	"aura/kernel/internal/ledger"
 	"aura/kernel/internal/projection"
@@ -45,6 +46,18 @@ type Gateway struct {
 	// for a test that has nothing to do with attestation still constructs —
 	// the ledger routes and the /healthz summary simply omit themselves.
 	Ldg *ledger.Ledger
+	// Wit is this node acting as a witness for *other* nodes' ledgers (C4
+	// v1.2, external anchoring). Separate from Ldg because the two are
+	// genuinely different roles: Ldg is this node's own history, Wit is what
+	// it has promised about someone else's. A node can have one without the
+	// other — a pure witness seals no effects of its own, and a node with no
+	// keypair cannot witness. Nil answers 404 on POST /v1/ledger/witness.
+	Wit *ledger.Witness
+	// Grammars compiles a port's declared schema into a decoding grammar and
+	// validates payloads against it (C1 typed ports, made enforceable). Nil
+	// is accepted so a Gateway built for an unrelated test still constructs;
+	// the schema routes then answer 404 and validation is skipped.
+	Grammars *grammar.Registry
 	// Wasm hosts every `format: wasm` skill on this node (Phase 3). Nil is
 	// accepted for the same reason Ldg's nil is: a Gateway built for a test
 	// unrelated to wasm skills should not have to wire a wazero runtime just
@@ -69,6 +82,10 @@ type Gateway struct {
 	rate       *routeRate
 	routesOnce sync.Once
 	routes     *routeCache
+	// OpenEnv border state: live episodes, built on first use so a
+	// Gateway stays constructible as a plain struct literal.
+	openEnvOnce sync.Once
+	openEnvReg  *openEnvRegistry
 }
 
 // upgrader builds the WebSocket upgrader for this node. It is per-Gateway
@@ -91,6 +108,11 @@ func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", g.ui)
 	mux.HandleFunc("GET /.well-known/agent.json", g.agentCard)
+	mux.HandleFunc("GET /openenv/spec", g.openEnvSpec)
+	mux.HandleFunc("POST /openenv/reset", g.openEnvReset)
+	mux.HandleFunc("POST /openenv/step", g.openEnvStep)
+	mux.HandleFunc("GET /openenv/state", g.openEnvState)
+	mux.HandleFunc("GET /openenv/bundle", g.openEnvBundle)
 	if g.MCP != nil {
 		mux.HandleFunc("POST /mcp", g.MCP)
 		mux.HandleFunc("GET /mcp", g.MCP) // handler answers 405 (no SSE stream)
@@ -106,15 +128,26 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}", g.sessionMeta)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", g.sessionEvents)
 	mux.HandleFunc("GET /v1/sessions/{id}/ledger", g.sessionLedger)
+	mux.HandleFunc("GET /v1/sessions/{id}/bundle", g.ledgerBundle)
 	mux.HandleFunc("POST /v1/projections", g.connectProjection)
 	mux.HandleFunc("GET /v1/projections", g.listProjections)
 	mux.HandleFunc("POST /v1/projections/{name}/promote", g.promoteOperation)
 	mux.HandleFunc("POST /v1/ingress", g.declareIngress)
 	mux.HandleFunc("GET /v1/ingress", g.listIngress)
 	mux.HandleFunc("DELETE /v1/ingress/{name}", g.deleteIngress)
+	mux.HandleFunc("GET /v1/schemas", g.listSchemas)
+	mux.HandleFunc("GET /v1/grammars/{ref...}", g.getGrammar)
+	mux.HandleFunc("GET /v1/schemas/{ref...}", g.getSchema)
 	mux.HandleFunc("GET /v1/ledger", g.listLedger)
 	mux.HandleFunc("GET /v1/ledger/verify", g.verifyLedger)
 	mux.HandleFunc("GET /v1/ledger/entries/{hash}", g.ledgerEntry)
+	mux.HandleFunc("GET /v1/ledger/head", g.ledgerHead)
+	mux.HandleFunc("GET /v1/ledger/statement", g.ledgerStatement)
+	mux.HandleFunc("POST /v1/ledger/witness", g.ledgerWitness)
+	mux.HandleFunc("GET /v1/ledger/witness/last-seen", g.ledgerWitnessLastSeen)
+	mux.HandleFunc("POST /v1/ledger/witness/record", g.ledgerRecordWitness)
+	mux.HandleFunc("GET /v1/ledger/receipt/{hash}", g.ledgerReceipt)
+	mux.HandleFunc("GET /v1/ledger/attestations/{hash}", g.ledgerAttestation)
 	mux.HandleFunc("POST /v1/skills/wasm", g.registerWasmSkill)
 	mux.HandleFunc("POST /hooks/{name}", g.receiveHook)
 	mux.HandleFunc("GET /ws/skill", g.skillWS)
@@ -634,6 +667,15 @@ func (g *Gateway) skillWS(w http.ResponseWriter, r *http.Request) {
 	}
 	ack, _ := json.Marshal(map[string]any{
 		"state": "registered", "skill": manifest.ID, "config": effective,
+		// The decoding grammar for each of this skill's egress ports, derived
+		// from the schema the port declares (C1). A skill that generates with
+		// a model constrains it to this and then *cannot* emit something the
+		// port would reject — see kernel/internal/grammar.
+		//
+		// Pushed at registration rather than fetched, because a skill needs it
+		// before its first delivery and an extra round trip at startup is the
+		// kind of friction that means nobody uses the feature.
+		"grammars": g.egressGrammars(manifest),
 	})
 	ackEnv := channel.Envelope{V: channel.ProtocolMajor, ID: channel.NewID(),
 		CauseID: regEnv.ID, Kind: channel.KindStatus, Payload: ack}

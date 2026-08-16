@@ -36,8 +36,11 @@ func cmdUndo(args []string) {
 	fs := flag.NewFlagSet("undo", flag.ExitOnError)
 	port := fs.Int("port", 9080, "kernel port")
 	yes := fs.Bool("yes", false, "auto-approve human gates on the undo itself (careful)")
-	_ = fs.Parse(args)
-	rest := fs.Args()
+	// Flags may follow the target: `aura undo sess-x --yes` used to parse as
+	// "no flags at all", which meant --yes was silently dropped on the one
+	// command where dropping it changes whether a human is asked before an
+	// effect is reversed. See parseWithOperands.
+	rest := parseWithOperands(fs, args, 1)
 	if len(rest) != 1 {
 		fatal(fmt.Errorf("usage: aura undo <session|receipt> [--yes] [--port 9080]"))
 	}

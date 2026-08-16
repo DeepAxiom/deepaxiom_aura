@@ -102,3 +102,21 @@ effect_outcomes:
     description: The effect was authorized (directly, or after approval) and reached the skill.
   - name: denied
     description: A human held the gate and refused the effect.
+
+# C5 — where an energy figure in an inference attestation came from. Ordered
+# most to least trustworthy.
+#
+# The source travels with the number and is mandatory, which is the whole
+# point of enumerating it: a measured joule and a modelled joule differ by an
+# order of magnitude in trustworthiness, and a field carrying only the value
+# would launder an estimate into a measurement the first time it reached a
+# sustainability report.
+energy_sources:
+  - name: nvml
+    description: NVIDIA hardware counters, read from the GPU.
+  - name: rapl
+    description: Intel/AMD running-average power limit counters.
+  - name: powermetrics
+    description: Apple Silicon power counters.
+  - name: estimated
+    description: An analytical model; the attestation MUST state its basis.

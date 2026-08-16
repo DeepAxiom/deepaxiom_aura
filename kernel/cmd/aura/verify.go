@@ -90,10 +90,21 @@ func printVerifyReport(out io.Writer, dataDir string, r ledger.Report) {
 
 	fmt.Fprintf(out, "aura verify — %s\n\n", dataDir)
 	fmt.Fprintf(out, "  %d entries · %s · %s · %s\n", r.TotalEntries, chainWord, checkpointWord, keyWord)
+	if r.MerkleRoot != "" {
+		fmt.Fprintf(out, "  merkle head %s", shortRoot(r.MerkleRoot))
+		if r.MerkleCheckpoints > 0 {
+			fmt.Fprintf(out, " · %d checkpoint(s) commit to a tree head", r.MerkleCheckpoints)
+		}
+		fmt.Fprintln(out)
+	}
+	if r.Witnesses > 0 {
+		fmt.Fprintf(out, "  %d/%d witness countersignature(s) verify\n", r.WitnessesValid, r.Witnesses)
+	}
 
 	if r.Sound() {
 		fmt.Fprintln(out, "\n  SOUND — the chain recomputes cleanly"+
 			soundSuffix(r)+".")
+		printAnchoringScope(out, r)
 		return
 	}
 	fmt.Fprintln(out, "\n  NOT SOUND.")
@@ -106,6 +117,46 @@ func printVerifyReport(out io.Writer, dataDir string, r ledger.Report) {
 			"or the chain was rewritten and made internally consistent again without "+
 			"the node's private key.\n", r.Checkpoints-r.CheckpointsValid, r.Checkpoints)
 	}
+	if r.MerkleMismatches > 0 {
+		fmt.Fprintf(out, "  → %d checkpoint(s) carry a validly-signed tree head that these entries "+
+			"do not produce. The node signed a history different from the one stored here.\n",
+			r.MerkleMismatches)
+	}
+	if r.Witnesses > r.WitnessesValid {
+		fmt.Fprintf(out, "  → %d of %d witness countersignatures no longer match. A third party "+
+			"signed a head this ledger no longer produces.\n",
+			r.Witnesses-r.WitnessesValid, r.Witnesses)
+		if r.ChainIntact && r.CheckpointsValid == r.Checkpoints {
+			// Everything self-referential passes and only the outside
+			// disagrees — the signature of a rewrite performed by whoever
+			// holds this node's key. Say so, because a reader looking at
+			// "chain intact · checkpoints valid" will otherwise conclude the
+			// opposite of what happened.
+			fmt.Fprintln(out,
+				"     Note: the chain and every checkpoint verify. That combination —\n"+
+					"     internally perfect, externally contradicted — is what a rewrite by the\n"+
+					"     holder of this node's own key looks like. Ask the witness directly.")
+		}
+	}
+}
+
+// printAnchoringScope states what a passing verification does and does not
+// establish.
+//
+// A bare "SOUND" over-reads: everything checked so far was checked against
+// the sealing node's own key, so it rules out an attacker without that key
+// and does not rule out the key's holder. Saying so on every clean run —
+// rather than in documentation nobody reads at the moment it matters — is the
+// difference between an honest tool and a reassuring one.
+func printAnchoringScope(out io.Writer, r ledger.Report) {
+	if r.WitnessesValid > 0 {
+		fmt.Fprintf(out, "\n  Anchored: %d third-party countersignature(s) over this history. A rewrite\n"+
+			"  would have to make every witness forget what it already signed.\n", r.WitnessesValid)
+		return
+	}
+	fmt.Fprintln(out, "\n  Scope: verified against this node's own key. That establishes nobody")
+	fmt.Fprintln(out, "  altered the ledger WITHOUT the key — not that the key's holder didn't.")
+	fmt.Fprintln(out, "  Run `aura witness <peer-url>` to anchor this history with a third party.")
 }
 
 func soundSuffix(r ledger.Report) string {

@@ -30,3 +30,35 @@ permissions:
   egress_http: ["localhost"]     # kernel catalog; LLM APIs if configured
   filesystem: "read:~/.aura/models"
   channels: declared-only
+
+config:
+  - key: "temperature"
+    type: float
+    default: 0.1
+    min: 0.0
+    max: 2.0
+    description: "Sampling temperature for plan generation — higher is more random, lower is more deterministic. Not used by the keyword fallback (no model)."
+  - key: "max_tokens"
+    type: int
+    default: 1024
+    min: 1
+    max: 8192
+    description: "Maximum tokens generated for a plan. Not used by the keyword fallback (no model)."
+  - key: "n_ctx"
+    type: int
+    default: 8192
+    min: 512
+    max: 131072
+    description: "Local model's context window (n_ctx). Only applies to the local GGUF backend, not the cloud or keyword paths."
+    restart_required: true
+  - key: "n_gpu_layers"
+    type: int
+    default: -1
+    min: -1
+    max: 999
+    description: "Layers offloaded to GPU for the local GGUF backend (-1 = all). Only applies to the local backend, not the cloud or keyword paths."
+    restart_required: true
+  - key: "openai_model"
+    type: string
+    default: "gpt-4o-mini"
+    description: "Model name used when the openai backend is active. Only applies to the cloud backend."

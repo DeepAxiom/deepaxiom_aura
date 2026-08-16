@@ -23,9 +23,11 @@ import "sync"
 // limit.
 
 const (
-	maxCausalRoots  = 8192 // ~800KB/session at 26-char ids
-	maxInFlightRoot = 1024
-	maxCancelled    = 1024
+	maxCausalRoots   = 8192 // ~800KB/session at 26-char ids
+	maxInFlightRoot  = 1024
+	maxCancelled     = 1024
+	maxAttestRoots   = 1024 // roots tracked for C5 attestation binding
+	maxAttestPerRoot = 16   // distinct inference configurations in one chain
 )
 
 // causalIndex maps an envelope id to the root of its causal chain.
@@ -132,6 +134,87 @@ func (f *inFlightIndex) take(root string) []hop {
 		out = append(out, h)
 	}
 	return out
+}
+
+// attestIndex maps a causal root to the C5 inference attestations produced
+// anywhere in that chain — what the models upstream of an effect claimed
+// about themselves (see ledger/attest.go).
+//
+// Keyed on the root rather than on a parent pointer walk because the root is
+// already maintained for cancellation, and because the question an effect
+// asks is set-shaped, not path-shaped: "which inferences contributed to this
+// chain", not "which one was immediately before". A voice graph where the ASR
+// and the LLM both attest should bind both to the resulting effect, and they
+// are siblings, not ancestors of one another.
+//
+// Bounded twice over. `max` caps how many chains are tracked at once, like
+// every other index here. `maxPerRoot` caps how many distinct configurations
+// one chain can accumulate: a long-lived session that swaps models repeatedly
+// must not grow this without limit, and past a handful the set has stopped
+// being evidence and started being a log. Hitting the cap is recorded — see
+// truncated — because an entry that silently dropped attestations would be
+// claiming completeness it does not have.
+type attestIndex struct {
+	mu         sync.Mutex
+	byRoot     map[string][]string
+	truncated  map[string]bool
+	order      []string
+	max        int
+	maxPerRoot int
+}
+
+func newAttestIndex(max, maxPerRoot int) *attestIndex {
+	return &attestIndex{
+		byRoot: make(map[string][]string), truncated: make(map[string]bool),
+		max: max, maxPerRoot: maxPerRoot,
+	}
+}
+
+// add records one attestation hash against a root, de-duplicating: a
+// streaming skill attests once per reply, not once per token, but a retry or
+// a resumed stream can legitimately repeat the same hash and it should still
+// count once.
+func (a *attestIndex) add(root, hash string) {
+	if root == "" || hash == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	existing, tracked := a.byRoot[root]
+	if !tracked {
+		a.order = append(a.order, root)
+		if len(a.order) > a.max {
+			oldest := a.order[0]
+			a.order = a.order[1:]
+			delete(a.byRoot, oldest)
+			delete(a.truncated, oldest)
+		}
+	}
+	for _, h := range existing {
+		if h == hash {
+			return
+		}
+	}
+	if len(existing) >= a.maxPerRoot {
+		a.truncated[root] = true
+		return
+	}
+	a.byRoot[root] = append(existing, hash)
+}
+
+// get returns the attestations bound to a root, and whether the set was
+// truncated by the per-root cap.
+func (a *attestIndex) get(root string) (hashes []string, truncated bool) {
+	if root == "" {
+		return nil, false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	src := a.byRoot[root]
+	if len(src) == 0 {
+		return nil, a.truncated[root]
+	}
+	return append([]string(nil), src...), a.truncated[root]
 }
 
 // cancelledSet is the bounded set of abandoned roots.

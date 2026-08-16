@@ -8,8 +8,8 @@ Python SDK, and the spec itself.
 **Want to add a device integration or a new capability instead?** You need
 none of this. Writing a skill requires no changes to the core at all: copy
 [`skills/echo/`](skills/echo/) — the minimal worked example, no model and no
-credentials — or one of the integration skills like
-[`skills/tuya-status/`](skills/tuya-status/), and read
+credentials — or a skill wrapping a real external system like
+[`skills/postgres-cdc/`](skills/postgres-cdc/), and read
 [Writing a skill](README.md#writing-a-skill-the-sdk). Most people who want to
 build something on AURA want that, not this guide.
 
@@ -32,7 +32,7 @@ have no automated tests at all.
 | `sdk/node/` | TypeScript | Apache-2.0 | `@deepaxiom/aura` — types are generated from `spec/schemas`, never hand-edited |
 | `spec/` | Markdown + JSON Schema | Apache-2.0 | C1 (manifest), C2 (graph IR), C3 (channel protocol) |
 | `ui/` | TypeScript/React | AGPLv3 or commercial | Control-plane frontend |
-| `skills/` | Python | AGPLv3 or commercial | First-party skills (echo, connector, llm-chat, planner, asr, tts, sentence-chunker, ocr, model-manager, memory-context, tuya-status, tuya-command, vision-reasoner, vision-ask, notify-alert) |
+| `skills/` | Python | AGPLv3 or commercial | First-party skills (echo, llm-chat, asr, tts, sentence-chunker, planner, model-manager, memory-context, postgres-cdc) |
 
 See [`LICENSE.md`](LICENSE.md) for the exact, authoritative map before
 opening a PR — what license your change falls under depends on which
@@ -100,9 +100,9 @@ locally first.
   leaves the running binary out of sync with what you wrote.
 - Prefer a mock or a reproducible local test over "trust me, it works" —
   the first-party skills hold themselves to that standard (see
-  [`skills/tuya-status/`](skills/tuya-status/), which signs its own
-  HMAC-SHA256 requests and is tested against a mock that genuinely verifies
-  the signature); PRs to the core should too.
+  [`skills/postgres-cdc/`](skills/postgres-cdc/), whose replication parser is
+  tested as a pure function and whose end-to-end path is tested against a
+  real Docker `postgres:16`, not mocked); PRs to the core should too.
 - Keep commits scoped — one behavioral change per PR is easier to review
   and easier to revert if something's wrong.
 

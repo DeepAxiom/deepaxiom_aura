@@ -81,5 +81,22 @@ config:
     min: 0
     max: 10000
     description: "Loudness below which a chunk counts as silence, in PCM16 units. Raise it in a noisy room."
+  - key: "preload_on_boot"
+    type: bool
+    default: true
+    description: "Load the Whisper model in a background thread as soon as the skill starts, instead of on the first request. Keeps the first utterance from paying the 10-30s model load and timing out. Replaces the old AURA_ASR_PRELOAD environment variable."
+    restart_required: true
+  - key: "beam_size_final"
+    type: int
+    default: 5
+    min: 1
+    max: 10
+    description: "Beam width for the settled transcript (both the whole-file path and the end of a stream). Higher is more accurate and slower; unlike partials this only runs once per utterance, so it can afford a wider beam."
+  - key: "beam_size_partial"
+    type: int
+    default: 1
+    min: 1
+    max: 10
+    description: "Beam width for interim partials while the person is still speaking. Kept narrow by default because a partial is re-decoded on every interval and has to stay fast enough to keep up with live audio."
 
 signature: null

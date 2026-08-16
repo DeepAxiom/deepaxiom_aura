@@ -300,6 +300,60 @@ func (r *Registry) Resolve(use, capability string) (*Live, error) {
 	return candidates[0], nil
 }
 
+// ResolvePreferred is Resolve with the node's routing preferences applied
+// (C4 policy `routes`).
+//
+// Preferences are advisory by construction: a preferred package that is not
+// connected falls through to ordinary resolution rather than failing the
+// session. Routing decides *which* of several equivalent providers answers,
+// and a graph should not go down because the operator's first choice is
+// restarting. Forbidding a provider outright is what a `deny` rule is for.
+func (r *Registry) ResolvePreferred(use, capability string, prefer []string, avoid map[string]bool) (*Live, error) {
+	if use != "" || capability == "" || (len(prefer) == 0 && len(avoid) == 0) {
+		return r.Resolve(use, capability)
+	}
+
+	r.mu.RLock()
+	var candidates []*Live
+	for _, l := range r.byConn {
+		if l.Manifest.Capability == capability ||
+			strings.HasPrefix(l.Manifest.Capability, capability+".") {
+			candidates = append(candidates, l)
+		}
+	}
+	r.mu.RUnlock()
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no connected skill provides capability %q", capability)
+	}
+
+	for _, want := range prefer {
+		for _, l := range candidates {
+			if l.Manifest.ID == want {
+				return l, nil
+			}
+		}
+	}
+
+	if len(avoid) > 0 {
+		var kept []*Live
+		for _, l := range candidates {
+			if !avoid[l.Manifest.ID] {
+				kept = append(kept, l)
+			}
+		}
+		// Only honour `avoid` when something is left: an avoided provider that
+		// is the sole provider is still better than no provider.
+		if len(kept) > 0 {
+			candidates = kept
+		}
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Connected.After(candidates[j].Connected)
+	})
+	return candidates[0], nil
+}
+
 // SendToID pushes raw to every live connection of skill id (usually zero
 // or one, but nothing stops two instances of the same skill connecting).
 // Used to push a config_update after a runtime override changes.

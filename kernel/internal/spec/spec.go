@@ -80,5 +80,20 @@ const (
 // EffectOutcomes is every outcome a sealed ledger entry may record.
 var EffectOutcomes = []string{OutcomeDelivered, OutcomeDenied}
 
+// Energy sources (C5): where an attestation's energy figure came from,
+// ordered most to least trustworthy.
+const (
+	EnergyNvml         = "nvml"         // NVIDIA hardware counters, read from the GPU.
+	EnergyRapl         = "rapl"         // Intel/AMD running-average power limit counters.
+	EnergyPowermetrics = "powermetrics" // Apple Silicon power counters.
+	EnergyEstimated    = "estimated"    // An analytical model; the attestation MUST state its basis.
+)
+
+// EnergySources is every source an attestation may cite for an energy
+// figure. The source is mandatory whenever energy is reported: a measured
+// joule and a modelled one differ by an order of magnitude in
+// trustworthiness, and a bare number hides which it is.
+var EnergySources = []string{EnergyNvml, EnergyRapl, EnergyPowermetrics, EnergyEstimated}
+
 // CapabilityPattern matches a C1 `capability`: <type>.<function>[.<sub>].
 const CapabilityPattern = `^(sensorial|cognitive|motor|memory|logical)(\.[a-z0-9_-]+)+$`

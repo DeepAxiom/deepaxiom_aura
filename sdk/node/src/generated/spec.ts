@@ -33,3 +33,7 @@ export const POLICY_DECISIONS: readonly PolicyDecision[] = ["allow", "gate", "de
 /** C4 — what became of an effect the ledger sealed. */
 export type EffectOutcome = "delivered" | "denied";
 export const EFFECT_OUTCOMES: readonly EffectOutcome[] = ["delivered", "denied"];
+
+/** C5 — where an attestation's energy figure came from, most to least trustworthy. */
+export type EnergySource = "nvml" | "rapl" | "powermetrics" | "estimated";
+export const ENERGY_SOURCES: readonly EnergySource[] = ["nvml", "rapl", "powermetrics", "estimated"];

@@ -26,7 +26,7 @@ requirements:
 
 permissions:
   # Only contacted if trim_strategy=summarize and no local model is cached
-  # yet — same download path as skills/llm-chat and skills/vision-reasoner.
+  # yet — same download path as skills/llm-chat (both use aura.llm.ChatBackend).
   egress_http: ["huggingface.co", "cdn-lfs.huggingface.co", "api.openai.com", "generativelanguage.googleapis.com"]
   filesystem: "write:~/.aura/memory"
   channels: declared-only
@@ -54,5 +54,11 @@ config:
     default: "~/.aura/memory/context.sqlite"
     description: "Where the SQLite file with persisted turns lives. Changing this only takes effect on the next restart."
     restart_required: true
+  - key: "summarize_max_tokens"
+    type: int
+    default: 256
+    min: 32
+    max: 2048
+    description: "Max tokens generated when trim_strategy=summarize compresses dropped turns into one running summary. Only applies to that strategy; has no effect under drop-oldest."
 
 signature: null

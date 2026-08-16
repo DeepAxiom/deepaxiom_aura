@@ -49,6 +49,16 @@ class Envelope:
     # skill — the ledger entry hash that sealed that effect. A skill has no
     # reason to set this itself; it only ever reads one the kernel attached.
     receipt: str = ""
+    # C5, additive: what this skill asserts about how it produced the payload —
+    # engine, model, revision, quantization, sampling parameters, seed. The
+    # kernel content-addresses it and binds the hash into every effect this
+    # output causally leads to, so "on what basis did this happen" becomes
+    # answerable after the fact. See aura.attest.Attestation.
+    #
+    # It rides beside the payload rather than inside it because it is metadata
+    # about the payload's production: a consumer validating against the port's
+    # schema must not have to know it exists.
+    attest: Any = None
 
     def to_wire(self) -> dict:
         wire: dict[str, Any] = {"v": self.v, "id": self.id, "kind": self.kind}
@@ -60,6 +70,8 @@ class Envelope:
             wire["seq"] = self.seq
         if self.payload is not None:
             wire["payload"] = self.payload
+        if self.attest is not None:
+            wire["attest"] = self.attest
         return wire
 
     @classmethod
@@ -77,4 +89,5 @@ class Envelope:
             schema=wire.get("schema", ""),
             payload=wire.get("payload"),
             receipt=wire.get("receipt", ""),
+            attest=wire.get("attest"),
         )

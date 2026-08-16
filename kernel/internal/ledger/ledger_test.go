@@ -373,8 +373,25 @@ func TestCheckpointSignsTheCurrentHead(t *testing.T) {
 		t.Fatalf("checkpoint head = %q, want the last receipt %q", cps[0].HeadHash, receipt)
 	}
 	if err := signing.Verify(cps[0].Pubkey, cps[0].Signature,
-		checkpointPayload(cps[0].Seq, cps[0].HeadHash)); err != nil {
+		checkpointPayload(cps[0].Seq, cps[0].HeadHash, cps[0].MerkleRoot)); err != nil {
 		t.Fatalf("checkpoint signature does not verify: %v", err)
+	}
+	// C4 v1.2: a checkpoint sealed by this build commits to the Merkle head
+	// as well as the linear one, and that root must be the tree over exactly
+	// the entries stored.
+	if cps[0].MerkleRoot == "" {
+		t.Fatal("checkpoint carries no merkle root")
+	}
+	entries, err := st.LedgerEntries(1, 0)
+	if err != nil {
+		t.Fatalf("LedgerEntries: %v", err)
+	}
+	leaves := make([]Hash, len(entries))
+	for i, raw := range entries {
+		leaves[i] = LeafHash(raw)
+	}
+	if got := MerkleRoot(leaves).String(); got != cps[0].MerkleRoot {
+		t.Fatalf("checkpoint committed to root %s, entries produce %s", cps[0].MerkleRoot, got)
 	}
 }
 

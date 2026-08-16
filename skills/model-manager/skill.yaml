@@ -30,3 +30,12 @@ permissions:
   egress_http: ["huggingface.co", "cdn-lfs.huggingface.co"]
   filesystem: "write:~/.aura/models"
   channels: declared-only
+
+config:
+  - key: "models_dir"
+    type: string
+    default: "~/.aura/models"
+    description: "Where downloaded models are stored and listed/deleted from. Replaces the previous hardcoded ~/.aura/models. Changing this only takes effect on the next restart."
+    restart_required: true
+
+signature: null

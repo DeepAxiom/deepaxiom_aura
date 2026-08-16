@@ -4,7 +4,7 @@ import type { ConfigParam, Envelope, Manifest } from "./generated/types.js";
 /**
  * Expose functions an app already has as AURA skills.
  *
- * The connector (skills/connector) is for systems you cannot change. This is
+ * A declarative connector is for systems you cannot change. This is
  * the other half: when the code is yours, the cheapest possible integration is
  * the app announcing itself. No spec to write, no adapter to maintain, no
  * second copy of your business logic to keep in sync — the function that
@@ -109,8 +109,8 @@ export class AuraNode {
     // ojo: esta lista de parametros al final NO es cosmetica, es un
     // contrato con el planner — el planner la parsea para separar los
     // argumentos reales del resto del body. Si cambias el formato aca,
-    // cambialo tambien en skills/connector y en
-    // kernel/internal/projection/host.go, si no se desincroniza todo.
+    // cambialo tambien en kernel/internal/projection/host.go, si no se
+    // desincroniza todo.
     if (options.params?.length) {
       description += " parameters: " + options.params.map((p) => `arg:${p}`).join(", ");
     }

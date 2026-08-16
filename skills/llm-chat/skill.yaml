@@ -58,3 +58,27 @@ config:
     max: 131072
     description: "Local model's context window (n_ctx). Only used when running the local GGUF backend, not the cloud path."
     restart_required: true
+  - key: "top_p"
+    type: float
+    default: 0.95
+    min: 0.0
+    max: 1.0
+    description: "Nucleus sampling threshold."
+  - key: "top_k"
+    type: int
+    default: 40
+    min: 0
+    max: 200
+    description: "Number of highest-probability tokens considered at each step. Not applied to the cloud backend — silently ignored there."
+  - key: "repeat_penalty"
+    type: float
+    default: 1.0
+    min: 1.0
+    max: 2.0
+    description: "Penalty applied to already-generated tokens to discourage repetition. Not applied to the cloud backend — silently ignored there."
+  - key: "history_limit"
+    type: int
+    default: 40
+    min: 2
+    max: 500
+    description: "Maximum conversation history length (messages) before the oldest turn is dropped."

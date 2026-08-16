@@ -91,6 +91,7 @@ def gen_go(version: str, enums: dict) -> str:
     formats = enums["skill_formats"]
     decisions = enums["policy_decisions"]
     outcomes = enums["effect_outcomes"]
+    energy = enums["energy_sources"]
 
     out: list[str] = [
         f"// {BANNER_LINE}",
@@ -159,6 +160,20 @@ def gen_go(version: str, enums: dict) -> str:
         + ", ".join(f"Outcome{go_const_name(n)}" for n in names(outcomes))
         + "}",
         "",
+        "// Energy sources (C5): where an attestation's energy figure came from,",
+        "// ordered most to least trustworthy.",
+    ]
+    out += go_const_block("Energy", energy)
+    out += [
+        "",
+        "// EnergySources is every source an attestation may cite for an energy",
+        "// figure. The source is mandatory whenever energy is reported: a measured",
+        "// joule and a modelled one differ by an order of magnitude in",
+        "// trustworthiness, and a bare number hides which it is.",
+        "var EnergySources = []string{"
+        + ", ".join(f"Energy{go_const_name(n)}" for n in names(energy))
+        + "}",
+        "",
         "// CapabilityPattern matches a C1 `capability`: <type>.<function>[.<sub>].",
         f'const CapabilityPattern = `^({"|".join(names(types))})(\\.[a-z0-9_-]+)+$`',
         "",
@@ -201,6 +216,10 @@ POLICY_DECISIONS = {tup(enums["policy_decisions"])}
 
 #: C4 — what became of an effect the ledger sealed.
 EFFECT_OUTCOMES = {tup(enums["effect_outcomes"])}
+
+#: C5 — where an attestation's energy figure came from, most to least
+#: trustworthy. Mandatory whenever energy is reported.
+ENERGY_SOURCES = {tup(enums["energy_sources"])}
 
 #: C1 `capability` — <type>.<function>[.<subtype>].
 CAPABILITY_PATTERN = r"^({"|".join(names(enums["skill_types"]))})(\\.[a-z0-9_-]+)+$"
@@ -249,6 +268,10 @@ export const POLICY_DECISIONS: readonly PolicyDecision[] = {arr(enums["policy_de
 /** C4 — what became of an effect the ledger sealed. */
 export type EffectOutcome = {union(enums["effect_outcomes"])};
 export const EFFECT_OUTCOMES: readonly EffectOutcome[] = {arr(enums["effect_outcomes"])};
+
+/** C5 — where an attestation's energy figure came from, most to least trustworthy. */
+export type EnergySource = {union(enums["energy_sources"])};
+export const ENERGY_SOURCES: readonly EnergySource[] = {arr(enums["energy_sources"])};
 """
 
 
@@ -294,10 +317,57 @@ def check_json_schemas(enums: dict) -> list[str]:
     return problems
 
 
+def gen_std_schemas() -> str:
+    """Embed spec/schemas/std/*.json into the kernel as Go string constants.
+
+    The kernel needs these at runtime — it compiles a port's declared schema
+    into a decoding grammar (see kernel/internal/grammar) and validates
+    payloads against it. `go:embed` cannot reach outside the kernel module, and
+    copying the JSON files into kernel/ would create a second copy that drifts.
+    Generating them, like every other cross-language constant in this repo,
+    means CI's ssot-check fails the moment the two disagree.
+    """
+    std = ROOT / "spec" / "schemas" / "std"
+    out = [
+        f"// {BANNER_LINE}",
+        f"// {REGEN}",
+        "",
+        "package spec",
+        "",
+        "// StdSchemas is every `std/*` JSON Schema, keyed by the reference a C1",
+        "// port declares (`std/text@1`). The value is the schema document verbatim.",
+        "//",
+        "// Verbatim matters: the grammar compiler and the payload validator both",
+        "// read these, and a reformatted copy would be a second source of truth for",
+        "// what a port accepts.",
+        "var StdSchemas = map[string]string{",
+    ]
+    entries = []
+    for path in sorted(std.glob("*.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        title = doc.get("title")
+        if not title:
+            raise SystemExit(f"{path.name}: every std schema needs a `title` naming its ref")
+        # A quoted literal rather than a raw one: several descriptions contain
+        # backticks (markdown), which a Go raw string cannot hold. Python's
+        # json.dumps emits escapes Go accepts verbatim — \", \\, \n, \uXXXX —
+        # so the round trip is exact.
+        entries.append((json.dumps(title), json.dumps(read_lf(path).rstrip("\n"))))
+
+    # Pad keys so the emitted map is already gofmt-clean; otherwise CI's
+    # `gofmt -l` fails on a file nobody is supposed to hand-edit.
+    width = max((len(k) for k, _ in entries), default=0)
+    for key, value in entries:
+        out.append(f"\t{key + ':':<{width + 1}} {value},")
+    out += ["}", ""]
+    return "\n".join(out)
+
+
 def targets() -> list[tuple[Path, str]]:
     version, enums = load()
     return [
         (ROOT / "kernel" / "internal" / "spec" / "spec.go", gen_go(version, enums)),
+        (ROOT / "kernel" / "internal" / "spec" / "schemas.go", gen_std_schemas()),
         (ROOT / "sdk" / "python" / "src" / "aura" / "_spec.py", gen_python(version, enums)),
         (ROOT / "sdk" / "node" / "src" / "generated" / "spec.ts", gen_typescript(version, enums)),
     ]

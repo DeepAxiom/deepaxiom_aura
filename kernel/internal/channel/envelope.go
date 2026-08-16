@@ -60,6 +60,43 @@ type Envelope struct {
 	// skill: the C4 ledger entry hash that sealed that effect. Absent on
 	// every envelope that carries no effect, which is most of them.
 	Receipt string `json:"receipt,omitempty"`
+	// Attest is a C5 inference attestation: what the emitting skill asserts
+	// about how it produced this output — engine, model, revision,
+	// quantization, sampling parameters, seed. Optional and skill-supplied.
+	//
+	// It rides on the envelope rather than in the payload because it is
+	// metadata about the *production* of the payload, not part of it: a
+	// consumer validating against the port's schema must not have to know
+	// about it, and it must survive on an envelope whose payload the event
+	// log elided under realtime QoS.
+	//
+	// The kernel content-addresses it, stores it once, and binds its hash
+	// into every effect this output causally leads to — see
+	// ledger/attest.go, which is also where the limits of what it proves are
+	// spelled out.
+	Attest json.RawMessage `json:"attest,omitempty"`
+	// Deadline is the unix-millis instant after which this delivery stops
+	// being worth completing (C3 v1.6, from the edge's `deadline_ms`).
+	//
+	// An absolute instant rather than a duration, deliberately: a duration
+	// restarts at every hop, so a three-hop chain with a 200ms budget would
+	// silently grant itself 600ms. Deadline propagation is standard in RPC
+	// (gRPC has had it for a decade) and absent from every agent runtime,
+	// which is why a slow tool there degrades into a hang rather than into a
+	// cheaper answer.
+	//
+	// The receiving skill is expected to *degrade* — fewer beams, a smaller
+	// model, a coarser quantization — rather than to abort. Arriving with a
+	// worse answer beats arriving after nobody is listening.
+	Deadline int64 `json:"deadline,omitempty"`
+	// Priority orders preemption when two chains contend for one skill.
+	// Higher wins. Zero is the default and means "ordinary".
+	Priority int `json:"priority,omitempty"`
+	// Speculative marks a delivery made on partial upstream output, which may
+	// be cancelled if the producer's final output differs (C2 v1.2). A skill
+	// may use it to avoid irreversible internal bookkeeping; it does not have
+	// to, because the kernel suppresses a superseded chain either way.
+	Speculative bool `json:"speculative,omitempty"`
 }
 
 // Validate enforces the normative envelope rules.

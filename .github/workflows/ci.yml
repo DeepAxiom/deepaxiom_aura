@@ -121,12 +121,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pyyaml
+      # websockets is the only `aura` SDK dependency (skill.py imports it at
+      # module level) — lightweight, no native build, so every skill's glue
+      # code (main.py) is importable here. The heavy, model-specific deps
+      # (faster-whisper, llama-cpp-python, piper-tts, psycopg2, pyttsx3) are
+      # deliberately NOT installed: modules that need them (engine.py,
+      # backends/, parser.py) import them lazily inside a function, never at
+      # module level, precisely so their pure logic stays testable here.
+      - run: pip install pyyaml websockets
 
       # No model is loaded: these cover the streaming buffer, whose failures
       # are silent — a mis-ordered chunk yields a worse transcript, never an
       # error.
-      - name: asr streaming buffer
+      - name: asr
         working-directory: skills/asr
         env:
           PYTHONPATH: ../../sdk/python/src
@@ -137,6 +144,51 @@ jobs:
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
+
+      - name: echo
+        working-directory: skills/echo
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+      - name: tts
+        working-directory: skills/tts
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+      - name: llm-chat
+        working-directory: skills/llm-chat
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+      - name: planner
+        working-directory: skills/planner
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+      - name: model manager
+        working-directory: skills/model-manager
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+      - name: memory context
+        working-directory: skills/memory-context
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+      # test_integration.py needs a real Postgres and is skipped here
+      # (adversarial/integration jobs cover that separately); test_parser.py
+      # is pure and runs on every push like the rest.
+      - name: postgres cdc parser
+        working-directory: skills/postgres-cdc
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest test_parser -v
 
   conformance:
     name: conformance suite (C1/C2/C3)

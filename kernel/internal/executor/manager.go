@@ -97,6 +97,16 @@ func (m *Manager) Start(sessionID, graphID, undoOf string,
 	return sess, nil
 }
 
+// Get returns a live session by id. Used by borders that drive a session
+// across several HTTP requests (the OpenEnv episode loop) rather than holding
+// one socket open the way a WebSocket client does.
+func (m *Manager) Get(sessionID string) (*Session, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sess, ok := m.sessions[sessionID]
+	return sess, ok
+}
+
 func (m *Manager) End(sessionID string) {
 	m.mu.Lock()
 	delete(m.sessions, sessionID)

@@ -28,6 +28,18 @@ type dest struct {
 	// qos is the edge's declared delivery class (C3 rule 4): whether a slow
 	// receiver blocks the producer or loses the oldest frames.
 	qos string
+	// speculative: deliver this edge on partial upstream output and discard
+	// the work if the final output differs (C2 v1.2, see speculation.go).
+	// Never true for a motor destination — applyPolicy refuses it there.
+	speculative bool
+	// deadlineMS: how long a delivery here is worth waiting for. Rides on the
+	// envelope so the receiver can degrade rather than arrive late.
+	deadlineMS int
+	// priority orders preemption between contending chains. Higher wins.
+	priority int
+	// from is the producing endpoint ("ref.port"), needed to key speculation
+	// state per stream rather than per destination.
+	from string
 }
 
 // Session is a live instance of a graph (P4). Single-writer: owned by this node.
@@ -65,6 +77,15 @@ type Session struct {
 	causal    *causalIndex
 	inFlight  *inFlightIndex
 	cancelled *cancelledSet
+	// attests binds C5 inference attestations to the causal chain they were
+	// produced in, so an effect can be sealed citing what argued for it.
+	attests *attestIndex
+	// spec tracks speculative deliveries per stream (C2 v1.2). See
+	// speculation.go.
+	spec *specIndex
+	// ctxLedger accounts this session against the graph's declared
+	// context_budget (C2 v1.2). Nil when the graph declared none.
+	ctxLedger *contextLedger
 
 	sendClient func(raw []byte, qos string) error
 }
@@ -102,6 +123,31 @@ func applyPolicy(d *dest, pol *Policy, mode string, from, to string) error {
 		return nil // the client pseudo-node acts on nothing
 	}
 	published := mode == string(identity.ModePublished)
+
+	// The speculation invariant, stated here because it is the motor gate seen
+	// from another angle: the type of skill that must wait for a human is the
+	// type that must never run ahead of certainty.
+	//
+	// C1's five types are an effect type system, so "is this safe to run
+	// early?" is answered by the manifest rather than by the graph author's
+	// judgement or a heuristic. Every other runtime that speculates has to
+	// decide this per tool, by hand, and gets it wrong when someone adds a
+	// tool that writes.
+	//
+	// Refused rather than ignored: an author who wrote `speculative: true` on
+	// an edge that sends an email has misunderstood something, and silently
+	// dropping the flag would leave them believing it worked.
+	if d.speculative && d.skill.Manifest.Type == TypeMotor {
+		return fmt.Errorf(
+			"edge %s -> %s declares speculative but %q is a motor skill; work that acts "+
+				"on the world is never run ahead of certainty, because a discarded effect "+
+				"is not discarded", from, to, d.skill.Manifest.ID)
+	}
+	if d.speculative && !pol.SpeculationAllowed() {
+		// A node-wide opt-out is a preference, not a mistake, so the edge is
+		// downgraded rather than refused. The counter records it.
+		d.speculative = false
+	}
 
 	if published && d.gate == "" && d.skill.Manifest.Type == TypeMotor {
 		return fmt.Errorf("edge %s -> %s delivers into motor skill %q with no gate; "+
@@ -147,7 +193,11 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 
 	resolved := map[string]*registry.Live{}
 	for _, n := range g.Nodes {
-		live, err := reg.Resolve(n.Use, n.Resolve)
+		// C4 policy `routes`: which of several providers answers a capability
+		// is a governance decision, readable in the same signed document that
+		// says what may act on the world.
+		prefer, avoid := pol.RouteFor(n.Resolve)
+		live, err := reg.ResolvePreferred(n.Use, n.Resolve, prefer, avoid)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", n.Ref, err)
 		}
@@ -174,6 +224,9 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		causal:     newCausalIndex(maxCausalRoots),
 		inFlight:   newInFlightIndex(maxInFlightRoot),
 		cancelled:  newCancelledSet(maxCancelled),
+		attests:    newAttestIndex(maxAttestRoots, maxAttestPerRoot),
+		spec:       newSpecIndex(maxSpecRoots),
+		ctxLedger:  newContextLedger(g.ContextBudget),
 		sendClient: sendClient,
 	}
 
@@ -185,7 +238,10 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		if qos == "" {
 			qos = channel.QoSReliable // C3 rule 4: reliable is the default
 		}
-		d := dest{ref: toRef, port: toPort, gate: e.Gate, qos: qos}
+		d := dest{
+			ref: toRef, port: toPort, gate: e.Gate, qos: qos, from: e.From,
+			speculative: e.Speculative, deadlineMS: e.DeadlineMS, priority: e.Priority,
+		}
 		if toRef != ClientRef {
 			live := resolved[toRef]
 			sch, ok := live.Manifest.IngressSchema(toPort)
@@ -309,6 +365,12 @@ func (s *Session) Route(env channel.Envelope) {
 		return
 	}
 
+	// C5: bind whatever this skill claims about how it produced this output
+	// to the chain, so an effect sealed downstream can cite it. Done after
+	// the suppression check — a cancelled chain's attestations are already in
+	// the event log and binding them to nothing serves no purpose.
+	s.recordAttestation(root, env)
+
 	key := env.Node + "." + env.Port
 	dests := s.routes[key]
 	if len(dests) == 0 {
@@ -316,6 +378,10 @@ func (s *Session) Route(env channel.Envelope) {
 		return
 	}
 	for _, d := range dests {
+		if d.speculative {
+			s.forwardSpeculatively(env, d, root)
+			continue
+		}
 		if d.gate == GateHumanApproval {
 			s.holdForApproval(env, d)
 			continue
@@ -323,6 +389,87 @@ func (s *Session) Route(env channel.Envelope) {
 		s.forward(env, d)
 	}
 }
+
+// forwardSpeculatively implements C2 v1.2 speculation on one edge.
+//
+// The producer streams partials; this folds them into a running value and
+// hands that value downstream *as if it were final*, then reconciles when the
+// true final arrives. See speculation.go for why the effect type system is
+// what makes this safe rather than reckless.
+func (s *Session) forwardSpeculatively(env channel.Envelope, d dest, root string) {
+	if env.Kind != channel.KindData || root == "" {
+		// Terminal and control envelopes are not speculation material: a
+		// `done` or an `error` is the tail of work, not a guess about it.
+		s.forward(env, d)
+		return
+	}
+
+	key := specKey{root: root, from: d.from}
+	running := s.spec.fold(key, env.Schema, env.Payload)
+
+	if !isFinal(env.Payload) {
+		// A partial. Deliver the accumulated value *marked final*, because the
+		// whole point is that the downstream treats it as a complete input and
+		// starts real work — a consumer handed `final: false` would wait, and
+		// waiting is what speculation exists to avoid.
+		guess := env
+		guess.Payload = markFinal(running)
+		s.forward(guess, d)
+		s.spec.speculate(key, guess.ID)
+		return
+	}
+
+	// The real end of the stream. Either the guess stands or it does not.
+	hit, stale := s.spec.resolve(key, running)
+	if hit {
+		// The downstream already has this exact value and has been working on
+		// it. Delivering it again would duplicate the work speculation just
+		// saved, and — for an idempotent consumer — produce a second reply.
+		s.log.Debug("speculation hit; suppressing redundant final delivery",
+			"session", s.ID, "edge", d.from+" -> "+d.ref+"."+d.port)
+		return
+	}
+
+	// A miss. Abandon what the speculative deliveries started, using the same
+	// suppression `cancel` uses, then deliver the truth.
+	for _, envelopeID := range stale {
+		s.abandonSpeculation(envelopeID, d)
+	}
+	real := env
+	real.Payload = running
+	s.forward(real, d)
+}
+
+// abandonSpeculation stops work started on a guess that turned out wrong.
+//
+// It reuses the cancel path rather than inventing a second one: the guarantee
+// that a cancelled chain's output goes nowhere is exactly the guarantee a
+// speculative miss needs, and having one mechanism means a skill that handles
+// cancel correctly handles this correctly for free.
+func (s *Session) abandonSpeculation(envelopeID string, d dest) {
+	s.cancelled.add(envelopeID)
+	if d.skill == nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"reason": "speculation superseded: the producer's final output differs from the " +
+			"partial this work was started on",
+	})
+	cancel := channel.Envelope{
+		V: channel.ProtocolMajor, ID: channel.NewID(), CauseID: envelopeID,
+		Session: s.ID, Node: d.ref, Port: d.port, Kind: channel.KindCancel,
+		Payload: payload,
+	}
+	raw, _ := json.Marshal(cancel)
+	_ = s.st.AppendEvent(s.ID, cancel.ID, cancel.CauseID, raw)
+	if err := d.skill.Send(raw, channel.QoSReliable); err != nil {
+		s.log.Debug("could not ask a skill to abandon speculative work",
+			"session", s.ID, "to", d.ref+"."+d.port, "err", err)
+	}
+}
+
+// SpeculationStats reports this session's guessing record.
+func (s *Session) SpeculationStats() SpeculationStats { return s.spec.Stats() }
 
 // handleCancel implements the C3 "cancel" kind (spec/c3-channel.md).
 //
@@ -388,13 +535,30 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 		Session: s.ID, Node: d.ref, Port: d.port, Seq: seq,
 		Idem:   fmt.Sprintf("%s:%s:%s", src.Idem, d.ref, d.port),
 		Schema: src.Schema, Kind: src.Kind, Payload: src.Payload,
+		Priority: d.priority, Speculative: d.speculative,
+	}
+	// C3 v1.6: an absolute instant, computed once at the hop that declares it
+	// and then *inherited* rather than recomputed. A budget that restarted at
+	// every hop would let a three-hop chain quietly spend three times what its
+	// author allowed.
+	out.Deadline = inheritDeadline(src.Deadline, d.deadlineMS)
+
+	// C2 v1.2: refuse to deliver into a chain that has already blown the
+	// graph's context budget, rather than letting a model discover it as a
+	// truncation or an out-of-memory two hops later.
+	if err := s.chargeContext(out); err != nil {
+		s.log.Warn("context budget exceeded", "session", s.ID,
+			"to", d.ref+"."+d.port, "err", err)
+		s.emitError(src.ID, err.Error())
+		return
 	}
 
 	// Keep the chain traceable back to the client message that started it, and
 	// remember what this destination will call the work we are handing it.
 	// `src.ID` is exactly the cause_id the destination sees on `out`, which is
 	// what a cancel must carry to be recognised there.
-	if root := s.rootOf(src); root != "" {
+	root := s.rootOf(src)
+	if root != "" {
 		s.causal.set(out.ID, root)
 		s.inFlight.record(root, hop{to: d, causeID: src.ID})
 	}
@@ -403,7 +567,18 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 	// an effect, and gets attested before it goes anywhere. Before marshaling
 	// `raw`, so a successful seal's receipt travels both in the persisted
 	// event log and on the envelope the skill actually receives.
-	s.sealEffect(&out, d)
+	//
+	// `root` is passed in rather than re-derived because the seal must cite
+	// the inferences of *this* chain (C5), and the chain is what the root
+	// names.
+	s.sealEffect(&out, d, root)
+
+	// C3 v1.6: a delivery whose deadline has already passed is dropped rather
+	// than sent. The receiver would compute an answer nobody is waiting for,
+	// and on a busy node that work displaces work that still matters.
+	if s.dropExpired(out, d) {
+		return
+	}
 
 	raw, _ := json.Marshal(out)
 	if err := s.st.AppendEvent(s.ID, out.ID, out.CauseID, s.loggable(out, raw, d.qos)); err != nil {
@@ -514,6 +689,41 @@ func (s *Session) resolveGate(resp channel.Envelope) {
 	}
 }
 
+// recordAttestation captures a C5 inference attestation (envelope.Attest) and
+// binds it to the causal chain it was produced in.
+//
+// Three properties are deliberate:
+//
+//   - **Malformed is dropped, not fatal.** A skill that sends a broken
+//     attestation still gets its output routed. The alternative — refusing
+//     the envelope — would let a metadata bug take down a working graph, and
+//     the effect that follows will simply be sealed citing one fewer
+//     inference. The log records the rejection so the gap is explicable.
+//   - **Stored before it is bound.** The hash goes into the index only once
+//     the record is durable, so a sealed entry can never cite an attestation
+//     that was never written. A dangling hash in an immutable chain is
+//     unfixable; a missing citation is merely incomplete.
+//   - **Not restricted to cognitive skills.** An ASR skill's model matters to
+//     an effect for exactly the same reason an LLM's does — a mis-transcribed
+//     amount is as consequential as a mis-reasoned one.
+func (s *Session) recordAttestation(root string, env channel.Envelope) {
+	if len(env.Attest) == 0 || root == "" {
+		return
+	}
+	_, hash, err := ledger.ParseAttestation(env.Attest)
+	if err != nil {
+		s.log.Warn("ignoring malformed inference attestation",
+			"session", s.ID, "from", env.Node+"."+env.Port, "err", err)
+		return
+	}
+	if err := ledger.RecordAttestation(s.st, hash, env.Attest); err != nil {
+		s.log.Error("storing inference attestation failed",
+			"session", s.ID, "hash", hash, "err", err)
+		return
+	}
+	s.attests.add(root, hash)
+}
+
 // sealEffect: el paso de attest del Effect Checkpoint (C4). Ojo, no todo se
 // sella — solo un envelope `data` que aterriza en un skill `motor.*` cuenta
 // como efecto. Tokens de un cognitive, un status, un done: eso no es un
@@ -528,13 +738,22 @@ func (s *Session) resolveGate(resp channel.Envelope) {
 // hueco documentado en el ledger en vez de tumbar el nodo — pero para algo
 // que promete "seguir vivo" como premisa central, tumbar el nodo es el peor
 // de los dos males.
-func (s *Session) sealEffect(out *channel.Envelope, d dest) {
+func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) {
 	if s.ldg == nil || d.skill == nil || d.skill.Manifest.Type != TypeMotor || out.Kind != channel.KindData {
 		return
 	}
 	decision := spec.DecisionAllow
 	if d.gate == GateHumanApproval {
 		decision = spec.DecisionGate
+	}
+	inference, truncated := s.attests.get(root)
+	if truncated {
+		// Say so rather than sealing a set that looks complete and is not.
+		// An entry citing three of five inferences, with nothing recording
+		// that two were dropped, is worse than one that cites none.
+		s.log.Warn("inference attestations truncated for this chain; "+
+			"the sealed entry cites a partial set",
+			"session", s.ID, "root", root, "cited", len(inference))
 	}
 	req := ledger.SealRequest{
 		Session: s.ID, Envelope: out.ID, Cause: out.CauseID,
@@ -546,6 +765,7 @@ func (s *Session) sealEffect(out *channel.Envelope, d dest) {
 		Payload:      out.Payload,
 		Compensation: compensationOf(d.skill.Manifest),
 		Compensates:  s.undoOf,
+		Inference:    inference,
 	}
 	receipt, err := s.ldg.Seal(req)
 	if err != nil {
@@ -564,6 +784,11 @@ func (s *Session) sealDenial(held pendingGate) {
 	if s.ldg == nil || held.to.skill == nil {
 		return
 	}
+	// A refused effect cites the same inferences a delivered one would. What
+	// argued for an act is worth recording whether or not the act happened —
+	// "which model kept proposing the payment a human kept refusing" is a
+	// question the ledger should be able to answer.
+	inference, _ := s.attests.get(s.rootOf(held.env))
 	req := ledger.SealRequest{
 		Session: s.ID, Envelope: held.env.ID, Cause: held.env.CauseID,
 		Actor:        held.to.skill.Manifest.ID + "@" + held.to.skill.Manifest.Version,
@@ -574,6 +799,7 @@ func (s *Session) sealDenial(held pendingGate) {
 		Payload:      held.env.Payload,
 		Compensation: compensationOf(held.to.skill.Manifest),
 		Compensates:  s.undoOf,
+		Inference:    inference,
 	}
 	if _, err := s.ldg.Seal(req); err != nil {
 		s.log.Error("denial sealing failed", "session", s.ID, "capability", req.Capability, "err", err)

@@ -28,12 +28,7 @@ func cmdTrace(args []string) {
 	port := fs.Int("port", 9080, "kernel port")
 	otlp := fs.String("otlp", "", "OTLP/HTTP collector base URL (e.g. http://localhost:4318)")
 	out := fs.String("out", "", "write the OTLP JSON document to this file")
-	_ = fs.Parse(args)
-	rest := fs.Args()
-	if len(rest) > 1 {
-		_ = fs.Parse(rest[1:])
-		rest = rest[:1]
-	}
+	rest := parseWithOperands(fs, args, 1)
 	if len(rest) != 1 {
 		fatal(fmt.Errorf("usage: aura trace <session> [--otlp <url>] [--out <file>]"))
 	}

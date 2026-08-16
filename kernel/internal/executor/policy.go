@@ -54,6 +54,51 @@ type Limit struct {
 	PerMinute int `yaml:"per_minute"`
 }
 
+// Speculation is a node's stance on running work ahead of certainty (C2 v1.2).
+//
+// It is a policy question and not only a graph one for the same reason gates
+// are: speculation spends compute and, on a shared node, one graph's guessing
+// is another graph's queue. An operator who wants none can say so once, in the
+// document an auditor already reads, rather than reviewing every graph.
+type Speculation string
+
+const (
+	// SpeculationAllow honours an edge that asks to speculate. The motor
+	// refusal still applies — no policy can waive that.
+	SpeculationAllow Speculation = "allow"
+	// SpeculationDeny ignores every speculative request on this node.
+	SpeculationDeny Speculation = "deny"
+)
+
+// Route pins which package answers a capability, in preference order.
+//
+// Model choice is a governance question, not only an engineering one: "which
+// model answered this" is a thing an auditor asks, and the honest answer
+// should be readable in the same signed document that says what may act on the
+// world. Every other runtime settles this in application code or in a router
+// service, where it is invisible to the person reviewing the deployment.
+//
+// This is deliberately *not* a learned router. RouteLLM-style classifiers and
+// the vLLM semantic router pick per query and are genuinely better at cost and
+// quality; they are also unauditable by inspection, which is the property this
+// runtime trades for. A node that wants a learned router puts one behind a
+// `cognitive.*` capability and routes to it here — the two compose.
+type Route struct {
+	// Match is a capability, an exact one or a `prefix.*` wildcard, using the
+	// same matcher as Rule.
+	Match string `yaml:"match"`
+	// Prefer lists package ids (`org/cat/name`) in descending preference. The
+	// first one currently connected wins. A capability whose preferred
+	// packages are all offline falls through to ordinary resolution rather
+	// than failing — a routing preference should not take a graph down.
+	Prefer []string `yaml:"prefer,omitempty"`
+	// Avoid lists package ids never chosen for this capability unless nothing
+	// else provides it. Same reasoning: a preference, not a prohibition.
+	// Use a `deny` rule to actually forbid something.
+	Avoid  []string `yaml:"avoid,omitempty"`
+	Reason string   `yaml:"reason,omitempty"`
+}
+
 // Rule is one line of policy. Match is an exact capability, a prefix wildcard
 // (`motor.erp.*`), or `*`.
 type Rule struct {
@@ -72,8 +117,15 @@ type Policy struct {
 	// means false (a node given a policy is a node that wants to be the
 	// authority), while the built-in default policy sets it true so that
 	// `aura up` with no policy behaves exactly as it did before this existed.
-	AllowGraphWaiver *bool  `yaml:"allow_graph_waiver,omitempty"`
-	Rules            []Rule `yaml:"rules,omitempty"`
+	AllowGraphWaiver *bool `yaml:"allow_graph_waiver,omitempty"`
+	// Speculation decides whether edges asking to run ahead of certainty are
+	// honoured. Empty means allow, which is the pre-v1.2 behaviour for graphs
+	// that never ask — a graph with no speculative edge is unaffected either
+	// way, so defaulting to allow costs nothing and keeps the flag opt-out.
+	Speculation Speculation `yaml:"speculation,omitempty"`
+	Rules       []Rule      `yaml:"rules,omitempty"`
+	// Routes pin a capability to specific packages, in preference order.
+	Routes []Route `yaml:"routes,omitempty"`
 
 	source string // human-readable origin, for logs and errors
 	hash   string // sha256 of the exact document in force
@@ -175,6 +227,30 @@ func (p *Policy) Source() string { return p.source }
 // GraphWaiverAllowed reports whether an edge may waive the gate itself.
 func (p *Policy) GraphWaiverAllowed() bool {
 	return p.AllowGraphWaiver != nil && *p.AllowGraphWaiver
+}
+
+// SpeculationAllowed reports whether this node honours speculative edges.
+func (p *Policy) SpeculationAllowed() bool {
+	return p.Speculation != SpeculationDeny
+}
+
+// RouteFor returns the node's package preferences for a capability: an
+// ordered `prefer` list and a set to avoid. First matching route wins, like
+// every other ordered list in this document.
+func (p *Policy) RouteFor(capability string) (prefer []string, avoid map[string]bool) {
+	for _, r := range p.Routes {
+		if !matchCapability(r.Match, capability) {
+			continue
+		}
+		if len(r.Avoid) > 0 {
+			avoid = make(map[string]bool, len(r.Avoid))
+			for _, id := range r.Avoid {
+				avoid[id] = true
+			}
+		}
+		return r.Prefer, avoid
+	}
+	return nil, nil
 }
 
 // Decide resolves what the node has decided about one capability, returning

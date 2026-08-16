@@ -77,10 +77,11 @@ vida. Cancel transitivo con supresión del lado del kernel. Spec resincronizada
 con lo que el kernel emite de verdad.
 
 **Conectividad** — cuatro caminos para los cuatro casos reales: un sistema que no
-puedes cambiar ([`skills/connector`](skills/connector/)), una app que es tuya
-([`sdk/node`](sdk/node/)), eventos que entran (ingreso HTTP con HMAC) y un
-sistema que prefieres no describir (`aura observe` + `aura generate connector`).
-Los conectores son skills, no `kind`s compilados en el kernel.
+puedes cambiar (un conector declarativo — patrón documentado, ver "Connecting
+existing software" en README.md), una app que es tuya ([`sdk/node`](sdk/node/)),
+eventos que entran (ingreso HTTP con HMAC) y un sistema que prefieres no
+describir (`aura observe` + `aura generate connector`). Los conectores son
+skills, no `kind`s compilados en el kernel.
 
 **Voz streaming multicanal** — schemas `std` ejecutables, QoS `realtime` con
 elisión del log, ASR en streaming, chunker de frases, TTS en chunks, preempción,
@@ -454,6 +455,129 @@ sea un test de Go real y no lógica de CLI sin probar.
 
 ---
 
+## Fase 4 · Inferencia atestiguada ✅ *(completada)* — el foso
+
+**El problema.** El ledger decía "un auditor puede comprobar esto sin confiar en
+el proceso que lo produjo", y era falso: estaba autofirmado, así que quien
+tuviera la clave del nodo podía reescribir la historia y refirmarla. Además
+respondía *bajo qué autoridad* pasó un efecto y no *sobre qué base*.
+
+**Lo que se construyó.**
+
+- **Árbol de Merkle (C4 v1.2).** RFC 6962 — la construcción de Certificate
+  Transparency — sobre cada entrada, con la cabeza comprometida en cada
+  checkpoint. Elegida porque da pruebas de inclusión *y* de consistencia sobre
+  una sola forma, y porque su separación de dominios `0x00`/`0x01` cierra el
+  ataque de segunda preimagen. La cadena lineal queda intacta: es estrictamente
+  aditivo.
+- **Anclaje externo (`aura witness`).** Un tercero verifica una prueba de
+  consistencia antes de contrafirmar. Un nodo que reescribió la entrada 3 no
+  puede producir esa prueba — no hay nada que forjar. Resultado: un nodo puede
+  mentir, pero no de forma consistente a dos partes a lo largo del tiempo. Cada
+  nodo es witness, así que no hay servicio que desplegar.
+- **Recibos portátiles (`aura receipt`).** Un JSON autocontenido con entrada,
+  prueba de inclusión, cabeza firmada, contrafirmas y atestaciones citadas.
+  `--verify` no abre base de datos, no contacta nodo, no usa red.
+- **C5 — Atestación de inferencia.** Un skill declara motor, modelo, revisión
+  de HF, cuantización, muestreo y semilla; el kernel lo direcciona por
+  contenido y cita su hash en cada efecto que esa salida causó.
+- **`aura bom`** — ML-BOM CycloneDX 1.6 desde el ledger: lo que corrió de
+  verdad, no lo configurado.
+- Revisiones de HF fijadas antes de descargar; formatos de pesos con pickle
+  rechazados; energía reportada siempre con su fuente.
+
+**Lo que NO prueba, y se dice en el propio contrato.** Una atestación es una
+*afirmación del skill*, ligada de forma infalsificable a lo que causó y a
+cuándo se hizo. No es prueba de que el skill dijera la verdad. Cerrar eso
+requiere atestación por hardware; el campo `tee` está reservado y vacío.
+
+**Tres bugs que solo aparecieron corriendo los binarios**, no los tests: los
+recibos del CLI nunca habrían verificado (`MarshalIndent` reindenta los
+`json.RawMessage` embebidos, cambiando los bytes hasheados — arreglado con
+base64, como JWS/COSE); `aura verify` reportaba SOUND sobre un ledger
+reescrito y refirmado; y `aura undo <sesión> --yes` ignoraba `--yes` desde
+antes de este trabajo.
+
+---
+
+## Fase 5 · Puertos tipados y scheduling ✅ *(completada)* — la palanca
+
+**El problema.** El foso de la Fase 4 es defendible y es ilegible para la
+mayoría de la audiencia. Lo que un builder siente en cinco minutos es latencia
+y salidas que no se rompen.
+
+**Lo que se construyó.**
+
+- **Decodificación restringida derivada del tipo del puerto (C1).** El kernel
+  compila el JSON Schema de cada puerto a gramática GBNF y se la entrega al
+  skill al registrarse. Un modelo que decodifica bajo ella *no puede* emitir
+  una forma que el puerto rechace. La decodificación restringida no es nueva
+  (XGrammar, llguidance, Outlines); lo inusual es de dónde sale la gramática:
+  del tipo del puerto que va a recibir la salida, no de un schema que el autor
+  escribió a mano. Ningún otro runtime de agentes puede hacerlo porque ninguno
+  tiene puertos con schema obligatorio.
+- **Validación del payload** contra el mismo schema para todo lo que no genera.
+  La gramática vuelve una violación inalcanzable; el validador la vuelve
+  rechazada.
+- **Ejecución especulativa de grafo (C2 v1.2).** `speculative: true` corre
+  trabajo downstream sobre salida parcial y lo descarta si diverge. **Rechazado
+  al cablear en cualquier arista hacia un skill `motor`** — los cinco tipos de
+  C1 son un sistema de tipos de efectos, así que "¿es seguro correr esto
+  antes?" ya está respondido en el manifiesto. Toda la literatura 2026 (PASTE,
+  SPORK, SpecBox) gasta su esfuerzo en responder eso con heurísticas.
+- **Deadlines absolutos y heredables**, que un hop puede apretar y nunca
+  extender. Estándar en RPC desde hace una década, ausente en runtimes de
+  agentes.
+- **Prioridad** para preempción entre cadenas.
+- **Routing por policy** — qué paquete responde a una capacidad, legible en el
+  mismo documento firmado que dice qué puede actuar sobre el mundo.
+- **Presupuesto de contexto** que el ejecutor hace cumplir, con el conteo
+  declarado explícitamente como estimación.
+
+**Criterio de salida cumplido:** un evaluador GBNF corre las gramáticas
+generadas y comprueba que aceptan todo documento válido y rechazan los
+inválidos; la invariante de especulación se rechaza al cablear y está probada
+en los cuatro caminos (rechazo motor, acierto, fallo, opt-out por policy).
+
+## Fase 6 · Audit bundles y bordes ✅ *(completada)* — la legibilidad
+
+**El problema.** Las Fases 4 y 5 construyeron un foso defendible y una palanca
+técnica. Ninguna de las dos es legible para la audiencia que hay en Hugging
+Face, y el ángulo de compliance apunta a compradores que no adoptan pre-1.0.
+
+**El hallazgo.** Un estudio de 2026 sobre protocolos de benchmarks
+(arXiv 2607.22368) encontró que el 67% de las trazas examinadas contenía
+caminos por los que se puede ganar una puntuación sin la capacidad medida, y
+nombró los cuatro materiales que un runtime debe emitir para que un resultado
+sea auditable: trayectoria completa, procedencia de artefactos con hashes,
+configuración de modelo replayable, y baselines pareados. **Este runtime ya
+emitía los cuatro** — log causal, ledger C4, atestación C5, `aura replay` —
+por razones que no tenían nada que ver.
+
+**Lo que se construyó.**
+
+- **`aura bundle`** — un documento por sesión con los cuatro materiales, que
+  verifica sin base de datos, sin nodo y sin red. Editar, quitar o reordenar
+  un paso lo invalida. La truncación se declara, no se esconde.
+- **Border OpenEnv** — cada grafo registrado es un entorno de Hugging Face
+  (`reset`/`step`/`state`), y el episodio devuelve su audit bundle junto a la
+  observación. El reward es siempre `null`, deliberadamente: un runtime no
+  puede saber qué cuenta como éxito, y un número inventado es la puntuación
+  sin protocolo que el estudio describe.
+- **`--sandbox process`** — el entorno pasa de herencia a allowlist, más jaula
+  de cwd. Cierra la fuga accidental de credenciales; no contiene código
+  hostil, y lo dice en cada arranque. `microvm` queda declarado y **rechazado
+  al arrancar**, no simulado.
+- **`--open-witness`** — witnessing fuera del dominio de confianza, acotado
+  por tasa, capacidad y retención. Los límites son lo que lo hizo ofrecible,
+  no el cambio de ruta.
+
+**Lo que sigue abierto y declarado como tal:** el backend microVM (necesita
+Linux+KVM), y la atestación por hardware TEE (necesita hardware). Ninguno se
+presenta como resuelto.
+
+---
+
 ## Fase 3 · Alcance
 
 **Post-beta, en orden de valor.**
@@ -496,8 +620,8 @@ sea un test de Go real y no lógica de CLI sin probar.
 - **CDC / replicación lógica de Postgres ✅** — un skill nuevo,
   [skills/postgres-cdc](skills/postgres-cdc), no un cambio de kernel: se
   conecta al kernel por el mismo `/ws/skill` que cualquier skill `source`
-  (`sdk/python/src/aura/skill.py`), exactamente como `skills/connector` o
-  `skills/tuya-*`. Usa el plugin `test_decoding` — el que viene incluido en
+  (`sdk/python/src/aura/skill.py`), exactamente como `skills/asr` o
+  `skills/tts`. Usa el plugin `test_decoding` — el que viene incluido en
   el núcleo de Postgres desde la 9.4, sin instalar ninguna extensión —
   verificado a mano contra un Postgres real: `wal2json`, el plugin que en
   un principio parecía la opción obvia por dar JSON limpio, **no está
@@ -1052,6 +1176,127 @@ differently without that being an authorization failure. `Diff` lives in the
 `ledger` package, pure and I/O-free, so it is a real Go test rather than
 untested CLI logic.
 
+## Phase 4 · Attested inference ✅ *(done)* — the moat
+
+**The problem.** The ledger claimed "evidence an auditor can check without
+trusting the process that produced it", and that was false: it was self-signed,
+so whoever held the node's key could rewrite history and re-sign it. It also
+answered *under whose authority* an effect happened but not *on what basis*.
+
+**What shipped.**
+
+- **Merkle tree (C4 v1.2).** RFC 6962 — Certificate Transparency's
+  construction — over every entry, with the head committed in each checkpoint.
+  Chosen because it gives both inclusion *and* consistency proofs against one
+  shape, and because its `0x00`/`0x01` domain separation closes the
+  second-preimage attack a naive tree has. The linear chain is untouched:
+  strictly additive.
+- **External anchoring (`aura witness`).** A third party verifies a consistency
+  proof before counter-signing. A node that rewrote entry 3 cannot produce that
+  proof — there is nothing to forge. The result: a node can lie, but not
+  consistently to two parties over time. Every node is a witness, so there is
+  no service to stand up.
+- **Portable receipts (`aura receipt`).** A self-contained JSON carrying the
+  entry, an inclusion proof, the signed head, countersignatures and the cited
+  attestations. `--verify` opens no database, contacts no node, uses no network.
+- **C5 — Inference attestation.** A skill declares engine, model, HF revision,
+  quantization, sampling and seed; the kernel content-addresses it and cites
+  its hash in every effect that output caused.
+- **`aura bom`** — CycloneDX 1.6 ML-BOM from the ledger: what actually ran, not
+  what was configured.
+- HF revisions pinned before download; pickle-based weight formats refused;
+  energy always reported with its source.
+
+**What it does not prove, said in the contract itself.** An attestation is an
+*assertion by the skill*, bound unforgeably to what it caused and when it was
+made. It is not proof the skill told the truth. Closing that needs hardware
+attestation; the `tee` field is reserved and empty.
+
+**Three bugs that only surfaced by running the binaries**, not the tests: CLI
+receipts would never have verified (`MarshalIndent` re-indents embedded
+`json.RawMessage`, changing the hashed bytes — fixed with base64, as JWS and
+COSE do); `aura verify` reported SOUND on a rewritten-and-re-signed ledger; and
+`aura undo <session> --yes` had been silently dropping `--yes` since before
+this work.
+
+---
+
+## Phase 5 · Typed ports and scheduling ✅ *(done)* — the lever
+
+**The problem.** Phase 4's moat is defensible and illegible to most of the
+audience. What a builder feels in five minutes is latency and outputs that do
+not break.
+
+**What shipped.**
+
+- **Constrained decoding derived from the port's type (C1).** The kernel
+  compiles each port's JSON Schema into a GBNF grammar and hands it to the
+  skill at registration. A model decoding under it *cannot* emit a shape the
+  port would reject. Constrained decoding is not new (XGrammar, llguidance,
+  Outlines); what is unusual is where the grammar comes from — the type of the
+  port that will receive the output, rather than a schema the author wrote by
+  hand. No other agent runtime can do this, because none have mandatory typed
+  ports.
+- **Payload validation** against the same schema for everything that does not
+  generate. The grammar makes a violation unreachable; the validator makes it
+  rejected.
+- **Speculative graph execution (C2 v1.2).** `speculative: true` runs
+  downstream work on partial output and discards it on divergence. **Refused at
+  wiring on any edge into a `motor` skill** — C1's five types are an effect
+  type system, so "is it safe to run this early?" is already answered by the
+  manifest. The entire 2026 literature (PASTE, SPORK, SpecBox) spends its
+  effort answering that with heuristics.
+- **Absolute, inheritable deadlines** a hop may tighten and never extend.
+  Standard in RPC for a decade, absent from every agent runtime.
+- **Priority** for preemption between contending chains.
+- **Routing by policy** — which package answers a capability, readable in the
+  same signed document that says what may act on the world.
+- **A context budget the executor enforces**, with the token count declared
+  explicitly as an estimate.
+
+**Exit criterion met:** a GBNF evaluator runs the generated grammars and checks
+they accept every valid document and reject invalid ones; the speculation
+invariant is refused at wiring and tested on all four paths (motor refusal,
+hit, miss, policy opt-out).
+
+## Phase 6 · Audit bundles and borders ✅ *(done)* — legibility
+
+**The problem.** Phases 4 and 5 built a defensible moat and a technical lever.
+Neither is legible to the audience that is actually on Hugging Face, and the
+compliance angle points at buyers who do not adopt pre-1.0 software.
+
+**The finding.** A 2026 study of benchmark protocols (arXiv 2607.22368) found
+67% of examined traces contained paths by which a score could be earned
+without the capability being measured, and named the four materials a runtime
+must emit for a result to be auditable: complete trajectory, artifact
+provenance with hashes, replayable model configuration, and paired baselines.
+**This runtime already emitted all four** — causal log, C4 ledger, C5
+attestation, `aura replay` — for entirely unrelated reasons.
+
+**What shipped.**
+
+- **`aura bundle`** — one document per session carrying all four, verifying
+  with no database, no node and no network. Editing, dropping or reordering a
+  step invalidates it. Truncation is declared, not hidden.
+- **OpenEnv border** — every registered graph is a Hugging Face environment
+  (`reset`/`step`/`state`), and the episode returns its audit bundle alongside
+  the observation. Reward is always `null`, deliberately: a runtime cannot know
+  what counts as success, and a fabricated number is exactly the score-without-
+  protocol the study is about.
+- **`--sandbox process`** — the environment becomes an allowlist rather than an
+  inheritance, plus a working-directory jail. Closes accidental credential
+  leakage; does not contain hostile code, and says so at every launch.
+  `microvm` is declared and **refused at startup**, not stubbed.
+- **`--open-witness`** — witnessing outside the trust domain, bounded by rate,
+  capacity and retention. The bounds are what made it offerable, not the route
+  change.
+
+**What remains open, and is declared as such:** the microVM backend (needs
+Linux+KVM) and TEE hardware attestation (needs hardware). Neither is presented
+as solved.
+
+---
+
 ## Phase 3 · Reach — post-beta
 
 `libaura` via `-buildmode=c-shared` with Kotlin/Swift bindings and `GOOS=wasip1`;
@@ -1084,8 +1329,8 @@ OS process — `aura run` POSTs to it instead of spawning one when the
 installed manifest declares `format: wasm`. **Postgres CDC ✅** — a new
 skill, [skills/postgres-cdc](skills/postgres-cdc), not a kernel change: it
 connects to the kernel over the same `/ws/skill` any `source` skill uses
-(`sdk/python/src/aura/skill.py`), exactly like `skills/connector` or
-`skills/tuya-*`. Uses `test_decoding` — built into Postgres core since 9.4,
+(`sdk/python/src/aura/skill.py`), exactly like `skills/asr` or
+`skills/tts`. Uses `test_decoding` — built into Postgres core since 9.4,
 no extension install — verified by hand against a real server: `wal2json`,
 the plugin that looked like the obvious choice for clean JSON, **is not
 present** even in the `debezium/postgres:16` image built for exactly this
