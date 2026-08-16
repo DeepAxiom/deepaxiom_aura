@@ -111,7 +111,19 @@ type Log struct {
 	stop   chan struct{}
 	closed sync.Once
 	wg     sync.WaitGroup
+
+	// admit guards closing, and exists because `reqs` is buffered: selecting on
+	// `stop` alone does not stop an append landing in a queue the writer has
+	// already stopped draining. Held for read on every append — uncontended
+	// except against Close, which is the one writer. See Append and Close.
+	admit   sync.RWMutex
+	closing bool
 }
+
+// ErrClosed is returned by Append once the log has been closed. Callers on the
+// event-log path treat it as a shutdown signal, not as data loss: nothing that
+// returned nil is affected by it.
+var ErrClosed = errors.New("seglog is closed")
 
 type request struct {
 	rec  []byte
@@ -212,11 +224,25 @@ func (l *Log) Append(e Entry) error {
 		return err
 	}
 	req := &request{rec: rec, e: e, done: make(chan error, 1)}
-	select {
-	case l.reqs <- req:
-	case <-l.stop:
-		return errors.New("seglog is closed")
+
+	// Admission is what makes this safe, not a select on `stop`. `reqs` is
+	// buffered, so after Close both cases of `select { case l.reqs <- req:
+	// case <-l.stop: }` are ready and Go picks between them at random: roughly
+	// half the time the request was enqueued into a channel whose reader had
+	// already returned, and the caller blocked on `done` forever. On the event
+	// log that is a session goroutine hung for the life of the process.
+	//
+	// Taking the lock for read cannot deadlock against Close even when the
+	// queue is full: Close cannot have signalled the writer yet — it sets
+	// closing under the write lock first — so the writer is still draining.
+	l.admit.RLock()
+	if l.closing {
+		l.admit.RUnlock()
+		return ErrClosed
 	}
+	l.reqs <- req
+	l.admit.RUnlock()
+
 	return <-req.done
 }
 
@@ -229,7 +255,13 @@ func (l *Log) run() {
 	for {
 		select {
 		case <-l.stop:
-			l.flush(batch[:0])
+			// Close has already stopped admission, so what is still queued is a
+			// finite set of writes accepted while the log was open. Commit them
+			// rather than walk away: their callers are blocked on `done`, and a
+			// write must either land or come back with an error — never
+			// neither. The file is still open, since Close waits on the
+			// WaitGroup before touching it.
+			l.drain(batch)
 			return
 		case first := <-l.reqs:
 			batch = append(batch[:0], first)
@@ -244,6 +276,28 @@ func (l *Log) run() {
 			}
 			l.flush(batch)
 		}
+	}
+}
+
+// drain commits everything left in the queue at shutdown, reusing the caller's
+// batch buffer. It terminates because Close closes admission before signalling
+// the writer, so no new request can arrive while this runs.
+func (l *Log) drain(batch []*request) {
+	for {
+		batch = batch[:0]
+	fill:
+		for len(batch) < batchCap {
+			select {
+			case r := <-l.reqs:
+				batch = append(batch, r)
+			default:
+				break fill
+			}
+		}
+		if len(batch) == 0 {
+			return
+		}
+		l.flush(batch)
 	}
 }
 
@@ -351,7 +405,16 @@ func (l *Log) Counts(session string) (total, errs int) {
 }
 
 func (l *Log) Close() error {
-	l.closed.Do(func() { close(l.stop) })
+	l.closed.Do(func() {
+		// Order matters. Refusing new appends *before* signalling the writer is
+		// what bounds the queue: once this returns, every append either
+		// completed its enqueue or will be refused, so the writer's drain sees
+		// a finite set and terminates.
+		l.admit.Lock()
+		l.closing = true
+		l.admit.Unlock()
+		close(l.stop)
+	})
 	l.wg.Wait()
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // This package holds a node's replayable history, so the tests that matter are
@@ -322,6 +323,57 @@ func TestAppendAfterCloseIsRefused(t *testing.T) {
 	}
 	if err := l.Append(entry("s1", "m1", "data", "x")); err == nil {
 		t.Error("appending to a closed log must fail rather than hang or pretend")
+	}
+}
+
+// The production shape of the bug the test above only half-covers. Close runs
+// while sessions are still writing — that is what node shutdown *is*, since
+// AppendEvent sits on the executor's delivery path — and an append that neither
+// lands nor returns leaves a goroutine hung for the life of the process.
+//
+// Asserts the weak thing on purpose: not that a write survives, only that every
+// caller is answered. Which writes land at shutdown is a race by definition;
+// whether a caller is ever released is not.
+func TestAppendRacingCloseAlwaysReturns(t *testing.T) {
+	l, err := Open(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	const writers = 16
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; ; i++ {
+				err := l.Append(entry(fmt.Sprintf("s%d", w),
+					fmt.Sprintf("m%d-%d", w, i), "data", "x"))
+				if err != nil {
+					return // ErrClosed: answered, which is the whole point
+				}
+				select {
+				case <-done:
+					return
+				default:
+				}
+			}
+		}(w)
+	}
+
+	if err := l.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	close(done)
+
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("an append outlived Close — a write must land or fail, never hang")
 	}
 }
 
