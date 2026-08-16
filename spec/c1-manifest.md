@@ -141,7 +141,7 @@ normative.
 - `std/api-response@1` — `{ "ok": bool, "status": int, "body": any?, "dry_run": bool?, "request": obj?, "error": string? }` (projections)
 - `std/confirmation@1` — `{ "question": string, "options": [string], "held": string, "to_ref": string?, "to_port": string? }` (gates)
 - `std/plan@1` — `{ "reasoning": string, "graph": <C2 IR>, "inputs": [{ "port": string, "schema": string, "payload": any }] }` (planners)
-- `std/db-change@1` — `{ "table": string, "op": "insert"|"update"|"delete", "columns": obj, "lsn": string? }` (CDC, e.g. `deepaxiom/sensorial/postgres-cdc`)
+- `std/db-change@1` — `{ "table": string, "op": "insert"|"update"|"delete", "columns": obj, "lsn": string? }` (CDC, e.g. `example/sensorial/postgres-cdc`)
 
 **`text` and `transcript` are not interchangeable, and this is the trap.** In
 `std/text@1`, `text` is a *delta*: a streaming producer emits one per token and

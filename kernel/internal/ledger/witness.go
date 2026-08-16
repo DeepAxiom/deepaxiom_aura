@@ -241,14 +241,6 @@ func (w *Witness) Open(limits WitnessLimits) *Witness {
 	return w
 }
 
-// IsOpen reports whether this witness accepts unauthenticated statements.
-func (w *Witness) IsOpen() bool { return w.open }
-
-// Limits reports the bounds in force, for /healthz and the spec endpoint —
-// a client should be able to discover what it may do without discovering it
-// by being refused.
-func (w *Witness) Limits() WitnessLimits { return w.limits }
-
 // admit applies the open-witness bounds. Returns nil when the statement may
 // proceed to verification.
 func (w *Witness) admit(s Statement, previouslySeen bool, prevSeq uint64) error {

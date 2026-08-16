@@ -10,7 +10,7 @@ none of this. Writing a skill requires no changes to the core at all: copy
 [`skills/echo/`](skills/echo/) — the minimal worked example, no model and no
 credentials — or a skill wrapping a real external system like
 [`skills/postgres-cdc/`](skills/postgres-cdc/), and read
-[Writing a skill](README.md#writing-a-skill-the-sdk). Most people who want to
+[Writing a skill](GUIDE.md#writing-a-skill-the-sdk). Most people who want to
 build something on AURA want that, not this guide.
 
 **This is pre-1.0 (v0.1.0).** The project's central bet — a runtime that is

@@ -32,7 +32,7 @@ func sessionWithHistory(t *testing.T, steps int) (*store.Store, *Ledger, string)
 			"session": session, "kind": "data",
 			"payload": map[string]any{"text": fmt.Sprintf("step %d", i)},
 		})
-		if err := st.AppendEvent(session, fmt.Sprintf("ENV-%d", i), "ENV-0", env); err != nil {
+		if err := st.AppendEvent(session, fmt.Sprintf("ENV-%d", i), "ENV-0", "data", env); err != nil {
 			t.Fatal(err)
 		}
 	}

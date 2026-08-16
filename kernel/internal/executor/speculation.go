@@ -174,14 +174,6 @@ func (x *specIndex) resolve(k specKey, final json.RawMessage) (hit bool, stale [
 	return hit, stale
 }
 
-// discard drops a stream without scoring it — used when a chain is cancelled
-// for reasons unrelated to speculation.
-func (x *specIndex) discard(k specKey) {
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	x.forget(k)
-}
-
 // forget removes a stream. Caller must hold mu.
 func (x *specIndex) forget(k specKey) {
 	delete(x.state, k)
@@ -191,12 +183,6 @@ func (x *specIndex) forget(k specKey) {
 			break
 		}
 	}
-}
-
-func (x *specIndex) refused() {
-	x.mu.Lock()
-	x.stats.Refused++
-	x.mu.Unlock()
 }
 
 // Stats returns a snapshot.

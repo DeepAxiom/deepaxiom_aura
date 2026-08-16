@@ -23,6 +23,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"aura/kernel/internal/approvals"
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/executor"
 	"aura/kernel/internal/grammar"
@@ -64,7 +65,12 @@ type Gateway struct {
 	// to construct — POST /v1/skills/wasm answers 404 instead.
 	Wasm *wasmrt.Runtime
 	MCP  http.HandlerFunc // standard projection: skills as MCP tools
-	Log  *slog.Logger
+	// Approvals is the queue of human-approval gates raised by a client that
+	// is not a human — the MCP server above being the one that forced it to
+	// exist. Nil is accepted: the approval routes then answer 404 and a gate
+	// reaching a programmatic client resolves the old way, as a denial.
+	Approvals *approvals.Registry
+	Log       *slog.Logger
 	// Auth guards the control surface: bearer token plus the WebSocket origin
 	// allowlist. Nil means an unauthenticated node, which only --no-auth
 	// produces and which prints a warning at startup.
@@ -118,6 +124,8 @@ func (g *Gateway) Handler() http.Handler {
 		mux.HandleFunc("GET /mcp", g.MCP) // handler answers 405 (no SSE stream)
 	}
 	mux.HandleFunc("GET /healthz", g.health)
+	mux.HandleFunc("GET /v1/approvals", g.listApprovals)
+	mux.HandleFunc("POST /v1/approvals/{id}", g.resolveApproval)
 	mux.HandleFunc("GET /v1/skills", g.listSkills)
 	mux.HandleFunc("GET /v1/skills/config", g.getSkillConfig)
 	mux.HandleFunc("PUT /v1/skills/config", g.putSkillConfig)
@@ -608,18 +616,54 @@ func (g *Gateway) skillWS(w http.ResponseWriter, r *http.Request) {
 	writer := newWSWriter(conn)
 	defer writer.Close()
 	defer keepAlive(conn, writer)()
+	g.ServeSkill(&wsWire{conn: conn, writer: writer})
+}
 
+// wire is a transport as the session loops need it: whole envelopes in, whole
+// envelopes out, tagged with the QoS the edge declared.
+//
+// It exists so that WebSocket and WebTransport share one registration
+// handshake, one admission path and one emission loop rather than two that
+// drift. The differences between the transports are real but they are all
+// below this line — framing, keepalive, and which QUIC primitive a QoS class
+// maps to (see internal/wtsrv).
+type wire interface {
+	Recv() ([]byte, error)
+	Send(raw []byte, qos string) error
+}
+
+// wsWire adapts a gorilla connection, keeping the read deadline the ping/pong
+// keepalive depends on.
+type wsWire struct {
+	conn   *websocket.Conn
+	writer *wsWriter
+}
+
+func (w *wsWire) Recv() ([]byte, error) {
+	_, raw, err := w.conn.ReadMessage()
+	if err != nil {
+		return nil, err
+	}
+	_ = w.conn.SetReadDeadline(time.Now().Add(pongWait))
+	return raw, nil
+}
+
+func (w *wsWire) Send(raw []byte, qos string) error { return w.writer.Send(raw, qos) }
+
+// ServeSkill runs the skill side of a connection to completion, whatever
+// carried it. Exported so the WebTransport listener can reach it.
+func (g *Gateway) ServeSkill(conn wire) {
 	connID := channel.NewID()
 	fail := func(cause, msg string) {
 		payload, _ := json.Marshal(map[string]string{"state": "error", "detail": msg})
 		env := channel.Envelope{V: channel.ProtocolMajor, ID: channel.NewID(),
 			CauseID: cause, Kind: channel.KindError, Payload: payload}
 		raw, _ := json.Marshal(env)
-		_ = writer.Send(raw, channel.QoSReliable)
+		_ = conn.Send(raw, channel.QoSReliable)
 	}
 
 	// Registration handshake.
-	_, first, err := conn.ReadMessage()
+	first, err := conn.Recv()
 	if err != nil {
 		return
 	}
@@ -651,7 +695,7 @@ func (g *Gateway) skillWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer g.Adm.Release(connID)
 
-	live := &registry.Live{Manifest: manifest, Connected: time.Now(), Send: writer.Send}
+	live := &registry.Live{Manifest: manifest, Connected: time.Now(), Send: conn.Send}
 	g.Reg.Register(connID, live)
 	defer g.Reg.Unregister(connID)
 	if err := g.St.UpsertSkill(manifest.ID, manifest.Version, manifest); err != nil {
@@ -680,16 +724,15 @@ func (g *Gateway) skillWS(w http.ResponseWriter, r *http.Request) {
 	ackEnv := channel.Envelope{V: channel.ProtocolMajor, ID: channel.NewID(),
 		CauseID: regEnv.ID, Kind: channel.KindStatus, Payload: ack}
 	rawAck, _ := json.Marshal(ackEnv)
-	_ = writer.Send(rawAck, channel.QoSReliable)
+	_ = conn.Send(rawAck, channel.QoSReliable)
 
 	// Emission loop: everything the skill emits is dispatched to its session.
 	for {
-		_, raw, err := conn.ReadMessage()
+		raw, err := conn.Recv()
 		if err != nil {
 			g.Log.Info("skill disconnected", "skill", manifest.ID, "err", err)
 			return
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		var env channel.Envelope
 		if err := json.Unmarshal(raw, &env); err != nil {
 			fail("", "invalid envelope: "+err.Error())

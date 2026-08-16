@@ -338,7 +338,7 @@ func (s *Session) rootOf(env channel.Envelope) string {
 // and forwards a new causally-linked envelope per matching edge (C3).
 func (s *Session) Route(env channel.Envelope) {
 	raw, _ := json.Marshal(env)
-	if err := s.st.AppendEvent(s.ID, env.ID, env.CauseID, raw); err != nil {
+	if err := s.st.AppendEvent(s.ID, env.ID, env.CauseID, env.Kind, raw); err != nil {
 		s.log.Error("event log append failed", "err", err)
 	}
 	if env.Kind == channel.KindCancel {
@@ -461,7 +461,7 @@ func (s *Session) abandonSpeculation(envelopeID string, d dest) {
 		Payload: payload,
 	}
 	raw, _ := json.Marshal(cancel)
-	_ = s.st.AppendEvent(s.ID, cancel.ID, cancel.CauseID, raw)
+	_ = s.st.AppendEvent(s.ID, cancel.ID, cancel.CauseID, cancel.Kind, raw)
 	if err := d.skill.Send(raw, channel.QoSReliable); err != nil {
 		s.log.Debug("could not ask a skill to abandon speculative work",
 			"session", s.ID, "to", d.ref+"."+d.port, "err", err)
@@ -581,7 +581,7 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 	}
 
 	raw, _ := json.Marshal(out)
-	if err := s.st.AppendEvent(s.ID, out.ID, out.CauseID, s.loggable(out, raw, d.qos)); err != nil {
+	if err := s.st.AppendEvent(s.ID, out.ID, out.CauseID, out.Kind, s.loggable(out, raw, d.qos)); err != nil {
 		s.log.Error("event log append failed", "err", err)
 	}
 
@@ -659,7 +659,7 @@ func (s *Session) holdForApproval(env channel.Envelope, d dest) {
 		Schema: "std/confirmation@1", Payload: payload,
 	}
 	raw, _ := json.Marshal(req)
-	_ = s.st.AppendEvent(s.ID, req.ID, req.CauseID, raw)
+	_ = s.st.AppendEvent(s.ID, req.ID, req.CauseID, req.Kind, raw)
 	if err := s.sendClient(raw, channel.QoSReliable); err != nil {
 		s.log.Error("confirm_request delivery failed", "err", err)
 	}
@@ -680,7 +680,7 @@ func (s *Session) resolveGate(resp channel.Envelope) {
 	}
 	_ = json.Unmarshal(resp.Payload, &body)
 	raw, _ := json.Marshal(resp)
-	_ = s.st.AppendEvent(s.ID, resp.ID, resp.CauseID, raw)
+	_ = s.st.AppendEvent(s.ID, resp.ID, resp.CauseID, resp.Kind, raw)
 	if body.Approve {
 		s.forward(held.env, held.to)
 	} else {
@@ -826,7 +826,7 @@ func (s *Session) emitError(causeID, msg string) {
 		Kind: channel.KindError, Schema: "std/status@1", Payload: payload,
 	}
 	raw, _ := json.Marshal(env)
-	_ = s.st.AppendEvent(s.ID, env.ID, env.CauseID, raw)
+	_ = s.st.AppendEvent(s.ID, env.ID, env.CauseID, env.Kind, raw)
 	if err := s.sendClient(raw, channel.QoSReliable); err != nil {
 		s.log.Error("error delivery failed", "err", err)
 	}

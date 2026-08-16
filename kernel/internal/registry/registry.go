@@ -245,6 +245,13 @@ func (m *Manifest) IngressSchema(port string) (string, bool) {
 type Live struct {
 	Manifest  Manifest
 	Connected time.Time
+	// conn is the connection id this instance registered under. It is the
+	// tiebreaker that makes candidate ordering total: Go iterates maps in
+	// random order, so sorting replicas by Connected alone left equal
+	// timestamps in an arbitrary order that changed call to call — which made
+	// round-robin land unevenly and made "the newest wins" mean nothing when
+	// two connections arrived in the same instant.
+	conn string
 	// Send writes to the skill's transport, serialized. The qos argument is
 	// the declared class of the edge the message travels on (C3 rule 4): it
 	// decides whether a slow receiver blocks the producer or loses frames.
@@ -255,6 +262,12 @@ type Live struct {
 type Registry struct {
 	mu     sync.RWMutex
 	byConn map[string]*Live // key: connection id
+	// rr rotates which instance of a capability answers the next session, so
+	// running N copies of a skill actually serves N times the sessions. Its own
+	// lock because it is written on a path that otherwise only needs a read
+	// lock, and a write lock there would serialize every resolution.
+	rrMu sync.Mutex
+	rr   map[string]uint64
 }
 
 func New() *Registry {
@@ -264,6 +277,7 @@ func New() *Registry {
 func (r *Registry) Register(connID string, live *Live) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	live.conn = connID
 	r.byConn[connID] = live
 }
 
@@ -295,9 +309,72 @@ func (r *Registry) Resolve(use, capability string) (*Live, error) {
 		return nil, fmt.Errorf("no connected skill provides capability %q", capability)
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].Connected.After(candidates[j].Connected)
+		if !candidates[i].Connected.Equal(candidates[j].Connected) {
+			return candidates[i].Connected.After(candidates[j].Connected)
+		}
+		return candidates[i].conn < candidates[j].conn
 	})
-	return candidates[0], nil
+	return r.pick(capability, candidates), nil
+}
+
+// pick spreads sessions across interchangeable replicas of a skill.
+//
+// Two different questions hide behind "which candidate answers", and conflating
+// them is what made this a scaling ceiling:
+//
+//  1. Several connections of the *same package* — ten copies of
+//     example/cognitive/llm-chat. These are replicas by definition. Sending
+//     everything to one of them left the other nine idle, so running more
+//     instances bought nothing: one capability was one connection, and one
+//     connection is one serialized writer. Here the answer is round-robin.
+//
+//  2. Several *different packages* claiming the same capability — acme/a and
+//     acme/b both offering logical.dup. These are not interchangeable; they are
+//     an ambiguity the operator has not resolved. Rotating between them would
+//     make one graph behave differently run to run, which is the determinism
+//     the original resolution rule was protecting. Here the answer stays what
+//     it was: the newest connection wins, every time.
+//
+// So: pick the newest package, then rotate within its replicas. Both properties
+// hold at once.
+//
+// Round-robin rather than random or least-loaded, and it matters that
+// resolution happens once per session at wiring time rather than per envelope:
+// a session that lands on a replica stays there for its whole life, so stateful
+// skills — llm-chat's per-session history, a memory skill — keep the affinity
+// they depend on. Spreading *sessions* is what scales. Spreading individual
+// envelopes would scale nothing and break the skills that remember.
+//
+// Least-loaded would handle uneven session lifetimes better and needs a load
+// signal from each skill, which is a protocol change. Round-robin already turns
+// a hard ceiling into a linear one.
+func (r *Registry) pick(capability string, candidates []*Live) *Live {
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	// candidates arrive newest-first; keep only the replicas of that package.
+	winner := candidates[0].Manifest.ID
+	replicas := candidates[:0:0]
+	for _, c := range candidates {
+		if c.Manifest.ID == winner {
+			replicas = append(replicas, c)
+		}
+	}
+	if len(replicas) == 1 {
+		return replicas[0]
+	}
+	key := capability
+	if key == "" {
+		key = winner
+	}
+	r.rrMu.Lock()
+	if r.rr == nil {
+		r.rr = map[string]uint64{}
+	}
+	n := r.rr[key]
+	r.rr[key] = n + 1
+	r.rrMu.Unlock()
+	return replicas[int(n%uint64(len(replicas)))]
 }
 
 // ResolvePreferred is Resolve with the node's routing preferences applied
@@ -349,9 +426,12 @@ func (r *Registry) ResolvePreferred(use, capability string, prefer []string, avo
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].Connected.After(candidates[j].Connected)
+		if !candidates[i].Connected.Equal(candidates[j].Connected) {
+			return candidates[i].Connected.After(candidates[j].Connected)
+		}
+		return candidates[i].conn < candidates[j].conn
 	})
-	return candidates[0], nil
+	return r.pick(capability, candidates), nil
 }
 
 // SendToID pushes raw to every live connection of skill id (usually zero

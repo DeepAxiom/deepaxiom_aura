@@ -10,7 +10,7 @@ proven afterward?** That is C4.
 Two documents make up this contract: the **policy** a node loads at startup
 (`aura.policy.yaml` — see [`c1-manifest.md`](c1-manifest.md) for `compensates`,
 the C1 field this contract reads), and the **ledger** the node writes to as it
-runs. Read [security-model in the README](../README.md#security-model) for
+runs. Read [security-model in the guide](../GUIDE.md#security-model) for
 the policy's operator-facing shape; this document specifies the ledger entry
 and the guarantees a conforming implementation MUST provide.
 

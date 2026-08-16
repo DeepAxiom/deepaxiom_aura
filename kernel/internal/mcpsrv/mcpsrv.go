@@ -10,16 +10,19 @@ package mcpsrv
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 
+	"aura/kernel/internal/approvals"
 	"aura/kernel/internal/channel"
 )
 
@@ -32,7 +35,57 @@ type Server struct {
 	// server holds no kernel privileges — it is a client of the public API
 	// like any other — so once the node requires a token, it needs one too.
 	Token string
-	Log   *slog.Logger
+	// Approvals is where a human-approval gate goes to find a human. An MCP
+	// client is a program: when the executor gates a `motor.*` call there is
+	// nobody on this socket to ask, so the question is parked in the node's
+	// approval queue and answered from the UI, `aura approve`, or
+	// POST /v1/approvals/{id}.
+	//
+	// Nil keeps the original behaviour — an automatic denial with an
+	// explanation — which is the right fallback: a node with no way to ask
+	// must not proceed as though someone said yes.
+	Approvals *approvals.Registry
+	Log       *slog.Logger
+}
+
+// awaitApproval parks a gate for a human and blocks until it is answered.
+//
+// Returns the decision and, when it is a refusal, the sentence the model
+// should see. The two denial reasons are kept distinct on purpose: "a person
+// declined this" and "there was nobody to ask" call for different responses
+// from whoever reads the transcript afterwards.
+func (s *Server) awaitApproval(req channel.Envelope, tool string, arguments map[string]any) (bool, string) {
+	if s.Approvals == nil {
+		return false, "this action needs human approval and this node has no approval queue — " +
+			"run it from the aura UI, or `aura do`"
+	}
+	var body struct {
+		Question string `json:"question"`
+	}
+	_ = json.Unmarshal(req.Payload, &body)
+	if body.Question == "" {
+		body.Question = "Approve this call?"
+	}
+	args, _ := json.Marshal(arguments)
+
+	id, decision, release := s.Approvals.Open(approvals.Pending{
+		Question:  body.Question,
+		Origin:    "mcp",
+		Tool:      tool,
+		Session:   req.Session,
+		Arguments: args,
+	})
+	defer release()
+
+	if s.Log != nil {
+		s.Log.Info("mcp: waiting for human approval", "id", id, "tool", tool)
+	}
+	if approved := <-decision; approved {
+		return true, ""
+	}
+	return false, fmt.Sprintf(
+		"denied: a human declined this call, or it went unanswered (approval %s). "+
+			"Pending approvals are listed at GET /v1/approvals.", id)
 }
 
 // authorize attaches the node token. Header form rather than query form: this
@@ -92,6 +145,11 @@ type rpcError struct {
 func (s *Server) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
+			// GET opens a stream for *server-initiated* messages, which this
+			// server has none of: every message it sends answers something the
+			// client asked. Streamable HTTP permits 405 for exactly that case.
+			// Tool output still streams — over the POST that requested it, just
+			// below.
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
@@ -110,9 +168,99 @@ func (s *Server) Handler() http.HandlerFunc {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
+		// A tools/call from a client that accepts an event stream is answered
+		// as one, so a skill's tokens reach the agent as they are produced.
+		//
+		// This is not a small detail for this runtime in particular: the whole
+		// argument of the kernel is that the connection is the unit of work and
+		// output streams rather than batching. Serving its own tools over
+		// request/response made the border contradict the thesis behind it.
+		if req.Method == "tools/call" && acceptsSSE(r) {
+			s.streamCall(w, r, req)
+			return
+		}
 		result, rpcErr := s.dispatch(req)
 		s.reply(w, req.ID, result, rpcErr)
 	}
+}
+
+func acceptsSSE(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+}
+
+// streamCall answers one tools/call over SSE.
+//
+// Intermediate text is reported as `notifications/progress`, which is MCP's
+// standard channel for "still working, here is some of it" — and only when the
+// client supplied a progressToken, because a notification quoting a token the
+// client never issued is one it is entitled to discard. The final JSON-RPC
+// response closes the stream either way, so a client that asked for SSE without
+// a token still gets a correct, if unstreamed, answer.
+func (s *Server) streamCall(w http.ResponseWriter, r *http.Request, req rpcRequest) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		result, rpcErr := s.dispatch(req)
+		s.reply(w, req.ID, result, rpcErr)
+		return
+	}
+	var params struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+		Meta      struct {
+			ProgressToken json.RawMessage `json:"progressToken"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.reply(w, req.ID, nil, &rpcError{-32602, "invalid params"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// One writer, one goroutine: chunks arrive from the skill socket's reader
+	// and the final result from this one, and interleaved writes would corrupt
+	// the framing.
+	var mu sync.Mutex
+	event := func(v any) {
+		mu.Lock()
+		defer mu.Unlock()
+		b, err := json.Marshal(v)
+		if err != nil {
+			return
+		}
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	var progress float64
+	emit := func(chunk string) {
+		if len(params.Meta.ProgressToken) == 0 || chunk == "" {
+			return
+		}
+		progress++
+		event(map[string]any{
+			"jsonrpc": "2.0", "method": "notifications/progress",
+			"params": map[string]any{
+				"progressToken": params.Meta.ProgressToken,
+				"progress":      progress,
+				"message":       chunk,
+			},
+		})
+	}
+
+	// The request context ends the wait if the agent hangs up mid-call.
+	result, rpcErr := s.callToolStreaming(r.Context(), params.Name, params.Arguments, emit)
+	resp := map[string]any{"jsonrpc": "2.0", "id": req.ID}
+	if rpcErr != nil {
+		resp["error"] = rpcErr
+	} else {
+		resp["result"] = result
+	}
+	event(resp)
 }
 
 func (s *Server) reply(w http.ResponseWriter, id json.RawMessage, result any, e *rpcError) {
@@ -241,7 +389,20 @@ func (s *Server) listTools() ([]map[string]any, error) {
 
 // ── tools/call: run the skill through the standard client path ───
 
+// callTool is the buffered form: everything the skill produced, once it is
+// done. Used for a client that did not ask for a stream.
 func (s *Server) callTool(name string, arguments map[string]any) (any, *rpcError) {
+	return s.callToolStreaming(context.Background(), name, arguments, nil)
+}
+
+// callToolStreaming runs the skill through the standard client path, reporting
+// each text chunk to emit as it arrives. emit may be nil.
+func (s *Server) callToolStreaming(ctx context.Context, name string, arguments map[string]any,
+	emit func(string)) (any, *rpcError) {
+
+	if emit == nil {
+		emit = func(string) {}
+	}
 	skills, err := s.skills()
 	if err != nil {
 		return nil, &rpcError{-32603, err.Error()}
@@ -286,11 +447,25 @@ func (s *Server) callTool(name string, arguments map[string]any) (any, *rpcError
 	wsURL := strings.Replace(s.BaseURL, "http", "ws", 1) + "/v1/stream?graph=" + graphID
 	wsHeader := http.Header{}
 	s.authorize(wsHeader)
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, wsHeader)
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, wsHeader)
 	if err != nil {
 		return nil, &rpcError{-32603, err.Error()}
 	}
 	defer conn.Close()
+
+	// An agent that hangs up mid-call should not leave this session reading
+	// until its deadline: ReadJSON has no context form, so cancellation closes
+	// the socket underneath it. The kernel then suppresses the abandoned chain
+	// on its own — that guarantee is the executor's, not this projection's.
+	ctxDone := make(chan struct{})
+	defer close(ctxDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-ctxDone:
+		}
+	}()
 	deadline := time.Now().Add(120 * time.Second)
 	_ = conn.SetReadDeadline(deadline)
 
@@ -336,6 +511,7 @@ func (s *Server) callTool(name string, arguments map[string]any) (any, *rpcError
 			_ = json.Unmarshal(reply.Payload, &body)
 			if body.Text != nil {
 				text.WriteString(*body.Text)
+				emit(*body.Text)
 				if body.Final {
 					return toolText(text.String()), nil
 				}
@@ -351,13 +527,22 @@ func (s *Server) callTool(name string, arguments map[string]any) (any, *rpcError
 			_ = json.Unmarshal(reply.Payload, &body)
 			return toolError(body.Detail), nil
 		case channel.KindConfirmRequest:
-			// Human gates cannot be answered over MCP: deny and explain.
-			deny, _ := json.Marshal(map[string]bool{"approve": false})
-			_ = conn.WriteJSON(channel.Envelope{
+			approved, why := s.awaitApproval(reply, name, arguments)
+			decision, _ := json.Marshal(map[string]bool{"approve": approved})
+			if err := conn.WriteJSON(channel.Envelope{
 				V: channel.ProtocolMajor, ID: channel.NewID(), CauseID: reply.ID,
-				Kind: channel.KindConfirmResponse, Payload: deny,
-			})
-			return toolError("this action requires human approval — run it from the aura UI or `aura do`"), nil
+				Kind: channel.KindConfirmResponse, Payload: decision,
+			}); err != nil {
+				return nil, &rpcError{-32603, err.Error()}
+			}
+			if !approved {
+				return toolError(why), nil
+			}
+			// Approval can take as long as a person takes. The read budget is
+			// restarted from *now* so the wait is not charged against the time
+			// the tool itself gets to answer.
+			deadline = time.Now().Add(120 * time.Second)
+			_ = conn.SetReadDeadline(deadline)
 		}
 	}
 done:

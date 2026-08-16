@@ -1,4 +1,4 @@
-id: "deepaxiom/sensorial/postgres-cdc"
+id: "example/sensorial/postgres-cdc"
 version: "1.0.0"
 protocol: "1"
 

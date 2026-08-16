@@ -84,13 +84,6 @@ func (c *contextLedger) charge(payloadBytes int) (consumed int, over bool) {
 	return c.consumed, c.consumed > c.budget
 }
 
-// Consumed reports the running estimate.
-func (c *contextLedger) Consumed() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.consumed
-}
-
 // chargeContext accounts one delivery against the graph's context budget.
 //
 // Only `data` envelopes count: a status or a done carries no context into a
@@ -109,14 +102,6 @@ func (s *Session) chargeContext(out channel.Envelope) error {
 			"has accumulated roughly %d tokens. Raise the budget, or wire a "+
 			"logical.context.compress skill ahead of this edge",
 		s.ctxLedger.budget, consumed)
-}
-
-// ContextConsumed is the session's running estimate, for /healthz and the UI.
-func (s *Session) ContextConsumed() int {
-	if s.ctxLedger == nil {
-		return 0
-	}
-	return s.ctxLedger.Consumed()
 }
 
 // dropExpired reports whether a delivery has missed its deadline, and records
@@ -149,6 +134,6 @@ func (s *Session) dropExpired(out channel.Envelope, d dest) bool {
 	dropped := out
 	dropped.Payload = payload
 	raw, _ := json.Marshal(dropped)
-	_ = s.st.AppendEvent(s.ID, dropped.ID, dropped.CauseID, raw)
+	_ = s.st.AppendEvent(s.ID, dropped.ID, dropped.CauseID, dropped.Kind, raw)
 	return true
 }

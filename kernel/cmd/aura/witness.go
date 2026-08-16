@@ -221,7 +221,7 @@ func requestCountersignature(c *witnessClient, remote string, stmt ledger.Statem
 // them would be trading a real guarantee for a denial-of-service.
 //
 // Tracked as future work rather than presented as done. See
-// [Security model](../../../README.md#external-anchoring).
+// [Security model](../../../GUIDE.md#external-anchoring).
 
 func shortRoot(root string) string {
 	if len(root) > 22 {

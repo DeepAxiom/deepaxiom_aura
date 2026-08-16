@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "aura:std:db-change@1",
   "title": "std/db-change@1",
-  "description": "One row change from a database change-data-capture skill (e.g. deepaxiom/sensorial/postgres-cdc) — one envelope per row change, not per transaction.",
+  "description": "One row change from a database change-data-capture skill (e.g. example/sensorial/postgres-cdc) — one envelope per row change, not per transaction.",
   "type": "object",
   "required": [
     "table",

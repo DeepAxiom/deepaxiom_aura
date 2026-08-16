@@ -3,8 +3,12 @@ package executor
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/registry"
@@ -208,5 +212,61 @@ func TestConcurrentStartAndEndIsSafe(t *testing.T) {
 
 	if live := m.LiveSessions(); live != 0 {
 		t.Errorf("%d sessions survived; every one was ended", live)
+	}
+}
+
+// A panic in one session must not take the node with it. This is the fault
+// isolation the BEAM gives for free and the main reason someone would argue for
+// putting this tier on another runtime; here it is a recover at one choke point.
+func TestPanicInOneSessionDoesNotKillTheNode(t *testing.T) {
+	reg := registry.New()
+	st := testStore(t)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	m := NewManager(reg, st, "local", DefaultPolicy(), nil, log)
+
+	// A skill whose Send panics: the closest stand-in for a bug reached only by
+	// a particular payload.
+	man := registry.Manifest{
+		ID: "example/logical/boom", Version: "1.0.0", Protocol: "1",
+		Name: "boom", Description: "panics on delivery",
+		Capability: "logical.boom", Type: "logical", Format: "source",
+	}
+	man.Ports.Ingress = []registry.Port{{Name: "text_in", Schema: "std/text@1"}}
+	man.Ports.Egress = []registry.Port{{Name: "text_out", Schema: "std/text@1"}}
+	reg.Register("boom-conn", &registry.Live{
+		Manifest: man, Connected: time.Now(),
+		Send: func([]byte, string) error { panic("skill blew up") },
+	})
+
+	ir := []byte(`{"ir":"1","graph_id":"boomg","origin":{"kind":"declared"},
+		"nodes":[{"ref":"b","resolve":"logical.boom"}],
+		"edges":[{"from":"client.text_out","to":"b.text_in"}]}`)
+	if err := st.SaveGraph("boomg", ir); err != nil {
+		t.Fatalf("save graph: %v", err)
+	}
+	sess, err := m.Start("s-boom", "boomg", "", func([]byte, string) error { return nil })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	_ = sess
+
+	err = m.Dispatch(channel.Envelope{
+		V: channel.ProtocolMajor, ID: channel.NewID(), Session: "s-boom",
+		Node: "client", Port: "text_out", Seq: 1, Idem: "boom-1",
+		Schema: "std/text@1", Kind: channel.KindData, Payload: []byte(`{"text":"hi"}`),
+	})
+	if err == nil {
+		t.Fatal("a panicking delivery must be reported as an error, not swallowed")
+	}
+	if !strings.Contains(err.Error(), "internal error") {
+		t.Errorf("unhelpful error: %v", err)
+	}
+
+	// The node is still usable: another session starts and routes fine.
+	if _, err := m.Start("s-after", "boomg", "", func([]byte, string) error { return nil }); err != nil {
+		t.Fatalf("the node did not survive the panic: %v", err)
+	}
+	if n := m.LiveSessions(); n != 2 {
+		t.Errorf("live sessions = %d, want 2", n)
 	}
 }

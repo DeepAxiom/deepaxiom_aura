@@ -123,16 +123,16 @@ func TestEventLogPreservesOrderAndTimestamps(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 
-	for _, e := range []struct{ id, cause, body string }{
-		{"m1", "", `{"kind":"data","n":1}`},
-		{"m2", "m1", `{"kind":"data","n":2}`},
-		{"m3", "m2", `{"kind":"error","n":3}`},
+	for _, e := range []struct{ id, cause, kind, body string }{
+		{"m1", "", "data", `{"kind":"data","n":1}`},
+		{"m2", "m1", "data", `{"kind":"data","n":2}`},
+		{"m3", "m2", "error", `{"kind":"error","n":3}`},
 	} {
-		if err := st.AppendEvent("s1", e.id, e.cause, []byte(e.body)); err != nil {
+		if err := st.AppendEvent("s1", e.id, e.cause, e.kind, []byte(e.body)); err != nil {
 			t.Fatalf("AppendEvent: %v", err)
 		}
 	}
-	if err := st.AppendEvent("other", "x1", "", []byte(`{"kind":"data"}`)); err != nil {
+	if err := st.AppendEvent("other", "x1", "", "data", []byte(`{"kind":"data"}`)); err != nil {
 		t.Fatalf("AppendEvent: %v", err)
 	}
 
@@ -169,9 +169,9 @@ func TestListSessionsCountsEventsAndErrors(t *testing.T) {
 	if err := st.StartSession("s1", "chat"); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	_ = st.AppendEvent("s1", "m1", "", []byte(`{"kind":"data"}`))
-	_ = st.AppendEvent("s1", "m2", "m1", []byte(`{"kind":"error"}`))
-	_ = st.AppendEvent("s1", "m3", "m2", []byte(`{"kind":"error"}`))
+	_ = st.AppendEvent("s1", "m1", "", "data", []byte(`{"kind":"data"}`))
+	_ = st.AppendEvent("s1", "m2", "m1", "error", []byte(`{"kind":"error"}`))
+	_ = st.AppendEvent("s1", "m3", "m2", "error", []byte(`{"kind":"error"}`))
 
 	list, err := st.ListSessions(10)
 	if err != nil {

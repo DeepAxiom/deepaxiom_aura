@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 
 	"aura/kernel/internal/channel"
@@ -123,6 +124,38 @@ func (m *Manager) Dispatch(env channel.Envelope) error {
 	if !ok {
 		return fmt.Errorf("unknown session %q", env.Session)
 	}
+	return m.route(sess, env)
+}
+
+// route runs one session's routing with a blast radius of one session.
+//
+// Before this, a panic anywhere in routing — a malformed payload hitting an
+// unchecked type assertion, a nil map in a skill's reply, a bug in a code path
+// nobody exercised — unwound to the top of the goroutine and took the whole
+// node with it. Every other session, every open connection and the ledger's
+// in-memory chain state all died with it, because of one bad envelope on one
+// connection.
+//
+// That is the property the BEAM gives away for free and it is the one real
+// argument for putting this tier on another runtime. It is also, at this scale,
+// twenty lines: routing is synchronous end to end (Session.Route spawns
+// nothing), so a single recover here contains everything a session does.
+//
+// Deliberately narrow. Recovering does *not* pretend the work succeeded: the
+// panic is logged with its session and stack and returned as an error, so the
+// caller fails that delivery the same way it would fail any other. Nothing is
+// silently swallowed — the difference is only that the other thousand sessions
+// keep running.
+func (m *Manager) route(sess *Session, env channel.Envelope) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.log.Error("panic while routing; this session failed, the node did not",
+				"session", env.Session, "envelope", env.ID, "kind", env.Kind,
+				"panic", r, "stack", string(debug.Stack()))
+			err = fmt.Errorf("internal error routing envelope %s in session %s",
+				env.ID, env.Session)
+		}
+	}()
 	sess.Route(env)
 	return nil
 }

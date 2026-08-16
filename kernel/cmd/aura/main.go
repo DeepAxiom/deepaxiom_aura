@@ -12,11 +12,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"aura/kernel/internal/approvals"
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/config"
 	"aura/kernel/internal/executor"
@@ -30,6 +32,7 @@ import (
 	"aura/kernel/internal/spec"
 	"aura/kernel/internal/store"
 	"aura/kernel/internal/wasmrt"
+	"aura/kernel/internal/wtsrv"
 )
 
 // version comes from spec/VERSION via the generated spec package. It used to
@@ -88,6 +91,12 @@ func main() {
 		cmdBundle(os.Args[2:])
 	case "undo":
 		cmdUndo(os.Args[2:])
+	case "guard":
+		cmdGuard(os.Args[2:])
+	case "approve":
+		cmdApprove(os.Args[2:])
+	case "approvals":
+		cmdApprovals(os.Args[2:])
 	case "version":
 		fmt.Printf("aura %s (channel protocol %s, graph ir %s)\n",
 			version, channel.ProtocolMajor, executor.IRMajor)
@@ -125,6 +134,9 @@ Usage:
   aura bundle <session> [--out <f>] | --verify <f>
   aura bom [session] [--out <f>]
   aura undo <session|receipt> [--yes] [--port 9080]
+  aura guard --config <mcp-servers.json> [--dry-run] [--trust-annotations]
+  aura approvals [--json] [--port 9080]
+  aura approve <id> [--deny] [--port 9080]
   aura version`)
 }
 
@@ -183,6 +195,7 @@ func cmdUp(args []string) {
 	policyPath := fs.String("policy", "", "authorization policy file (default: built-in permissive policy)")
 	maxSessions := fs.Int("max-sessions", 1000, "cap on concurrent live sessions (0 = unlimited)")
 	noAuth := fs.Bool("no-auth", false, "disable the bearer token (single-user loopback nodes only)")
+	pprofAddr := fs.String("pprof", "", "expose Go profiling on this address (e.g. 127.0.0.1:6060); off by default")
 	openWitness := fs.Bool("open-witness", false,
 		"let any node anchor its ledger here without a token (rate- and capacity-bounded)")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS/WSS)")
@@ -276,12 +289,17 @@ func cmdUp(args []string) {
 		fmt.Sprintf("%s://localhost:%d/ws/skill", wsScheme, *port), log)
 	proj.Token = token
 	adm := gateway.NewAdmission(budgetBytes)
+	// One approval queue, shared: the MCP server parks gates in it and the
+	// /v1/approvals routes answer them. Without a shared instance a gate raised
+	// over MCP would be invisible to the surface meant to resolve it.
+	appr := approvals.New()
 	mcp := &mcpsrv.Server{
 		BaseURL: fmt.Sprintf("%s://localhost:%d", scheme, *port),
-		Version: version, Token: token, Log: log,
+		Version: version, Token: token, Log: log, Approvals: appr,
 	}
 	gw := &gateway.Gateway{Node: node, Reg: reg, St: st, Mgr: mgr, Proj: proj,
 		Adm: adm, Ldg: ldg, Wasm: wasmRT, MCP: mcp.Handler(), Log: log, Auth: auth,
+		Approvals: appr,
 		// Every node with an identity can witness for others (C4 v1.2). It
 		// costs nothing when unused and means a two-node deployment already
 		// has somewhere to anchor, rather than needing a service nobody has
@@ -291,6 +309,59 @@ func cmdUp(args []string) {
 		// that generates cannot emit a shape the port would reject.
 		Grammars:   grammar.NewRegistry(),
 		ConfigFile: configFile.Skills}
+
+	// WebTransport, beside the TCP listener rather than instead of it.
+	//
+	// Same port number, different protocol: QUIC is UDP, so the two do not
+	// collide. A peer that can reach UDP gets the three QoS classes as three
+	// real transport primitives — realtime as datagrams that cannot be stalled
+	// by a lost packet, bulk on a stream nobody is waiting on. A peer that
+	// cannot (corporate networks block UDP often enough that this has to be
+	// assumed) keeps the WebSocket path, unchanged.
+	//
+	// A failure here is logged and survived: losing the faster transport is a
+	// degradation, and taking the node down over it would turn a degradation
+	// into an outage.
+	wt := &wtsrv.Server{
+		Addr:    addr,
+		DataDir: *data,
+		Log:     log,
+		Routes: map[string]wtsrv.Handler{
+			"/ws/skill": func(_ context.Context, s *wtsrv.Session, _ *http.Request) {
+				gw.ServeSkill(s)
+			},
+		},
+	}
+	if err := wt.Start(); err != nil {
+		log.Warn("webtransport unavailable; the WebSocket path is unaffected", "err", err)
+		wt = nil
+	} else {
+		defer wt.Close()
+	}
+
+	// Profiling, opt-in and on its own listener.
+	//
+	// Separate from the node port on purpose: net/http/pprof registers on
+	// DefaultServeMux and exposes heap, goroutine and CPU profiles with no
+	// authentication. Hanging that off the kernel's own mux would put an
+	// unauthenticated memory dump on the same port as the control plane.
+	if *pprofAddr != "" {
+		go func() {
+			log.Warn("pprof listener enabled — unauthenticated; bind it to loopback only",
+				"addr", *pprofAddr)
+			mux := http.NewServeMux()
+			mux.HandleFunc("/debug/pprof/", pprof.Index)
+			mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+			mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+			mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+			mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+			srv := &http.Server{Addr: *pprofAddr, Handler: mux,
+				ReadHeaderTimeout: 15 * time.Second}
+			if err := srv.ListenAndServe(); err != nil {
+				log.Error("pprof listener stopped", "err", err)
+			}
+		}()
+	}
 
 	seedDefaultGraphs(st, log)
 	// Projection hosts dial back into this same server; their retry loop
@@ -302,6 +373,7 @@ func cmdUp(args []string) {
 		scheme: scheme, wsScheme: wsScheme, data: *data,
 		budget: budgetBytes, policy: policy, ldg: ldg, token: token,
 		tokenCreated: tokenCreated, public: public, tls: *tlsCert != "",
+		quic: quicEndpoint(wt),
 	})
 
 	srv := &http.Server{
@@ -326,6 +398,7 @@ type bannerInfo struct {
 	port         int
 	scheme       string
 	wsScheme     string
+	quic         string
 	data         string
 	budget       int64
 	policy       *executor.Policy
@@ -349,12 +422,13 @@ func printBanner(b bannerInfo) {
   skills    %s://localhost:%d/ws/skill
   clients   %s://localhost:%d/v1/stream?graph=<graph_id>
   mcp       %s://localhost:%d/mcp   (skills as MCP tools)
+  quic      %s
   data      %s
   policy    %s
             %s
 `, b.version, b.node.ID, b.node.Mode, b.addr,
 		b.scheme, b.port, b.wsScheme, b.port, b.wsScheme, b.port, b.scheme, b.port,
-		b.data, b.policy.Source(), b.policy.Hash())
+		b.quic, b.data, b.policy.Source(), b.policy.Hash())
 
 	if b.ldg != nil {
 		if sum, err := b.ldg.Summarize(); err == nil {
@@ -505,4 +579,14 @@ func cmdStatus(args []string) {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
+}
+
+// quicEndpoint describes the WebTransport listener for the startup banner, or
+// says plainly that there is none. A node that silently lacks the faster
+// transport is one whose operator debugs the wrong thing later.
+func quicEndpoint(wt *wtsrv.Server) string {
+	if wt == nil {
+		return "unavailable (UDP blocked or in use) — WebSocket only"
+	}
+	return fmt.Sprintf("%s  (WebTransport: realtime→datagrams, bulk→own stream)", wt.LocalAddr())
 }

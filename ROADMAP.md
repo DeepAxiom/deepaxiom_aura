@@ -20,7 +20,7 @@
 Este documento es el **estado** del runtime y su dirección, no su historia: qué
 está construido, qué contradice hoy lo que el runtime promete, y en qué orden
 tiene que resolverse. Nada de lo de abajo se apoya en el historial de git — se
-apoya en el código, y el [estado de los hitos](README-ES.md#estado-de-los-hitos)
+apoya en el código, y el [estado de los hitos](GUIDE-ES.md#estado-de-los-hitos)
 del README dice qué parte de ese código está cubierta por tests y qué parte solo
 se verificó a mano.
 
@@ -937,7 +937,7 @@ Postgres CDC, and negotiated P2P transport for LAN/same-host are done; only
 `libaura` remains.* This document is the
 **state** of the runtime and its direction, not its history. None of it rests on
 the git history — it rests on the code, and the README's [milestone
-status](README.md#milestone-status) says which part of that code is covered by
+status](GUIDE.md#milestone-status) says which part of that code is covered by
 tests and which was only hand-verified.
 
 **This roadmap changes direction**, and the reason is worth reading before the

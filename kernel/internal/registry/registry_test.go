@@ -315,3 +315,51 @@ func TestCatalogIsSortedByID(t *testing.T) {
 		t.Fatalf("want the catalog sorted by id, got %+v", cat)
 	}
 }
+
+// Replicas of the same package must share the load, or running more instances
+// of a skill buys nothing: one capability would be one connection, and one
+// connection is one serialized writer.
+func TestResolveRoundRobinsAcrossReplicas(t *testing.T) {
+	r := New()
+	now := time.Now()
+	for _, c := range []string{"r1", "r2", "r3"} {
+		r.Register(c, live("acme/logical/rep", "logical.rep", now))
+	}
+	seen := map[*Live]int{}
+	for i := 0; i < 30; i++ {
+		got, err := r.Resolve("", "logical.rep")
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		seen[got]++
+	}
+	if len(seen) != 3 {
+		t.Fatalf("load reached %d of 3 replicas; the others were idle", len(seen))
+	}
+	for l, n := range seen {
+		if n != 10 {
+			t.Errorf("replica %p served %d of 30 sessions; want an even 10", l, n)
+		}
+	}
+}
+
+// Rotation must not leak across packages: a different implementation of the
+// same capability is an ambiguity, not a replica, and it stays deterministic.
+func TestReplicaRotationDoesNotBreakDeterminismAcrossPackages(t *testing.T) {
+	r := New()
+	old := time.Now().Add(-time.Hour)
+	now := time.Now()
+	r.Register("old", live("acme/logical/a", "logical.mix", old))
+	r.Register("new1", live("acme/logical/b", "logical.mix", now))
+	r.Register("new2", live("acme/logical/b", "logical.mix", now))
+
+	for i := 0; i < 20; i++ {
+		got, err := r.Resolve("", "logical.mix")
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if got.Manifest.ID != "acme/logical/b" {
+			t.Fatalf("the older package answered: %q", got.Manifest.ID)
+		}
+	}
+}

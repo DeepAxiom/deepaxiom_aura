@@ -262,6 +262,36 @@ jobs:
       - name: a default node refuses what it should
         run: ./scripts/adversarial.sh ./kernel/aura
 
+      # `aura guard` is a safety claim, so the claim gets exercised against a
+      # real binary and a real MCP server rather than only in unit tests: an
+      # unannotated tool must come back gated, and --trust-annotations must be
+      # the only thing that changes that.
+      - name: guard types an unannotated tool as gated
+        run: |
+          ./kernel/aura up --port 9121 --data /tmp/guard-ci --no-auth &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9121/healthz >/dev/null && break
+            sleep 0.25
+          done
+          cat > /tmp/guard-servers.json <<'JSON'
+          {"mcpServers": {"probe": {"command": "python3",
+            "args": ["scripts/ci_mcp_probe.py"]}}}
+          JSON
+          out=$(./kernel/aura guard --config /tmp/guard-servers.json \
+                  --port 9121 --dry-run 2>/dev/null)
+          echo "$out"
+          echo "$out" | grep -q "motor.mcp.probe.write_thing" \
+            || { echo "FAIL: an unannotated tool was not typed motor"; exit 1; }
+          echo "$out" | grep -q "motor.mcp.probe.read_thing" \
+            || { echo "FAIL: an untrusted readOnlyHint escaped the gate"; exit 1; }
+          trusted=$(./kernel/aura guard --config /tmp/guard-servers.json \
+                      --port 9121 --dry-run --trust-annotations 2>/dev/null)
+          echo "$trusted"
+          echo "$trusted" | grep -q "sensorial.mcp.probe.read_thing" \
+            || { echo "FAIL: --trust-annotations did not take effect"; exit 1; }
+          echo "$trusted" | grep -q "motor.mcp.probe.write_thing" \
+            || { echo "FAIL: a write was un-gated by --trust-annotations"; exit 1; }
+
   ssot:
     name: single source of truth
     runs-on: ubuntu-latest

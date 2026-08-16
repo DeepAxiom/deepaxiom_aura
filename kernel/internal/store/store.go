@@ -8,19 +8,90 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: no CGO, single-binary friendly
+
+	"aura/kernel/internal/seglog"
 )
 
 type Store struct {
 	db *sql.DB
+	// evlog carries the causal event log. It is an append-only segment file
+	// rather than a table because that is what the data is: written once per
+	// envelope, never updated, never deleted, read back as one session in
+	// order. Profiling put ~54% of a loaded node's CPU inside SQLite's file
+	// I/O; on the same workload at matched durability this sustained 1.5M
+	// events/sec against SQLite's 27k. See internal/seglog.
+	//
+	// The effect ledger deliberately stays in SQLite: a bug here loses replay
+	// history, a bug there loses evidence.
+	evlog *seglog.Log
+	// w batches the two writes that sit on the delivery path — the causal
+	// event log and the effect ledger — into shared transactions. See
+	// groupcommit.go for why this costs no durability and no ordering.
+	w *writer
 }
 
+// Open the embedded state. The pragma set is on the hot path, so it is worth
+// saying why each one is there.
+//
+// `journal_mode=WAL` lets a reader (a replay, `aura why`, the UI polling the
+// ledger) run while the executor keeps appending, which a rollback journal
+// would serialise.
+//
+// `synchronous=NORMAL` is the one that matters for latency. AppendEvent is one
+// INSERT per envelope — one implicit transaction — and it is called
+// *synchronously on the delivery path* (see executor.Session.deliver), so with
+// SQLite's default of FULL every streamed token pays an fsync before the next
+// hop runs. Measured on one developer machine that is ~2.8 ms per envelope, a
+// ceiling of ~356 envelopes/sec through the whole kernel; NORMAL puts it at
+// ~0.05 ms and ~21k/sec. In WAL mode NORMAL is still crash-safe for the thing
+// this log is for: a process that dies — panic, SIGKILL, a dropped session —
+// loses nothing, because the WAL is already written. What NORMAL gives up is
+// durability across a *power* loss, where the last transactions before the cut
+// may be missing. The log stays internally consistent either way; it is never
+// left torn or corrupt.
+//
+// That trade is deliberate and it is not free: the effect ledger's guarantee is
+// that entries cannot be *altered*, which the hash chain enforces regardless of
+// pragma — but an operator who needs the last effect before a power cut to have
+// survived it wants FULL, and can say so. Hence the override rather than a
+// hardcoded value.
+//
+// AURA_SQLITE_SYNCHRONOUS overrides it (FULL, NORMAL, OFF). OFF is faster still
+// on paper and is not worth it: batching the appends buys the same win without
+// risking a corrupt database.
 func Open(dataDir string) (*Store, error) {
-	dsn := filepath.Join(dataDir, "kernel.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	sync := os.Getenv("AURA_SQLITE_SYNCHRONOUS")
+	switch strings.ToUpper(sync) {
+	case "FULL", "NORMAL", "OFF", "EXTRA":
+		sync = strings.ToUpper(sync)
+	default:
+		sync = "NORMAL"
+	}
+	// wal_autocheckpoint is the other half of the fsync story, and profiling is
+	// what found it. With synchronous=NORMAL a commit does not fsync — but a WAL
+	// *checkpoint* does, and SQLite checkpoints every 1000 pages by default. On a
+	// node under load the WAL refills constantly, so the node was spending 38% of
+	// all CPU in FlushFileBuffers and another 25% in the reads and writes that
+	// copy the WAL back into the main database. Raising the threshold makes
+	// checkpoints rarer and larger.
+	//
+	// It costs disk, not durability: WAL content is written either way, and
+	// checkpointing only moves it into the main file. A bigger WAL means a longer
+	// recovery scan after an unclean shutdown, which is the actual trade.
+	checkpoint := os.Getenv("AURA_SQLITE_WAL_AUTOCHECKPOINT")
+	if _, err := strconv.Atoi(checkpoint); err != nil {
+		checkpoint = "20000"
+	}
+	dsn := filepath.Join(dataDir, "kernel.db") +
+		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(" + sync + ")" +
+		"&_pragma=wal_autocheckpoint(" + checkpoint + ")"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -30,10 +101,32 @@ func Open(dataDir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	s.w = newWriter(db)
+
+	// synchronous=FULL means the operator asked for durability across a power
+	// cut; the event log honours the same request rather than quietly keeping
+	// the weaker guarantee.
+	evlog, err := seglog.Open(dataDir, sync == "FULL" || sync == "EXTRA")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.evlog = evlog
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.w != nil {
+		s.w.Close()
+	}
+	if s.evlog != nil {
+		if err := s.evlog.Close(); err != nil {
+			s.db.Close()
+			return err
+		}
+	}
+	return s.db.Close()
+}
 
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
@@ -181,8 +274,15 @@ func isDuplicateColumn(err error) bool {
 // Rows outside the window are dropped on the way past: the table stays
 // proportional to traffic within the window rather than to traffic ever.
 func (s *Store) SeenIngressDelivery(route, digest string, window time.Duration) (bool, error) {
+	// `<=`, not `<`: a row sitting exactly on the cutoff is *not* inside the
+	// window — remembered means `now - ts < window`, so forgotten is
+	// `ts <= now - window`. The strict form also made the boundary depend on
+	// wall-clock luck, since ts is only millisecond-resolution: with a zero
+	// window (and, once appends stopped paying an fsync each, with any window
+	// at all) the write and the check land in the same millisecond and the row
+	// survived a cutoff it was supposed to fall on.
 	cutoff := time.Now().Add(-window).UnixMilli()
-	if _, err := s.db.Exec(`DELETE FROM ingress_seen WHERE ts < ?`, cutoff); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM ingress_seen WHERE ts <= ?`, cutoff); err != nil {
 		return false, err
 	}
 	res, err := s.db.Exec(
@@ -256,16 +356,18 @@ type SessionMeta struct {
 }
 
 // ListSessions returns recent sessions, newest first.
+//
+// The per-session counts come from the event log's index rather than a JOIN:
+// the log knows how many records a session has and how many are errors without
+// touching a byte of disk, and the old query paid a full scan plus a
+// json_extract per row to learn the same thing.
 func (s *Store) ListSessions(limit int) ([]SessionMeta, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	rows, err := s.db.Query(`
-SELECT s.session_id, s.graph_id, s.started, COALESCE(s.ended, 0),
-       COUNT(e.rowid_),
-       SUM(CASE WHEN json_extract(e.envelope, '$.kind') = 'error' THEN 1 ELSE 0 END)
-FROM sessions s LEFT JOIN events e ON e.session = s.session_id
-GROUP BY s.session_id ORDER BY s.started DESC LIMIT ?`, limit)
+SELECT session_id, graph_id, started, COALESCE(ended, 0)
+FROM sessions ORDER BY started DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -273,15 +375,28 @@ GROUP BY s.session_id ORDER BY s.started DESC LIMIT ?`, limit)
 	var out []SessionMeta
 	for rows.Next() {
 		var m SessionMeta
-		var errs sql.NullInt64
-		if err := rows.Scan(&m.SessionID, &m.GraphID, &m.Started, &m.Ended,
-			&m.Events, &errs); err != nil {
+		if err := rows.Scan(&m.SessionID, &m.GraphID, &m.Started, &m.Ended); err != nil {
 			return nil, err
 		}
-		m.Errors = int(errs.Int64)
+		m.Events, m.Errors = s.evlog.Counts(m.SessionID)
+		if m.Events == 0 {
+			// A session from before the log existed; its counts are still in
+			// the table it was written to.
+			m.Events, m.Errors = s.legacyCounts(m.SessionID)
+		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// legacyCounts reads the pre-seglog events table for one session.
+func (s *Store) legacyCounts(session string) (events, errs int) {
+	var e, x sql.NullInt64
+	_ = s.db.QueryRow(`
+SELECT COUNT(rowid_),
+       SUM(CASE WHEN json_extract(envelope, '$.kind') = 'error' THEN 1 ELSE 0 END)
+FROM events WHERE session = ?`, session).Scan(&e, &x)
+	return int(e.Int64), int(x.Int64)
 }
 
 // GetSession returns one session's metadata.
@@ -303,16 +418,18 @@ func (s *Store) GetSession(sessionID string) (SessionMeta, error) {
 // itself restarted — it also clears `ended`, so a session that picks back up
 // stops looking permanently ended to `aura why` and `GET /v1/sessions`.
 func (s *Store) StartSession(sessionID, graphID string) error {
-	_, err := s.db.Exec(`
+	// Batched like the event log: a node accepting a burst of connections
+	// otherwise pays one transaction per session *at accept time*, which is
+	// exactly when it can least afford to serialize.
+	return s.w.Submit(`
 INSERT INTO sessions (session_id, graph_id, started) VALUES (?,?,?)
 ON CONFLICT(session_id) DO UPDATE SET ended=NULL`,
 		sessionID, graphID, time.Now().UnixMilli())
-	return err
 }
 
 func (s *Store) EndSession(sessionID string) error {
-	_, err := s.db.Exec(`UPDATE sessions SET ended=? WHERE session_id=?`, time.Now().UnixMilli(), sessionID)
-	return err
+	return s.w.Submit(`UPDATE sessions SET ended=? WHERE session_id=?`,
+		time.Now().UnixMilli(), sessionID)
 }
 
 func (s *Store) SaveProjection(name string, config []byte) error {
@@ -421,10 +538,15 @@ func (s *Store) LoadSkillConfig(skillID string) (map[string]any, error) {
 }
 
 // AppendEvent persists an envelope into the causal event log (C3 rule 7).
-func (s *Store) AppendEvent(session, msgID, causeID string, envelope []byte) error {
-	_, err := s.db.Exec(`INSERT INTO events (session, msg_id, cause_id, envelope, ts) VALUES (?,?,?,?,?)`,
-		session, msgID, causeID, string(envelope), time.Now().UnixMilli())
-	return err
+//
+// kind is passed rather than parsed back out of the envelope: the caller always
+// has it, and re-decoding JSON on the hottest write path in the kernel to
+// recover a field it just serialised is work for nothing.
+func (s *Store) AppendEvent(session, msgID, causeID, kind string, envelope []byte) error {
+	return s.evlog.Append(seglog.Entry{
+		Session: session, MsgID: msgID, CauseID: causeID, Kind: kind,
+		TS: time.Now().UnixMilli(), Envelope: envelope,
+	})
 }
 
 // SessionEvents returns the raw envelopes of a session in causal-log order,
@@ -433,7 +555,31 @@ func (s *Store) SessionEvents(session string, limit int) ([]json.RawMessage, []i
 	if limit <= 0 {
 		limit = 1000
 	}
-	rows, err := s.db.Query(`SELECT envelope, ts FROM events WHERE session=? ORDER BY rowid_ LIMIT ?`, session, limit)
+	entries, err := s.evlog.Session(session, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(entries) == 0 {
+		// Nothing in the log for this session, which for a data directory
+		// written by an older binary means its history is still in the events
+		// table. Reading it keeps `aura why` and `aura replay` working across
+		// the upgrade instead of silently answering "no history" — the table is
+		// never written to again, so it only shrinks in relevance.
+		return s.legacySessionEvents(session, limit)
+	}
+	out := make([]json.RawMessage, 0, len(entries))
+	times := make([]int64, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, json.RawMessage(e.Envelope))
+		times = append(times, e.TS)
+	}
+	return out, times, nil
+}
+
+// legacySessionEvents reads the pre-seglog events table.
+func (s *Store) legacySessionEvents(session string, limit int) ([]json.RawMessage, []int64, error) {
+	rows, err := s.db.Query(`SELECT envelope, ts FROM events WHERE session=? ORDER BY rowid_ LIMIT ?`,
+		session, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -465,10 +611,9 @@ func (s *Store) SessionEvents(session string, limit int) ([]json.RawMessage, []i
 // A UNIQUE constraint on hash makes a duplicate append (a bug, not a user
 // action) fail loudly instead of silently forking the chain.
 func (s *Store) AppendLedgerEntry(seq uint64, hash, session string, entry []byte) error {
-	_, err := s.db.Exec(
+	return s.w.Submit(
 		`INSERT INTO ledger_entries (seq, hash, session, entry, ts) VALUES (?,?,?,?,?)`,
 		seq, hash, session, string(entry), time.Now().UnixMilli())
-	return err
 }
 
 // LedgerHead returns the most recently sealed entry's seq and hash, or
@@ -665,14 +810,6 @@ func (s *Store) Attestation(hash string) (json.RawMessage, error) {
 		return nil, err
 	}
 	return json.RawMessage(record), nil
-}
-
-// AttestationCount reports how many distinct inference configurations this
-// node has ever sealed against — the /healthz-sized view.
-func (s *Store) AttestationCount() (int64, error) {
-	var n int64
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM inference_attestations`).Scan(&n)
-	return n, err
 }
 
 // External anchoring (C4 v1.2). Two tables, two directions:
