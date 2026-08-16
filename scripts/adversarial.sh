@@ -158,5 +158,84 @@ if printf '%s' "$body" | grep -q '101 Switching Protocols'; then
 fi
 pass "refuses to run a graph whose capability is denied"
 
+# ── the credential broker (C4 v1.3) ──────────────────────────────────
+#
+# The claim is that going around the Effect Checkpoint leaves you without the
+# credential. That is a claim about what someone holding the node token can do,
+# so it is checked here against a real binary rather than only in unit tests —
+# with the token, which is the strongest position an attacker inside the trust
+# boundary is in.
+
+curl -fsS -X PUT \
+  -H "Authorization: Bearer $POLICY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"name":"erp_token","value":"correct-horse"}' \
+  "http://localhost:${PORT_POLICY}/v1/secrets" >/dev/null \
+  || fail "could not store a secret"
+pass "stores a secret"
+
+# Listing names must never reveal a value.
+listing="$(curl -fsS -H "Authorization: Bearer $POLICY_TOKEN" \
+  "http://localhost:${PORT_POLICY}/v1/secrets")"
+printf '%s' "$listing" | grep -q 'erp_token' \
+  || fail "a stored secret is not listed at all"
+printf '%s' "$listing" | grep -q 'correct-horse' \
+  && fail "listing secrets returned a value"
+pass "lists secret names and never their values"
+
+# No receipt: refused, even holding the node token.
+code="$(status -X POST \
+  -H "Authorization: Bearer $POLICY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"receipt":"","capability":"motor.api.erp.create","names":["erp_token"]}' \
+  "http://localhost:${PORT_POLICY}/v1/secrets/resolve")"
+[ "$code" = "403" ] || fail "resolving a secret with no receipt answered $code, want 403"
+pass "refuses a credential with no receipt, even with the node token"
+
+# An invented receipt is not in the chain, so it buys nothing.
+code="$(status -X POST \
+  -H "Authorization: Bearer $POLICY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"receipt":"sha256:0000000000000000000000000000000000000000000000000000000000000000","capability":"motor.api.erp.create","names":["erp_token"]}' \
+  "http://localhost:${PORT_POLICY}/v1/secrets/resolve")"
+[ "$code" = "403" ] || fail "a forged receipt answered $code, want 403"
+pass "refuses a forged receipt"
+
+# ── the operator roster (C4 v1.3) ────────────────────────────────────
+#
+# Enrolling is a privileged act the node token authorizes, and that is correct:
+# whoever holds it can already change the policy. What the token must NOT do is
+# let its holder claim an approval happened — that needs a private key the node
+# has never held, which is what the executor tests cover. Here we only pin that
+# the roster is real, that it round-trips, and that revocation is reported as
+# forward-only rather than as erasure.
+pubkey="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+code="$(status -X POST \
+  -H "Authorization: Bearer $POLICY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data "{\"id\":\"grace\",\"pubkey\":\"$pubkey\"}" \
+  "http://localhost:${PORT_POLICY}/v1/operators")"
+[ "$code" = "200" ] || fail "enrolling an operator answered $code"
+pass "enrols an operator by public key"
+
+curl -fsS -H "Authorization: Bearer $POLICY_TOKEN" \
+  "http://localhost:${PORT_POLICY}/v1/operators" | grep -q 'grace' \
+  || fail "an enrolled operator is not listed"
+pass "lists the roster"
+
+code="$(status -X POST \
+  -H "Authorization: Bearer $POLICY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"id":"mallory","pubkey":"not-base64!!"}' \
+  "http://localhost:${PORT_POLICY}/v1/operators")"
+[ "$code" = "400" ] || fail "enrolling an unusable key answered $code, want 400"
+pass "refuses a key that is not a usable ed25519 public key"
+
+revoked="$(curl -fsS -X DELETE -H "Authorization: Bearer $POLICY_TOKEN" \
+  "http://localhost:${PORT_POLICY}/v1/operators/grace")"
+printf '%s' "$revoked" | grep -q 'remain valid' \
+  || { printf '%s\n' "$revoked"; fail "revocation does not state that past approvals stay valid"; }
+pass "revokes an operator, and says past approvals remain valid"
+
 echo
 echo "all adversarial checks passed"

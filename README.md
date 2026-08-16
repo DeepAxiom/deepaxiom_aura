@@ -132,6 +132,13 @@ None of this lives in your graph:
   lives in the code you wrote, so code that forgets it has no gate. Here the
   executor applies it at the one point every delivery passes through, driven by
   node policy. A graph may ask for *more* scrutiny than policy requires, never less.
+- **The entry names the human who approved it, and they signed it.** Not "a
+  human approved" — *which* human, provably. The operator signs a statement
+  bound to that one delivery with a key the node has never held, so the
+  approver cannot deny it afterward and the node cannot fabricate one. That is
+  the half of *"who authorized this"* every audit trail skips, because the
+  usual answer — the node's own word — is worth nothing when the node is what
+  is under review.
 - **Every effect is attested, not logged.** Sealed into a hash-chained record
   committed to an RFC 6962 Merkle head the node signs, which a third party can
   counter-sign. `aura verify` recomputes chain, tree and signatures from the
@@ -149,6 +156,23 @@ A tool is gated unless its server proves it only reads *and* you chose to
 believe it. It holds exactly as far as your control over the agent's config
 does; there is no network enforcement.
 [Details](GUIDE.md#guarding-an-agents-tools).
+
+**And when config control is not enough**, stop trying to make the bypass
+impossible and make it useless. `aura secret set` puts the credential in the
+kernel instead of the agent's environment, and it is released only against the
+receipt of an effect that just passed the checkpoint — the right capability,
+delivered not denied, seconds old. Skipping the gate no longer avoids scrutiny;
+it gets you a 401. What it does not do is stop a skill from keeping a
+credential it legitimately received. What it removes is the standing, ambient
+token that was available for every call an agent ever made, gated or not.
+[Details](GUIDE.md#the-credential-broker).
+
+**Shipping a new model?** `aura regress` replays your recorded sessions against
+it and diffs the *effects*, not the transcripts — so "the wording changed" and
+"it stopped issuing the refund" are no longer the same result. An eval suite
+scores outputs against a rubric and cannot see an act that stopped happening;
+this can, because C5 already binds the model revision to the act.
+[Details](GUIDE.md#regression-testing-against-the-ledger).
 
 ---
 
@@ -178,7 +202,7 @@ copyleft obligation, ever.
 
 | | |
 |---|---|
-| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · cancellation · session resume · deterministic replay · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC |
+| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry** · **the credential broker (a secret only against a valid receipt)** · cancellation · session resume · deterministic replay · **effect-level regression across sessions** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC |
 | **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · OpenTelemetry export · ML-BOM |
 | **Not there yet** | No multi-device view of one live session · no failover if the node dies · **no process isolation for `format: source` skills** — a skill runs with the privileges of whoever started it |
 

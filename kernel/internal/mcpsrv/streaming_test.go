@@ -240,7 +240,7 @@ func TestGateIsAnsweredByAHumanAndTheCallProceeds(t *testing.T) {
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
 			if list := appr.List(); len(list) == 1 {
-				_ = appr.Resolve(list[0].ID, true)
+				_ = appr.Resolve(list[0].ID, approvals.Answer{Approve: true})
 				return
 			}
 			time.Sleep(10 * time.Millisecond)
@@ -269,7 +269,7 @@ func TestDeniedGateIsExplainedToTheModel(t *testing.T) {
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
 			if list := appr.List(); len(list) == 1 {
-				_ = appr.Resolve(list[0].ID, false)
+				_ = appr.Resolve(list[0].ID, approvals.Answer{Approve: false})
 				return
 			}
 			time.Sleep(10 * time.Millisecond)

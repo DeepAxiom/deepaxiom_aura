@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"aura/kernel/internal/channel"
+	"aura/kernel/internal/ledger"
 )
 
 // DefaultTTL bounds how long a question waits before it answers itself with a
@@ -58,11 +59,34 @@ type Pending struct {
 	Arguments  json.RawMessage `json:"arguments,omitempty"`
 	Requested  time.Time       `json:"requested"`
 	Expires    time.Time       `json:"expires"`
+	// Node and Envelope are what a signed answer has to be bound to (C4 v1.3):
+	// the node whose ledger will seal it, and the delivery the operator is
+	// being shown. Listed so `aura approve --as` can construct the signature
+	// without a second round trip and without guessing — an approval signed
+	// over the wrong envelope is indistinguishable from a forged one, so the
+	// values it must cover are published alongside the question itself.
+	Node     string `json:"node,omitempty"`
+	Envelope string `json:"envelope,omitempty"`
+}
+
+// Answer is one resolution, as the blocked caller receives it.
+//
+// It carries the signature rather than only the verdict because the two travel
+// to different places: the verdict decides whether the call proceeds here,
+// while the signature has to reach the executor's gate — which is the only
+// thing that can verify it and the only thing that can seal it. Dropping it at
+// this hop would mean an out-of-band approval could never be signed, so `aura
+// approve` would be permanently second-class next to answering on the socket.
+type Answer struct {
+	Approve bool
+	// Approval is the operator's signed statement, or nil for an unsigned
+	// answer. Untrusted here: this package neither verifies it nor knows how.
+	Approval *ledger.Approval
 }
 
 type waiter struct {
 	p  Pending
-	ch chan bool
+	ch chan Answer
 }
 
 // Registry holds the questions currently waiting.
@@ -85,14 +109,14 @@ func WithTTL(d time.Duration) *Registry {
 // The returned release function must be called by the caller when it stops
 // waiting — otherwise a caller that gave up leaves the question listed, and an
 // operator approves an effect that will never be delivered.
-func (r *Registry) Open(p Pending) (id string, decision <-chan bool, release func()) {
+func (r *Registry) Open(p Pending) (id string, decision <-chan Answer, release func()) {
 	if p.ID == "" {
 		p.ID = channel.NewID()
 	}
 	p.Requested = time.Now()
 	p.Expires = p.Requested.Add(r.ttl)
 
-	w := &waiter{p: p, ch: make(chan bool, 1)}
+	w := &waiter{p: p, ch: make(chan Answer, 1)}
 	r.mu.Lock()
 	r.items[p.ID] = w
 	r.mu.Unlock()
@@ -100,7 +124,7 @@ func (r *Registry) Open(p Pending) (id string, decision <-chan bool, release fun
 	// The expiry timer denies rather than simply forgetting: a caller blocked
 	// on the channel has to be released, and "nobody answered in time" is a
 	// refusal, not an approval.
-	t := time.AfterFunc(r.ttl, func() { _ = r.Resolve(p.ID, false) })
+	t := time.AfterFunc(r.ttl, func() { _ = r.Resolve(p.ID, Answer{Approve: false}) })
 
 	return p.ID, w.ch, func() {
 		t.Stop()
@@ -112,7 +136,7 @@ func (r *Registry) Open(p Pending) (id string, decision <-chan bool, release fun
 
 // Resolve answers a question. It is safe to call twice; the second call reports
 // that the question is gone rather than double-delivering.
-func (r *Registry) Resolve(id string, approve bool) error {
+func (r *Registry) Resolve(id string, a Answer) error {
 	r.mu.Lock()
 	w, ok := r.items[id]
 	if ok {
@@ -122,7 +146,7 @@ func (r *Registry) Resolve(id string, approve bool) error {
 	if !ok {
 		return fmt.Errorf("no pending approval %q (already answered, expired, or the caller gave up)", id)
 	}
-	w.ch <- approve
+	w.ch <- a
 	close(w.ch)
 	return nil
 }

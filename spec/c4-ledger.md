@@ -1,6 +1,6 @@
 # C4 — Effect Ledger & Policy (frozen contract)
 
-**Protocol major: 1 · Status: v1.2 — FROZEN (2026-08-15: Merkle tree head, portable receipts, external witnessing, and the `inference` citation added — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.3 — FROZEN (2026-08-16: the `approver` signature added — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
 
 C1, C2 and C3 answer *what a skill is*, *how a graph is wired*, and *how
 envelopes flow*. None of them answer the question a node actually has to
@@ -73,6 +73,95 @@ be.
 | `compensation` | Present only when the skill declared C1 `compensates`; carries its capability, port and schema. Absent (not null-valued — omitted) means the effect was recorded as irreversible. |
 | `compensates` | Present only on an entry that IS an undo: the `hash` (see below) of the entry it reverses. Absent on every ordinary effect. A conforming implementation MUST refuse to seal a second entry with the same `compensates` value — an undo is a one-time action, not a repeatable one (see [`ROADMAP.md`](../ROADMAP.md), Phase 2, `aura undo`). |
 | `inference` | v1.2, additive. The sorted, de-duplicated content addresses of every C5 attestation produced in this effect's causal chain — what the models that argued for this act claimed about themselves. Omitted when none contributed. See [`c5-attestation.md`](c5-attestation.md) for the record, the citation rule, and — importantly — the limits of what it proves. |
+| `approver` | v1.3, additive. The signed identity of the human who resolved this effect's gate. Present only on an entry whose gate was answered with a verified signature; omitted otherwise. See "The approver" below. |
+
+## The approver (v1.3)
+
+This contract opens by asking *who authorized this, and can it be proven
+afterward?* Through v1.2 it answered only the first half. An entry cited the
+**policy** that authorized the class of effect and recorded that a gate was
+resolved — but *which human* resolved it existed nowhere, and "a human
+approved" without "which human" is a log, not an audit trail.
+
+It was also unprovable in principle, which is the more serious half. The node
+writes its own entries, so a node that wished to claim an approval had happened
+could simply write one. Every other guarantee in C4 rests on a signature the
+node cannot forge *on someone else's behalf*; approval had none.
+
+```json
+{
+  "operator": "grace",
+  "pubkey":   "base64…",
+  "envelope": "01J9ZK2M1P…",
+  "decision": "approve",
+  "ts":       1754083200000,
+  "sig":      "base64…"
+}
+```
+
+The signed payload is domain-separated, like every other signature in this
+contract:
+
+```
+"aura-approval-v1:" + node + ":" + session + ":" + envelope + ":" + decision + ":" + ts
+```
+
+| Field | Norm |
+|---|---|
+| `operator` | The enrolled identity that answered. A **claim**, not what verification trusts — see the roster rule below. |
+| `pubkey` | Base64 Ed25519 public key whose private half produced `sig`. Carried inline, not looked up: an entry MUST remain verifiable from stored data alone, and an id resolved against a mutable roster would make history depend on the roster's present state. |
+| `envelope` | The delivery the operator was shown — the envelope the executor held at the gate. Recorded rather than inferred because the entry's own `envelope` field is not the same id on both paths: a delivered effect seals the outbound envelope the gate released (whose `cause` is the held one), a denied effect seals the held envelope itself. |
+| `decision` | `approve` \| `deny`. Deliberately not the `policy_decisions` vocabulary: that is what a *policy* ruled about a class of effect, this is what a *person* answered about one delivery. |
+| `ts` | Unix millis at signing, inside the signed bytes so an approval cannot be backdated without invalidating itself. |
+| `sig` | Base64 Ed25519 over the payload above. |
+
+Every component is inside the signature, so a valid approval cannot be
+transplanted: not to another node, another session, another delivery, another
+decision, or another time.
+
+**Two checks, deliberately separated.** A conforming implementation MUST make
+both, and MUST NOT merge them:
+
+1. **Authorship** — does `sig` verify against `pubkey` over the payload? Pure
+   cryptography, answerable forever from stored data, with no roster.
+2. **Enrollment** — at the moment the gate is answered, is `operator` enrolled
+   on this node, not revoked, and enrolled *under this exact `pubkey`*? Anyone
+   may mint a keypair and sign as "grace"; only this check refuses it.
+
+Enrollment is evaluated **once, when the answer arrives, and never again.**
+Revoking an operator MUST NOT invalidate approvals they already gave. An audit
+trail that changes when the org chart changes is not an audit trail.
+
+**Sealing rules.** A conforming implementation:
+
+- MUST verify an approval before sealing it, and MUST refuse to seal one that
+  does not verify — an entry cannot be edited or withdrawn afterward, so this
+  is the last moment a forgery can be stopped.
+- MUST refuse a resolution whose signed `decision` disagrees with the transport
+  that carried it, rather than preferring either. The signature covers the
+  decision precisely so an intercepted `deny` cannot be forwarded as an
+  `approve` by editing an unauthenticated field beside it.
+- MUST seal the approver on a **denial** as well as on a delivery. "Who refused
+  this" is as much a fact an incident review needs as who allowed it.
+- MUST NOT hold any operator private key. A node that could sign on an
+  operator's behalf could manufacture the evidence it is audited by, which
+  reduces the field to decoration.
+
+**Absence is ambiguous, and the entry does not disambiguate it.** A missing
+`approver` means either the effect was never gated (`decision: allow` — nobody
+was asked) or it was gated and answered by a client that does not sign. A node
+that needs the second case to be impossible sets `require_signed_approval` in
+its policy, after which an unsigned answer to a gate is a **denial**, not a
+downgrade — an enforcement that can be skipped by omitting a field enforces
+nothing. Such a node MUST refuse to start with an empty roster, since every
+gated effect would otherwise be unanswerable.
+
+`aura verify` checks approver signatures during the same offline walk it uses
+for the chain, and an approval that no longer verifies makes the ledger
+**unsound** — it is direct evidence that an entry was edited after sealing, or
+that one was written claiming a human said yes when none did. A ledger with no
+approvals at all is not unsound; it is unsigned, which is a weaker claim and is
+reported as such.
 
 ### Hash
 

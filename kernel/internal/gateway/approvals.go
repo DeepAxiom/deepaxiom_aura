@@ -3,6 +3,9 @@ package gateway
 import (
 	"encoding/json"
 	"net/http"
+
+	"aura/kernel/internal/approvals"
+	"aura/kernel/internal/ledger"
 )
 
 // The approval surface: the questions the kernel is currently asking, and the
@@ -38,6 +41,13 @@ func (g *Gateway) resolveApproval(w http.ResponseWriter, r *http.Request) {
 		// rather than a silent denial. Answering a gate is the one place where
 		// guessing what the caller meant is not acceptable.
 		Approve *bool `json:"approve"`
+		// Approval is the operator's signed statement (C4 v1.3), optional here
+		// and forwarded unexamined. This route deliberately does not verify it:
+		// the executor's gate is the only place that both can verify and will
+		// seal, and a second check here would be a second implementation to
+		// keep in step — one that, being on the permissive side of the gate,
+		// could only ever disagree by letting something through.
+		Approval *ledger.Approval `json:"approval,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -49,10 +59,17 @@ func (g *Gateway) resolveApproval(w http.ResponseWriter, r *http.Request) {
 			"error": "\"approve\" is required and must be true or false"})
 		return
 	}
-	if err := g.Approvals.Resolve(id, *body.Approve); err != nil {
+	if err := g.Approvals.Resolve(id, approvals.Answer{
+		Approve: *body.Approve, Approval: body.Approval,
+	}); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	g.Log.Info("approval answered", "id", id, "approved", *body.Approve)
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "approved": *body.Approve})
+	signer := ""
+	if body.Approval != nil {
+		signer = body.Approval.Operator
+	}
+	g.Log.Info("approval answered", "id", id, "approved", *body.Approve, "signed_by", signer)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": id, "approved": *body.Approve, "signed_by": signer})
 }

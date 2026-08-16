@@ -32,98 +32,11 @@ func cmdReplay(args []string) {
 	}
 	session := strings.TrimPrefix(rest[0], "session:")
 
-	var meta struct {
-		GraphID string `json:"graph_id"`
-	}
-	code, body := getRaw(*port, "/v1/sessions/"+session)
-	if code != 200 {
-		fatal(fmt.Errorf("session %q not found", session))
-	}
-	_ = json.Unmarshal(body, &meta)
-	graph := meta.GraphID
-	if *graphOverride != "" {
-		graph = *graphOverride
-	}
-
-	// Split the recorded log: client roots (inputs) vs deliveries to client.
-	events := fetchEvents(*port, session)
-	var inputs, oldOutputs []channel.Envelope
-	for _, e := range events {
-		if e.Kind != channel.KindData || e.Node != "client" {
-			continue
-		}
-		if e.CauseID == "" {
-			inputs = append(inputs, e)
-		} else {
-			oldOutputs = append(oldOutputs, e)
-		}
-	}
-	if len(inputs) == 0 {
-		fatal(fmt.Errorf("session %s has no client inputs to replay", session))
-	}
-	fmt.Printf("\n  replaying %s → graph %s (%d input(s), expecting %d output(s))\n\n",
-		session, graph, len(inputs), len(oldOutputs))
-
-	// New session against the current graph.
-	conn, err := newNodeClient(*port).dial("/v1/stream?graph=" + graph)
+	run, err := driveReplay(*port, session, *graphOverride, *denyGates, true)
 	if err != nil {
 		fatal(err)
 	}
-	defer conn.Close()
-	deadline := time.Now().Add(180 * time.Second)
-	_ = conn.SetReadDeadline(deadline)
-
-	var hello channel.Envelope
-	if err := conn.ReadJSON(&hello); err != nil {
-		fatal(err)
-	}
-	if hello.Kind == channel.KindError {
-		fatal(fmt.Errorf("replay session rejected: %s", string(hello.Payload)))
-	}
-	var ready struct {
-		Session string `json:"session"`
-	}
-	_ = json.Unmarshal(hello.Payload, &ready)
-
-	for i, input := range inputs {
-		env := channel.Envelope{
-			V: channel.ProtocolMajor, ID: channel.NewID(),
-			Session: ready.Session, Node: "client", Port: input.Port,
-			Seq:    uint64(i + 1),
-			Idem:   fmt.Sprintf("replay:%s:%s:%d", session, input.Port, i+1),
-			Schema: input.Schema, Kind: channel.KindData, Payload: input.Payload,
-		}
-		if err := conn.WriteJSON(env); err != nil {
-			fatal(err)
-		}
-	}
-
-	// Collect the same number of outputs the original produced.
-	var newOutputs []channel.Envelope
-	for len(newOutputs) < len(oldOutputs) && time.Now().Before(deadline) {
-		var env channel.Envelope
-		if err := conn.ReadJSON(&env); err != nil {
-			break
-		}
-		switch env.Kind {
-		case channel.KindData:
-			newOutputs = append(newOutputs, env)
-		case channel.KindConfirmRequest:
-			approve := !*denyGates
-			verdict := "approved"
-			if !approve {
-				verdict = "denied"
-			}
-			fmt.Printf("  gate › auto-%s during replay\n", verdict)
-			payload, _ := json.Marshal(map[string]bool{"approve": approve})
-			_ = conn.WriteJSON(channel.Envelope{
-				V: channel.ProtocolMajor, ID: channel.NewID(), CauseID: env.ID,
-				Kind: channel.KindConfirmResponse, Payload: payload,
-			})
-		case channel.KindError:
-			newOutputs = append(newOutputs, env)
-		}
-	}
+	oldOutputs, newOutputs, ready := run.oldOutputs, run.newOutputs, run.replaySession
 
 	// Diff old vs new, payload by payload.
 	identical := 0
@@ -151,7 +64,7 @@ func cmdReplay(args []string) {
 			fmt.Printf("      new ‹ %s\n", payloadPreview(newP, 90))
 		}
 	}
-	fmt.Printf("\n  replay session: %s\n", ready.Session)
+	fmt.Printf("\n  replay session: %s\n", ready)
 	fmt.Printf("  verdict: %d/%d outputs identical", identical, len(oldOutputs))
 	if identical == len(oldOutputs) && len(newOutputs) == len(oldOutputs) {
 		fmt.Println("  ok")
@@ -159,7 +72,149 @@ func cmdReplay(args []string) {
 		fmt.Println("  (differences above — expected for model-backed graphs)")
 	}
 
-	printLedgerDiff(*port, session, ready.Session)
+	printLedgerDiff(*port, session, ready)
+}
+
+// replayRun is one drive of a recorded session against the current graph.
+type replayRun struct {
+	replaySession string
+	oldOutputs    []channel.Envelope
+	newOutputs    []channel.Envelope
+}
+
+// driveReplay re-sends a recorded session's client inputs against the current
+// graph and collects what comes back.
+//
+// Extracted from cmdReplay so `aura regress` drives hundreds of sessions
+// through exactly the same path a human drives one through. A second
+// implementation would be a second set of assumptions about what a replay is,
+// and the batch report would slowly stop meaning what the single-session
+// command means — which is the failure mode that makes aggregate tools
+// untrustworthy.
+//
+// Errors are returned rather than fatal because a batch run must survive one
+// session it cannot replay: a graph that was deleted is a gap in coverage, not
+// a reason to abandon the other 340.
+func driveReplay(port int, session, graphOverride string, denyGates, verbose bool) (*replayRun, error) {
+	var meta struct {
+		GraphID string `json:"graph_id"`
+	}
+	code, body := getRaw(port, "/v1/sessions/"+session)
+	if code != 200 {
+		return nil, fmt.Errorf("session %q not found", session)
+	}
+	_ = json.Unmarshal(body, &meta)
+	graph := meta.GraphID
+	if graphOverride != "" {
+		graph = graphOverride
+	}
+
+	// Split the recorded log: client roots (inputs) vs deliveries to client.
+	events := fetchEvents(port, session)
+	var inputs, oldOutputs []channel.Envelope
+	for _, e := range events {
+		if e.Kind != channel.KindData || e.Node != "client" {
+			continue
+		}
+		if e.CauseID == "" {
+			inputs = append(inputs, e)
+		} else {
+			oldOutputs = append(oldOutputs, e)
+		}
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("session %s has no client inputs to replay", session)
+	}
+	if verbose {
+		fmt.Printf("\n  replaying %s → graph %s (%d input(s), expecting %d output(s))\n\n",
+			session, graph, len(inputs), len(oldOutputs))
+	}
+
+	conn, err := newNodeClient(port).dial("/v1/stream?graph=" + graph)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(180 * time.Second)
+	_ = conn.SetReadDeadline(deadline)
+
+	var hello channel.Envelope
+	if err := conn.ReadJSON(&hello); err != nil {
+		return nil, err
+	}
+	if hello.Kind == channel.KindError {
+		return nil, fmt.Errorf("replay session rejected: %s", string(hello.Payload))
+	}
+	var ready struct {
+		Session string `json:"session"`
+	}
+	_ = json.Unmarshal(hello.Payload, &ready)
+
+	for i, input := range inputs {
+		env := channel.Envelope{
+			V: channel.ProtocolMajor, ID: channel.NewID(),
+			Session: ready.Session, Node: "client", Port: input.Port,
+			Seq:    uint64(i + 1),
+			Idem:   fmt.Sprintf("replay:%s:%s:%d", session, input.Port, i+1),
+			Schema: input.Schema, Kind: channel.KindData, Payload: input.Payload,
+		}
+		if err := conn.WriteJSON(env); err != nil {
+			return nil, err
+		}
+	}
+
+	var newOutputs []channel.Envelope
+	for len(newOutputs) < len(oldOutputs) && time.Now().Before(deadline) {
+		var env channel.Envelope
+		if err := conn.ReadJSON(&env); err != nil {
+			break
+		}
+		switch env.Kind {
+		case channel.KindData:
+			newOutputs = append(newOutputs, env)
+		case channel.KindConfirmRequest:
+			approve := !denyGates
+			if verbose {
+				verdict := "approved"
+				if !approve {
+					verdict = "denied"
+				}
+				fmt.Printf("  gate › auto-%s during replay\n", verdict)
+			}
+			// Unsigned on purpose. A replay must not be able to produce a
+			// signed approval — that would mean the machinery for manufacturing
+			// one exists, and the entire value of a sealed approval is that it
+			// cannot be produced without a human's key. A node with
+			// require_signed_approval therefore refuses gates during replay,
+			// and that refusal is itself the correct, reportable result.
+			payload, _ := json.Marshal(map[string]bool{"approve": approve})
+			_ = conn.WriteJSON(channel.Envelope{
+				V: channel.ProtocolMajor, ID: channel.NewID(), CauseID: env.ID,
+				Kind: channel.KindConfirmResponse, Payload: payload,
+			})
+		case channel.KindError:
+			newOutputs = append(newOutputs, env)
+		}
+	}
+	return &replayRun{replaySession: ready.Session, oldOutputs: oldOutputs, newOutputs: newOutputs}, nil
+}
+
+// replayOne is the batch unit: drive one session and compare the ledgers.
+func replayOne(port int, session, graphOverride string, denyGates bool) ledger.SessionResult {
+	res := ledger.SessionResult{Session: session}
+	run, err := driveReplay(port, session, graphOverride, denyGates, false)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	res.Replay = run.replaySession
+
+	oldEntries := fetchLedgerBySession(port, session)
+	newEntries := fetchLedgerBySession(port, run.replaySession)
+	res.Diff = ledger.Diff(oldEntries, newEntries)
+	res.OldModels = ledger.ModelsOf(oldEntries)
+	res.NewModels = ledger.ModelsOf(newEntries)
+	return res
 }
 
 // fetchLedgerBySession returns one session's sealed ledger entries, in seq

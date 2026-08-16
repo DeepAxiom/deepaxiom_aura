@@ -81,21 +81,24 @@ kernel/SDK/spec themselves.
 18. [Model drivers & resource admission](#model-drivers--resource-admission)
 19. [Audit bundles](#audit-bundles)
 20. [An OpenEnv environment](#an-openenv-environment)
-21. [Skill isolation](#skill-isolation)
-22. [Open witnessing](#open-witnessing)
-23. [The marketplace](#the-marketplace)
-24. [Explainability & replay](#explainability--replay)
-25. [Federating nodes](#federating-nodes)
-26. [Standards at the borders](#standards-at-the-borders)
-27. [Guarding an agent's tools](#guarding-an-agents-tools)
-28. [The five contracts](#the-five-contracts)
-29. [Security model](#security-model)
-30. [HTTP & WebSocket API](#http--websocket-api)
-31. [Repository layout](#repository-layout)
-32. [Build & release](#build--release)
-33. [Milestone status](#milestone-status)
-34. [Designed, not yet built](#designed-not-yet-built)
-35. [License & governance](#license--governance)
+21. [Signed approval — who allowed it](#signed-approval--who-allowed-it)
+22. [The credential broker](#the-credential-broker)
+23. [Regression testing against the ledger](#regression-testing-against-the-ledger)
+24. [Skill isolation](#skill-isolation)
+25. [Open witnessing](#open-witnessing)
+26. [The marketplace](#the-marketplace)
+27. [Explainability & replay](#explainability--replay)
+28. [Federating nodes](#federating-nodes)
+29. [Standards at the borders](#standards-at-the-borders)
+30. [Guarding an agent's tools](#guarding-an-agents-tools)
+31. [The five contracts](#the-five-contracts)
+32. [Security model](#security-model)
+33. [HTTP & WebSocket API](#http--websocket-api)
+34. [Repository layout](#repository-layout)
+35. [Build & release](#build--release)
+36. [Milestone status](#milestone-status)
+37. [Designed, not yet built](#designed-not-yet-built)
+38. [License & governance](#license--governance)
 
 ---
 
@@ -545,7 +548,35 @@ Flags must precede the positional message — `aura chat --graph echo "test"`, n
 |---|---|
 | `aura guard --config <mcp-servers.json> [--dry-run] [--trust-annotations] [--port 9080]` | Front the MCP servers an agent already uses, so every tool call passes this node's policy, gate and ledger. `--dry-run` reports what would be registered and changes nothing. See [Guarding an agent's tools](#guarding-an-agents-tools). |
 | `aura approvals [--json] [--port 9080]` | List the calls currently waiting for a human. |
-| `aura approve <id> [--deny] [--port 9080]` | Answer one of them. |
+| `aura approve <id> [--as <operator>] [--deny] [--port 9080]` | Answer one of them. With `--as`, the answer is signed with that operator's key and sealed into the entry — see [Signed approval](#signed-approval--who-allowed-it). |
+
+### Who may approve
+
+| Command | Purpose |
+|---|---|
+| `aura operator enroll <id> [--name "…"] [--port 9080]` | Generate a keypair under `~/.aura/operator/<id>` and enrol its **public** half. The node never holds the private key. |
+| `aura operator add <id> --pubkey <base64> [--name "…"]` | Enrol a key generated elsewhere — the laptop-approves-a-remote-node case. |
+| `aura operator list [--port 9080]` | Who may approve on this node, and who was revoked when. |
+| `aura operator revoke <id> [--port 9080]` | Stop them approving anything further. Approvals they already gave stay valid and still verify. |
+| `aura operator whoami <id>` | Print this operator's public key from the local keypair. |
+
+### Credentials
+
+| Command | Purpose |
+|---|---|
+| `aura secret set <name> [value] [--port 9080]` | Store a credential in the kernel, encrypted with the node identity key. Reads stdin when the value is omitted, keeping it out of shell history and the process table. |
+| `aura secret ls [--port 9080]` | List configured secret **names**. There is no command, and no route, that returns a value. |
+| `aura secret rm <name> [--port 9080]` | Forget one. |
+
+Reference a stored secret as `${secret:<name>}` in a projection header or
+connector spec; it is resolved at call time against the receipt of the effect
+being delivered. See [The credential broker](#the-credential-broker).
+
+### Regression
+
+| Command | Purpose |
+|---|---|
+| `aura regress [--sessions 25] [--graph <id>] [--json] [--fail-on-regression] [--deny-gates] [--port 9080]` | Replay recorded sessions against the current graphs and diff the **sealed effects**, grouped by capability and by the model each side cited. See [Regression testing against the ledger](#regression-testing-against-the-ledger). |
 
 ---
 
@@ -1448,6 +1479,247 @@ from the observation.
 having rather than merely conforming: an environment that returns
 tamper-evident evidence alongside the observation lets a benchmark report the
 assumptions behind a score, not only the score.
+
+---
+
+## Signed approval — who allowed it
+
+The security model has always been able to prove *that* an effect was gated and
+answered. It could not prove **who answered**, and that gap was larger than it
+looks: a compliance review does not ask whether a human approved, it asks which
+one. "A human approved" without a name is a log, not an audit trail.
+
+It was also unprovable in principle rather than merely missing. The node writes
+its own ledger, so a node that wanted to claim an approval had happened could
+write one. Every other guarantee here rests on a signature the node cannot forge
+*on someone else's behalf* — and approval, the one field describing a human
+decision, had none.
+
+```powershell
+.\kernel\aura.exe operator enroll grace --name "Grace Hopper"
+#  enrolled grace
+#  public key   MCowBQYDK2VwAyEA…
+#  private key  C:\Users\you\.aura\operator\grace\ed25519.key
+
+.\kernel\aura.exe approvals                    # what is waiting
+.\kernel\aura.exe approve <id> --as grace      # sign it
+#  approved 01J9ZK… — signed as grace
+```
+
+The sealed entry now carries the answer:
+
+```json
+"approver": {
+  "operator": "grace",
+  "pubkey":   "MCowBQYDK2VwAyEA…",
+  "envelope": "01J9ZK2M1P…",
+  "decision": "approve",
+  "ts":       1754083200000,
+  "sig":      "base64…"
+}
+```
+
+**The node never holds the private key.** It lives under the operator's own home
+directory and only the public half is enrolled. That is what makes an approval
+something the node cannot manufacture about itself, which is the entire point —
+the party under audit must not be able to produce its own evidence. On a
+single-machine install the same person owns both directories, so the separation
+is a convention there rather than a boundary; it becomes real the moment the
+operator approves from their laptop against a node somewhere else.
+
+Everything in the signed statement is bound, so a valid signature cannot be
+moved: not to another node, session, delivery, decision, or time. Two checks
+run, and they are deliberately kept apart:
+
+| | What it asks | Against what | When |
+|---|---|---|---|
+| **Authorship** | did this key sign *this* resolution? | the sealed bytes | forever, offline |
+| **Enrollment** | may that operator approve here, under that key? | the live roster | once, at the gate |
+
+Merging them would make history depend on the present. **Revoking an operator
+does not invalidate approvals they already gave** — an audit trail that changes
+when the org chart does is not one. `aura operator revoke` says so explicitly.
+
+Three refusals worth knowing about, each of which is a real attack:
+
+- A key the node never enrolled, signing as `grace`, produces a
+  cryptographically valid statement. It is refused — the name is a claim until
+  the roster confirms the key behind it.
+- A signed `deny` forwarded with `"approve": true` beside it is refused, rather
+  than either field winning. The signature covers the decision precisely so
+  that flipping an unauthenticated boolean cannot change the answer.
+- An approval for one held delivery, replayed against another in the same
+  session, is refused. Within one conversation that is the difference between
+  approving one payment and approving the next.
+
+To make signatures mandatory:
+
+```yaml
+# aura.policy.yaml
+policy: 1
+default_effect: gate
+require_signed_approval: true
+```
+
+Then an unsigned answer to a gate is a **denial**, not a fallback — an
+enforcement you can skip by omitting a field enforces nothing. A node with this
+set and nobody enrolled **refuses to start**, rather than coming up healthy and
+denying its first write minutes later with the cause several layers away from
+the symptom.
+
+`aura verify` checks approver signatures in the same offline walk it uses for
+the chain. An approval that no longer verifies makes the ledger **unsound**: it
+is direct evidence that an entry was edited after sealing, or that one was
+written claiming a human said yes when none did.
+
+---
+
+## The credential broker
+
+`aura guard` and node policy share a limitation this guide has always stated
+plainly: they hold exactly as far as your control over the agent's config does.
+Nothing stops a process from skipping the gate — it just calls the ERP directly.
+That makes the checkpoint an excellent safety rail and a weak security boundary,
+and no amount of policy fixes it, because policy is enforced at the place the
+caller chose to visit.
+
+The usual answer is enforcement at the network: a proxy, eBPF, a sidecar. They
+work, they need infrastructure this runtime promises you will not need, and none
+of them run on a Raspberry Pi.
+
+The other answer is to stop trying to make the bypass impossible and make it
+**useless**. An agent that skips the gate reaches the ERP and has no credential
+for it, because the credential was never in its environment — it is in the
+kernel, and the only way to get it is to present the receipt of an effect that
+just passed the checkpoint.
+
+```powershell
+.\kernel\aura.exe secret set erp_token          # reads stdin: no shell history, no process table
+#  stored erp_token — reference it as ${secret:erp_token}
+
+.\kernel\aura.exe secret ls
+#  ${secret:erp_token}
+```
+
+Reference it where the credential used to sit:
+
+```yaml
+name: legacy-erp
+base_url: http://erp.internal
+headers:
+  Authorization: "Bearer ${secret:erp_token}"    # resolved at call time, never stored expanded
+```
+
+What a receipt proves, without the broker trusting the caller at all:
+
+- **the effect existed and was authorized** — the entry is in the chain, and an
+  entry only gets there by passing the checkpoint;
+- **it was allowed or approved** — a denied effect buys nothing;
+- **it is this effect** — the entry names the capability, so one skill cannot
+  spend another skill's approval on the payments token;
+- **it is recent** — 90 seconds, redeemable three times. A receipt is not a
+  bearer token with a useful shelf life; the allowance exists for a retry after
+  a connection error, not for fan-out.
+
+A forged receipt is not in the ledger. A stolen one is bound to someone else's
+capability. A replayed one is expired. **A leaked node token does not become a
+leaked ERP credential** — holding it lets you set a secret and see that one
+exists, and there is no route anywhere that returns a value.
+
+Secrets are encrypted at rest with a key derived from the node's own identity
+key, and the name is authenticated alongside the value, so a ciphertext cannot
+be moved from one secret's row to another's with a text editor. A data directory
+copied without its `identity/` subdirectory yields ciphertext nobody can open,
+which is the correct outcome for a stolen database file.
+
+A skill running as its own process uses the same door:
+
+```powershell
+curl -X POST localhost:9080/v1/secrets/resolve `
+  -H "Authorization: Bearer $token" `
+  -d '{"receipt":"sha256:…","capability":"motor.api.erp.create_invoice","names":["erp_token"]}'
+```
+
+**What this does not do**, stated plainly: it does not stop a skill that
+legitimately received a credential from keeping it. Once a value reaches a
+process, that process has it, and nothing short of never revealing it — a
+signing oracle, an egress proxy — changes that. What it removes is the
+*standing, ambient* credential: the token sitting in a long-running agent's
+environment, available for every call it ever makes, gated or not. The window
+narrows to one authorized effect.
+
+---
+
+## Regression testing against the ledger
+
+`aura replay` answers "did this one session reproduce what it recorded". That is
+the right unit for debugging and the wrong unit for the question teams actually
+face every week:
+
+> we are about to change the model. What does that do to the effects?
+
+Nothing on the market answers it with evidence. Eval suites score outputs
+against a rubric — which measures whether the text got better and says nothing
+about whether the runtime went on to charge a different card. Observability
+records the aftermath. Neither can say *"339 of 345 sessions sealed exactly the
+same effects; here are the 6 that did not, and here is the model revision on
+each side."*
+
+```powershell
+.\kernel\aura.exe regress --sessions 200
+#    [1/200] sess-8f3a · reproduced (2 effect(s))
+#    [2/200] sess-9c1b · CHANGED (1 divergence(s))
+#    …
+#
+#    ── regression report ──────────────────────────────────
+#
+#    sessions      200 replayed · 194 reproduced · 6 changed · 0 could not run
+#    effects       412 sealed before · 406 after   ← 6 fewer effects happened
+#
+#    models cited
+#      before  Qwen/Qwen2.5-1.5B-Instruct-GGUF @f1d2d2f (Q4_K_M)
+#      after   Qwen/Qwen2.5-3B-Instruct-GGUF @a7c31e0 (Q4_K_M)
+#
+#    what changed, by capability
+#      motor.payments.refund                    6 session(s)  [count×6]
+#
+#    sessions that changed
+#      sess-9c1b → replay sess-4d2e
+#          effect count 3 → 2
+#          aura why sess-4d2e
+#
+#    verdict: 6/200 sessions changed behaviour
+```
+
+The line that matters is **"6 fewer effects happened"**, and it is the finding an
+output diff structurally *cannot* make: an act that stopped happening leaves no
+text behind to compare against, so it reads as silence. Only something counting
+the sealed effects can see it.
+
+This works here and nowhere else for a reason that is not cleverness — the
+aggregation is a fold over the existing per-session diff. It is that C5 already
+binds the model revision, quantization and sampling parameters to every act, so
+the comparison is between two *named, pinned* configurations rather than between
+"before" and "after", and a divergence arrives with the two attestations that
+produced it.
+
+Deliberately not a pass/fail gate by default: a model-backed graph legitimately
+words things differently run to run, and a tool that cries regression at every
+rephrasing gets muted within a week — which is how it stops being read at the
+one moment it matters. `--fail-on-regression` exits non-zero for a CI job that
+has decided its graphs are deterministic enough to hold to it, and `--json`
+emits the whole report.
+
+Two honest limits:
+
+- A session that **could not be replayed** (its graph is gone, a skill it needs
+  is offline) is counted separately and does **not** make the run dirty. Silently
+  converting "could not test" into "test failed" trains people to ignore results.
+- **Gates are auto-answered unsigned during replay**, so a node with
+  `require_signed_approval` will see them refused. That is correct rather than
+  unfortunate: a replay that could mint a signed approval would mean the
+  machinery for manufacturing one exists, and the value of a sealed approval is
+  precisely that it cannot be produced without a human's key.
 
 ---
 

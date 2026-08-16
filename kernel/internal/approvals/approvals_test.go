@@ -11,13 +11,13 @@ func TestApproveReleasesTheCaller(t *testing.T) {
 	defer release()
 
 	go func() {
-		if err := r.Resolve(id, true); err != nil {
+		if err := r.Resolve(id, Answer{Approve: true}); err != nil {
 			t.Errorf("resolve: %v", err)
 		}
 	}()
 	select {
 	case got := <-decision:
-		if !got {
+		if !got.Approve {
 			t.Error("approve delivered a denial")
 		}
 	case <-time.After(2 * time.Second):
@@ -29,8 +29,8 @@ func TestDenyReleasesTheCaller(t *testing.T) {
 	r := New()
 	id, decision, release := r.Open(Pending{Question: "q"})
 	defer release()
-	go func() { _ = r.Resolve(id, false) }()
-	if got := <-decision; got {
+	go func() { _ = r.Resolve(id, Answer{Approve: false}) }()
+	if got := <-decision; got.Approve {
 		t.Error("deny delivered an approval")
 	}
 }
@@ -44,7 +44,7 @@ func TestExpiryDeniesRatherThanHanging(t *testing.T) {
 
 	select {
 	case got := <-decision:
-		if got {
+		if got.Approve {
 			t.Fatal("an expired question must never resolve as approved")
 		}
 	case <-time.After(3 * time.Second):
@@ -56,17 +56,17 @@ func TestResolvingTwiceIsReported(t *testing.T) {
 	r := New()
 	id, decision, release := r.Open(Pending{Question: "q"})
 	defer release()
-	if err := r.Resolve(id, true); err != nil {
+	if err := r.Resolve(id, Answer{Approve: true}); err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
 	<-decision
-	if err := r.Resolve(id, true); err == nil {
+	if err := r.Resolve(id, Answer{Approve: true}); err == nil {
 		t.Error("the second resolve must report that the question is gone")
 	}
 }
 
 func TestResolvingSomethingUnknownIsAnError(t *testing.T) {
-	if err := New().Resolve("nope", true); err == nil {
+	if err := New().Resolve("nope", Answer{Approve: true}); err == nil {
 		t.Error("an unknown id must not look like success")
 	}
 }
@@ -83,7 +83,7 @@ func TestReleaseRemovesTheQuestion(t *testing.T) {
 	if len(r.List()) != 0 {
 		t.Error("a released question must not stay listed")
 	}
-	if err := r.Resolve(id, true); err == nil {
+	if err := r.Resolve(id, Answer{Approve: true}); err == nil {
 		t.Error("a released question must not be resolvable")
 	}
 }

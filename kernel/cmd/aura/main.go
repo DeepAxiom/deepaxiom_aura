@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"aura/kernel/internal/approvals"
+	"aura/kernel/internal/approver"
+	"aura/kernel/internal/broker"
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/config"
 	"aura/kernel/internal/executor"
@@ -65,6 +67,12 @@ func main() {
 		cmdWhy(os.Args[2:])
 	case "replay":
 		cmdReplay(os.Args[2:])
+	case "regress":
+		cmdRegress(os.Args[2:])
+	case "operator":
+		cmdOperator(os.Args[2:])
+	case "secret":
+		cmdSecret(os.Args[2:])
 	case "trace":
 		cmdTrace(os.Args[2:])
 	case "federate":
@@ -121,6 +129,7 @@ Usage:
   aura promote <projection> <op> --mode dry-run|live|disabled
   aura why [session] [--no-explain] [--port 9080]
   aura replay <session> [--graph <id>] [--deny-gates] [--port 9080]
+  aura regress [--sessions 25] [--graph <id>] [--json] [--fail-on-regression]
   aura trace <session> [--otlp <url>] [--out <file>] [--port 9080]
   aura federate <remote-url> [--capability <cap>] [--port 9080]
   aura registry serve [--port 9091] [--data <dir>]
@@ -136,7 +145,9 @@ Usage:
   aura undo <session|receipt> [--yes] [--port 9080]
   aura guard --config <mcp-servers.json> [--dry-run] [--trust-annotations]
   aura approvals [--json] [--port 9080]
-  aura approve <id> [--deny] [--port 9080]
+  aura approve <id> [--as <operator>] [--deny] [--port 9080]
+  aura operator enroll|add|list|revoke|whoami <id> [--pubkey <b64>] [--port 9080]
+  aura secret set|ls|rm <name> [value] [--port 9080]
   aura version`)
 }
 
@@ -282,12 +293,36 @@ func cmdUp(args []string) {
 		scheme, wsScheme = "https", "wss"
 	}
 
+	// The operator roster (C4 v1.3) and the credential broker. Both are read
+	// from the store the node already opened, so neither adds a service, a file
+	// or a flag to a default node — they are simply empty until used.
+	roster, err := approver.Load(st)
+	if err != nil {
+		fatal(fmt.Errorf("load operator roster: %w", err))
+	}
+	brk, err := broker.Open(st, node.Keys)
+	if err != nil {
+		fatal(fmt.Errorf("open credential broker: %w", err))
+	}
+
+	// Refused at startup rather than at the first gated effect. A node that
+	// requires signed approval with nobody enrolled can answer no gate at all,
+	// so it would come up healthy and then deny its first write minutes later,
+	// with the cause several layers away from the symptom.
+	if policy.SignedApprovalRequired() && roster.Empty() {
+		fatal(fmt.Errorf("policy %s sets require_signed_approval but no operator is enrolled — "+
+			"nobody could answer a gate, so every gated effect would be denied; "+
+			"enrol someone with `aura operator enroll <id>`", policy.Source()))
+	}
+
 	reg := registry.New()
 	mgr := executor.NewManager(reg, st, string(node.Mode), policy, ldg, log)
 	mgr.SetMaxSessions(*maxSessions)
+	mgr.SetApprovers(roster)
 	proj := projection.NewManager(
 		fmt.Sprintf("%s://localhost:%d/ws/skill", wsScheme, *port), log)
 	proj.Token = token
+	proj.Secrets = brk
 	adm := gateway.NewAdmission(budgetBytes)
 	// One approval queue, shared: the MCP server parks gates in it and the
 	// /v1/approvals routes answer them. Without a shared instance a gate raised
@@ -296,10 +331,11 @@ func cmdUp(args []string) {
 	mcp := &mcpsrv.Server{
 		BaseURL: fmt.Sprintf("%s://localhost:%d", scheme, *port),
 		Version: version, Token: token, Log: log, Approvals: appr,
+		NodeID: node.ID,
 	}
 	gw := &gateway.Gateway{Node: node, Reg: reg, St: st, Mgr: mgr, Proj: proj,
 		Adm: adm, Ldg: ldg, Wasm: wasmRT, MCP: mcp.Handler(), Log: log, Auth: auth,
-		Approvals: appr,
+		Approvals: appr, Broker: brk,
 		// Every node with an identity can witness for others (C4 v1.2). It
 		// costs nothing when unused and means a two-node deployment already
 		// has somewhere to anchor, rather than needing a service nobody has

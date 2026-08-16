@@ -18,6 +18,17 @@ import (
 	"aura/kernel/internal/channel"
 )
 
+// Secrets is the credential broker as a projection needs it: exchange the
+// receipt of a sealed effect for the values behind the ${secret:…} references
+// in a header set.
+//
+// An interface rather than the concrete *broker.Broker so this package keeps
+// importing nothing that knows about ledgers, and so a test can substitute one
+// without a store, a keypair and a chain of sealed effects.
+type Secrets interface {
+	ResolveIn(receipt, capability string, in map[string]string) (map[string]string, error)
+}
+
 // Host runs one projection: every enabled operation connects to the kernel
 // as an individual skill over the standard WS protocol (no privileges).
 type Host struct {
@@ -28,6 +39,7 @@ type Host struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	client   *http.Client
+	secrets  Secrets
 }
 
 // Manager owns all running projection hosts on this node.
@@ -40,6 +52,11 @@ type Manager struct {
 	// the whole point of the design — so it authenticates like one.
 	Token string
 	Log   *slog.Logger
+	// Secrets resolves ${secret:…} references against a sealed receipt. Nil on
+	// a node with no broker, which makes any operation that references a secret
+	// fail loudly rather than call the target system with the literal text
+	// "${secret:erp_token}" in an Authorization header.
+	Secrets Secrets
 }
 
 func NewManager(kernelWS string, log *slog.Logger) *Manager {
@@ -55,7 +72,8 @@ func (m *Manager) Apply(cfg Config) {
 	}
 	h := &Host{
 		cfg: cfg, kernelWS: m.kernelWS, token: m.Token, log: m.Log,
-		client: &http.Client{Timeout: 30 * time.Second},
+		client:  &http.Client{Timeout: 30 * time.Second},
+		secrets: m.Secrets,
 	}
 	m.hosts[cfg.Name] = h
 	h.start()
@@ -189,7 +207,11 @@ func (h *Host) session(ctx context.Context, op Op) error {
 			continue
 		}
 		seq++
-		result := h.execute(op, env["payload"])
+		// The receipt is the kernel's own proof that this delivery passed the
+		// Effect Checkpoint. It is only ever set on an envelope the executor
+		// sealed, so a projection cannot manufacture one for itself.
+		receipt, _ := env["receipt"].(string)
+		result := h.execute(op, env["payload"], receipt)
 		payload, _ := json.Marshal(result)
 		reply := map[string]any{
 			"v": "1", "id": channel.NewID(), "cause_id": env["id"],
@@ -212,7 +234,7 @@ func (h *Host) session(ctx context.Context, op Op) error {
 // Request payload (std/api-request@1):
 //
 //	{ "params": {...path params...}, "query": {...}, "headers": {...}, "body": any }
-func (h *Host) execute(op Op, rawPayload any) map[string]any {
+func (h *Host) execute(op Op, rawPayload any, receipt string) map[string]any {
 	var req struct {
 		Params  map[string]any `json:"params"`
 		Query   map[string]any `json:"query"`
@@ -252,6 +274,16 @@ func (h *Host) execute(op Op, rawPayload any) map[string]any {
 		}
 	}
 
+	// Credentials are resolved here and nowhere earlier. The stored config
+	// carries `${secret:name}`, not the value, so a projection sitting idle
+	// holds nothing worth stealing and `GET /v1/projections` has nothing to
+	// leak; the value exists only inside this function, only for this call,
+	// and only because the receipt above proved the call was authorized.
+	headers, err := h.resolveHeaders(op, receipt)
+	if err != nil {
+		return map[string]any{"ok": false, "status": 0, "error": err.Error()}
+	}
+
 	httpReq, err := http.NewRequest(op.Method, full, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return map[string]any{"ok": false, "status": 0, "error": err.Error()}
@@ -259,7 +291,7 @@ func (h *Host) execute(op Op, rawPayload any) map[string]any {
 	if bodyBytes != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
-	for k, v := range h.cfg.Headers {
+	for k, v := range headers {
 		httpReq.Header.Set(k, v)
 	}
 	for k, v := range req.Headers {
@@ -280,6 +312,56 @@ func (h *Host) execute(op Op, rawPayload any) map[string]any {
 	return map[string]any{
 		"ok": resp.StatusCode < 400, "status": resp.StatusCode, "body": parsed,
 	}
+}
+
+// capability is the C1 capability this operation registers under. Kept next to
+// manifest(), which is the other place the same string is built: the broker
+// binds a receipt to the capability that earned it, so the two spellings
+// diverging would mean every credentialed write silently failing.
+func (h *Host) capability(op Op) string {
+	capType := "sensorial"
+	if op.Write {
+		capType = "motor"
+	}
+	return fmt.Sprintf("%s.api.%s.%s", capType, slug(h.cfg.Name), strings.ReplaceAll(op.OpID, "-", "_"))
+}
+
+// resolveHeaders turns the configured headers into the ones actually sent,
+// exchanging the receipt for any ${secret:…} they reference.
+//
+// A projection with no secrets is unaffected — no receipt is asked for and no
+// broker is needed — which keeps this entirely opt-in for the OpenAPI target
+// that authenticates with nothing, or with a header an operator is content to
+// have sitting in the config.
+func (h *Host) resolveHeaders(op Op, receipt string) (map[string]string, error) {
+	if !brokerNeeded(h.cfg.Headers) {
+		return h.cfg.Headers, nil
+	}
+	if h.secrets == nil {
+		return nil, fmt.Errorf("operation %q references a stored secret but this node has no "+
+			"credential broker configured", op.OpID)
+	}
+	// The failure is deliberately total rather than "send the call without the
+	// header". A request that reaches the target system unauthenticated is a
+	// request the target will answer — with a 401 if you are lucky, and with
+	// unauthenticated-but-permitted data if you are not.
+	out, err := h.secrets.ResolveIn(receipt, h.capability(op), h.cfg.Headers)
+	if err != nil {
+		return nil, fmt.Errorf("operation %q could not obtain its credential: %w", op.OpID, err)
+	}
+	return out, nil
+}
+
+// brokerNeeded reports whether any header references a stored secret. Kept
+// local so this package needs no import of broker — the reference syntax is
+// simple enough that duplicating the recognition is cheaper than the coupling.
+func brokerNeeded(headers map[string]string) bool {
+	for _, v := range headers {
+		if strings.Contains(v, "${secret:") {
+			return true
+		}
+	}
+	return false
 }
 
 func orNull(b []byte) []byte {

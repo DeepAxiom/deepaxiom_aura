@@ -48,6 +48,20 @@ type Report struct {
 	// so rather than passing silently. See witness.go.
 	Witnesses      int `json:"witnesses"`
 	WitnessesValid int `json:"witnesses_valid"`
+
+	// Approvals counts entries carrying an operator signature (C4 v1.3), and
+	// ApprovalsInvalid how many of those fail to verify.
+	//
+	// Asymmetric in the verdict, like witnesses and for the same reason: a
+	// ledger with no approvals at all is not unsound — nothing on this node was
+	// gated, or it was answered by clients that do not sign, both ordinary
+	// states. But an approval that no longer verifies is direct evidence that
+	// an entry was edited after sealing, or that one was written claiming a
+	// human said yes when no human did. That is the accusation this field
+	// exists to be able to make.
+	Approvals        int    `json:"approvals"`
+	ApprovalsInvalid int    `json:"approvals_invalid"`
+	ApprovalFailure  string `json:"approval_failure,omitempty"`
 }
 
 // Sound reports whether the ledger passed every check this report ran.
@@ -77,7 +91,8 @@ func (r Report) Sound() bool {
 	return r.ChainIntact &&
 		r.MerkleMismatches == 0 &&
 		(!r.KeyAvailable || r.CheckpointsValid == r.Checkpoints) &&
-		r.WitnessesValid == r.Witnesses
+		r.WitnessesValid == r.Witnesses &&
+		r.ApprovalsInvalid == 0
 }
 
 // Verify recomputes the hash chain from scratch and checks every checkpoint
@@ -136,6 +151,20 @@ func Verify(st *store.Store, pubkeyB64 string) (Report, error) {
 		hash := e.Hash()
 		byHash[hash] = e
 		prevHash = hash
+
+		// C4 v1.3: an approval signature is checked here, in the same offline
+		// walk as the chain, because it is evidence of the same kind — a claim
+		// about the past that has to survive without the node, without the
+		// operator roster as it stands today, and without anyone's word for it.
+		if e.Approver != nil {
+			report.Approvals++
+			if err := e.Approver.Verify(e.Node, e.Session); err != nil {
+				report.ApprovalsInvalid++
+				if report.ApprovalFailure == "" {
+					report.ApprovalFailure = fmt.Sprintf("entry %d: %v", e.Seq, err)
+				}
+			}
+		}
 
 		// The leaf is hashed over the stored bytes, matching how Seal built
 		// it — see LeafHash.

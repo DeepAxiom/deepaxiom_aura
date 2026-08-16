@@ -214,6 +214,18 @@ CREATE TABLE IF NOT EXISTS witnessed_heads (
   pubkey      TEXT NOT NULL,
   ts          INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS operators (
+  id      TEXT PRIMARY KEY,
+  pubkey  TEXT NOT NULL,
+  name    TEXT,
+  added   INTEGER NOT NULL,
+  revoked INTEGER
+);
+CREATE TABLE IF NOT EXISTS node_secrets (
+  name       TEXT PRIMARY KEY,
+  ciphertext TEXT NOT NULL,
+  updated    INTEGER NOT NULL
+);
 `)
 	if err != nil {
 		return err
@@ -913,4 +925,134 @@ func (s *Store) LastWitnessedHead(nodeID string) (h WitnessedHead, ok bool, err 
 		return WitnessedHead{}, false, nil
 	}
 	return h, err == nil, err
+}
+
+// ── operators (C4 v1.3) ─────────────────────────────────────────────
+//
+// Who may answer a gate. Only public keys live here: the node must never hold
+// an operator's private key, or it could manufacture the approvals it is
+// supposed to be audited by.
+
+// OperatorRow is one enrolled human.
+type OperatorRow struct {
+	ID     string `json:"id"`
+	Pubkey string `json:"pubkey"`
+	Name   string `json:"name,omitempty"`
+	Added  int64  `json:"added"`
+	// Revoked is unix millis at revocation, or 0 while enrolled. Revocation is
+	// recorded rather than deleted so an entry approved before it stays
+	// explicable: the roster answers "who may approve now", never "was this
+	// past approval valid", which only the sealed signature answers.
+	Revoked int64 `json:"revoked,omitempty"`
+}
+
+// SaveOperator enrolls or re-enrolls an operator. Re-enrolling clears a prior
+// revocation, which is the only way back in — deliberately explicit rather
+// than a separate un-revoke verb nobody would find.
+func (s *Store) SaveOperator(o OperatorRow) error {
+	_, err := s.db.Exec(
+		`INSERT INTO operators (id, pubkey, name, added, revoked) VALUES (?,?,?,?,NULL)
+		 ON CONFLICT(id) DO UPDATE SET pubkey=excluded.pubkey, name=excluded.name, revoked=NULL`,
+		o.ID, o.Pubkey, o.Name, o.Added)
+	return err
+}
+
+// RevokeOperator marks an operator as no longer able to approve. It reports
+// whether a row was actually changed, so a caller can tell "revoked" from
+// "there was nobody by that name".
+func (s *Store) RevokeOperator(id string, ts int64) (bool, error) {
+	res, err := s.db.Exec(`UPDATE operators SET revoked = ? WHERE id = ? AND revoked IS NULL`, ts, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// Operator returns one enrolled human, revoked or not — the caller decides
+// what revocation means for what it is doing.
+func (s *Store) Operator(id string) (o OperatorRow, ok bool, err error) {
+	var revoked sql.NullInt64
+	var name sql.NullString
+	err = s.db.QueryRow(
+		`SELECT id, pubkey, name, added, revoked FROM operators WHERE id = ?`, id,
+	).Scan(&o.ID, &o.Pubkey, &name, &o.Added, &revoked)
+	if err == sql.ErrNoRows {
+		return OperatorRow{}, false, nil
+	}
+	o.Name, o.Revoked = name.String, revoked.Int64
+	return o, err == nil, err
+}
+
+// Operators lists everyone ever enrolled, by id.
+func (s *Store) Operators() ([]OperatorRow, error) {
+	rows, err := s.db.Query(`SELECT id, pubkey, name, added, revoked FROM operators ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OperatorRow
+	for rows.Next() {
+		var o OperatorRow
+		var revoked sql.NullInt64
+		var name sql.NullString
+		if err := rows.Scan(&o.ID, &o.Pubkey, &name, &o.Added, &revoked); err != nil {
+			return nil, err
+		}
+		o.Name, o.Revoked = name.String, revoked.Int64
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// ── node secrets (the credential broker) ────────────────────────────
+//
+// Stored encrypted; see internal/broker for the key derivation and for why a
+// secret is only ever released against a sealed receipt.
+
+// SaveSecret stores (or replaces) one encrypted secret.
+func (s *Store) SaveSecret(name, ciphertext string, ts int64) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO node_secrets (name, ciphertext, updated) VALUES (?,?,?)`,
+		name, ciphertext, ts)
+	return err
+}
+
+// Secret returns one secret's ciphertext.
+func (s *Store) Secret(name string) (ciphertext string, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT ciphertext FROM node_secrets WHERE name = ?`, name).Scan(&ciphertext)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	return ciphertext, err == nil, err
+}
+
+// SecretNames lists the stored secrets by name. Names only — the values are
+// never enumerable, which is what keeps "list what is configured" a safe
+// operation to expose on the control plane.
+func (s *Store) SecretNames() ([]string, error) {
+	rows, err := s.db.Query(`SELECT name FROM node_secrets ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSecret removes a secret, reporting whether one was there.
+func (s *Store) DeleteSecret(name string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM node_secrets WHERE name = ?`, name)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
