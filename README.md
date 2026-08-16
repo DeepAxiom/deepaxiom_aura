@@ -2307,3 +2307,25 @@ running real nodes), there is no visual graph editor, and the integration
 catalog is small. [Milestone
 status](#milestone-status) is the accurate summary; if it and this document
 ever disagree, Milestone status is right.*
+
+---
+
+## Reference
+
+The shape of [Audit bundles](#audit-bundles) — and the reason this runtime
+emits one at all — comes from:
+
+> **Do Agent Benchmarks Measure Capability? Protocol Validity in the Age of
+> Agentic AI** · [arXiv:2607.22368](https://arxiv.org/abs/2607.22368) (2026)
+>
+> Examined published agent traces and found 67% contained *protocol
+> exposures* — paths by which a score could be earned without the measured
+> capability. Concludes that reports should ship the evidence needed to
+> interpret them, and names the four materials a runtime must emit: complete
+> trajectory logs, artifact provenance with hashes, replayable model
+> configuration, and comparison baselines.
+
+`aura bundle` emits those four. The correspondence was found after the fact —
+the causal log, the effect ledger and the inference attestation were each
+built for unrelated reasons — which is why the bundle is an assembly of
+existing parts rather than a new mechanism.

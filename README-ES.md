@@ -2323,3 +2323,25 @@ y el catálogo de integraciones es pequeño.
 [Estado de los hitos](#estado-de-los-hitos) es el resumen exacto; si ese
 apartado y este documento se contradicen alguna vez, el que tiene razón es
 Estado de los hitos.*
+
+---
+
+## Referencia
+
+La forma de los [Audit bundles](#audit-bundles) — y la razón de que este
+runtime emita uno — viene de:
+
+> **Do Agent Benchmarks Measure Capability? Protocol Validity in the Age of
+> Agentic AI** · [arXiv:2607.22368](https://arxiv.org/abs/2607.22368) (2026)
+>
+> Examinó trazas publicadas de agentes y encontró que el 67% contenía
+> *protocol exposures* — caminos por los que se puede ganar una puntuación sin
+> la capacidad medida. Concluye que los informes deben incluir la evidencia
+> necesaria para interpretarlos, y nombra los cuatro materiales que un runtime
+> debe emitir: logs de trayectoria completos, procedencia de artefactos con
+> hashes, configuración de modelo replayable, y baselines de comparación.
+
+`aura bundle` emite esos cuatro. La correspondencia se encontró después —el log
+causal, el ledger de efectos y la atestación de inferencia se construyeron cada
+uno por razones ajenas—, que es por qué el bundle es un ensamblaje de piezas
+existentes y no un mecanismo nuevo.
