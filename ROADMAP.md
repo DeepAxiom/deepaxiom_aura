@@ -45,7 +45,7 @@ Cuatro propiedades, y ningún runtime del mercado tiene las cuatro:
 
 | | Qué significa | Quién más lo tiene |
 |---|---|---|
-| **Autorizado** | Una política de nodo decide si un efecto ocurre — no el grafo que lo pide | n8n y LangGraph lo dejan en userland |
+| **Autorizado** | Una política de nodo decide si un efecto ocurre — no el grafo que lo pide, y desde C4 v1.3 la entry además nombra y lleva la firma del humano que respondió el gate | n8n y LangGraph lo dejan en userland; nadie ata identidad humana al efecto |
 | **Atestiguado** | Cada efecto en un ledger encadenado y firmado, verificable sin el nodo | Nadie; todos lo tratan como logging |
 | **Reversible** | La compensación se declara en el manifiesto; el kernel conoce el orden inverso | Temporal (saga), sin política ni atestación |
 | **Reproducible** | Replay determinista contra el ledger como oráculo | Temporal, con clúster |
@@ -958,6 +958,36 @@ properties — authorised, attested, reversible, reproducible — and no runtime
 the market has all four. Temporal has compensation but neither policy nor
 attestation; LangGraph's interrupt lives in userland; n8n has an approval node
 and logs; Dapr and MCP have none of it.
+
+**Authorised now names a person.** Through v1.2 the ledger cited the *policy*
+that authorized a class of effect and recorded that a gate was resolved — never
+which human resolved it. That half was not merely missing but unprovable in
+principle: the node writes its own entries, so a node claiming an approval could
+write one. C4 v1.3 closes it. The operator signs a statement bound to that one
+delivery with a key the node has never held; the entry seals the signature, and
+`aura verify` re-checks it offline. Two consequences that did not exist before —
+the approver cannot repudiate, and the node cannot fabricate. Compliance
+attestation products issue credentials *beside* a runtime; nothing binds a human
+identity to the effect itself at the moment of authorization.
+
+Two more moves came with it, both aimed at limitations this document had already
+admitted:
+
+- **The credential broker.** `aura guard` holds only as far as control over the
+  agent's config does — stated plainly, and the honest ceiling of a
+  config-level chokepoint. The answer is not network enforcement (a proxy, eBPF,
+  a sidecar: all real, all infrastructure this runtime promises you will not
+  need). It is to make the bypass *useless*: the credential lives in the kernel
+  and is released only against the receipt of an effect that just passed the
+  checkpoint. Skipping the gate stops being a way to avoid scrutiny and becomes
+  a way to get a 401.
+- **Regression against the ledger.** `aura regress` replays recorded sessions
+  and diffs the sealed *effects*, grouped by capability and by the model each
+  side cited. Eval suites score outputs against a rubric and structurally cannot
+  see an act that stopped happening; C5 already binds the model revision to the
+  act, so this compares two named, pinned configurations rather than "before"
+  and "after". It is the most frequent pain the ledger can address — model
+  upgrades happen weekly, audits annually.
 
 **Sixty per cent is already built:** the causal log, the kernel-invariant gate,
 Ed25519 with canonical JSON, replay, and typed contracts. This is not a rewrite;

@@ -24,6 +24,7 @@ import (
 
 	"aura/kernel/internal/approvals"
 	"aura/kernel/internal/channel"
+	"aura/kernel/internal/ledger"
 )
 
 const protocolVersion = "2025-06-18"
@@ -45,22 +46,30 @@ type Server struct {
 	// explanation — which is the right fallback: a node with no way to ask
 	// must not proceed as though someone said yes.
 	Approvals *approvals.Registry
-	Log       *slog.Logger
+	// NodeID is what a signed approval is bound to (C4 v1.3). Empty on a node
+	// that never requires signatures; an operator answering an MCP-originated
+	// gate needs it to sign the same statement the executor will verify.
+	NodeID string
+	Log    *slog.Logger
 }
 
 // awaitApproval parks a gate for a human and blocks until it is answered.
 //
-// Returns the decision and, when it is a refusal, the sentence the model
-// should see. The two denial reasons are kept distinct on purpose: "a person
-// declined this" and "there was nobody to ask" call for different responses
-// from whoever reads the transcript afterwards.
-func (s *Server) awaitApproval(req channel.Envelope, tool string, arguments map[string]any) (bool, string) {
+// Returns the decision and, when one was given, the operator's signed
+// statement — which this package deliberately does not inspect. Verifying it is
+// the executor's job and only the executor's: a border that decided for itself
+// whether a signature was good would be a second implementation of the check,
+// and the one place both must agree is the place that seals.
+func (s *Server) awaitApproval(req channel.Envelope, tool string, arguments map[string]any) (bool, *ledger.Approval) {
 	if s.Approvals == nil {
-		return false, "this action needs human approval and this node has no approval queue — " +
-			"run it from the aura UI, or `aura do`"
+		return false, nil
 	}
 	var body struct {
 		Question string `json:"question"`
+		// Held is the id of the delivery the executor is holding — what a
+		// signed approval must be bound to, carried through so an operator
+		// answering out of band signs the same delivery the gate is waiting on.
+		Held string `json:"held"`
 	}
 	_ = json.Unmarshal(req.Payload, &body)
 	if body.Question == "" {
@@ -74,16 +83,27 @@ func (s *Server) awaitApproval(req channel.Envelope, tool string, arguments map[
 		Tool:      tool,
 		Session:   req.Session,
 		Arguments: args,
+		Node:      s.NodeID,
+		Envelope:  body.Held,
 	})
 	defer release()
 
 	if s.Log != nil {
 		s.Log.Info("mcp: waiting for human approval", "id", id, "tool", tool)
 	}
-	if approved := <-decision; approved {
-		return true, ""
+	answer := <-decision
+	if answer.Approve {
+		return true, answer.Approval
 	}
-	return false, fmt.Sprintf(
+	return false, nil
+}
+
+// deniedBecause is the sentence the model sees when a call is refused. The two
+// reasons stay distinct on purpose: "a person declined this" and "there was
+// nobody to ask" call for different responses from whoever reads the
+// transcript afterwards.
+func deniedBecause(id string) string {
+	return fmt.Sprintf(
 		"denied: a human declined this call, or it went unanswered (approval %s). "+
 			"Pending approvals are listed at GET /v1/approvals.", id)
 }
@@ -527,8 +547,18 @@ func (s *Server) callToolStreaming(ctx context.Context, name string, arguments m
 			_ = json.Unmarshal(reply.Payload, &body)
 			return toolError(body.Detail), nil
 		case channel.KindConfirmRequest:
-			approved, why := s.awaitApproval(reply, name, arguments)
-			decision, _ := json.Marshal(map[string]bool{"approve": approved})
+			if s.Approvals == nil {
+				return toolError("this action needs human approval and this node has no " +
+					"approval queue — run it from the aura UI, or `aura do`"), nil
+			}
+			approved, signed := s.awaitApproval(reply, name, arguments)
+			// The signature rides back on the same confirm_response the verdict
+			// does, so the executor verifies and seals it on the one code path
+			// that handles every gate, whatever surface answered it.
+			decision, _ := json.Marshal(struct {
+				Approve  bool             `json:"approve"`
+				Approval *ledger.Approval `json:"approval,omitempty"`
+			}{approved, signed})
 			if err := conn.WriteJSON(channel.Envelope{
 				V: channel.ProtocolMajor, ID: channel.NewID(), CauseID: reply.ID,
 				Kind: channel.KindConfirmResponse, Payload: decision,
@@ -536,7 +566,7 @@ func (s *Server) callToolStreaming(ctx context.Context, name string, arguments m
 				return nil, &rpcError{-32603, err.Error()}
 			}
 			if !approved {
-				return toolError(why), nil
+				return toolError(deniedBecause(reply.ID)), nil
 			}
 			// Approval can take as long as a person takes. The read budget is
 			// restarted from *now* so the wait is not charged against the time

@@ -85,21 +85,24 @@ el kernel/SDK/spec en sí.
 18. [Drivers de modelos y admisión de recursos](#drivers-de-modelos-y-admisión-de-recursos)
 19. [Audit bundles](#audit-bundles)
 20. [Un entorno OpenEnv](#un-entorno-openenv)
-21. [Aislamiento de skills](#aislamiento-de-skills)
-22. [Witnessing abierto](#witnessing-abierto)
-23. [El marketplace](#el-marketplace)
-24. [Explicabilidad y replay](#explicabilidad-y-replay)
-25. [Federar nodos](#federar-nodos)
-26. [Estándares en las fronteras](#estándares-en-las-fronteras)
-27. [Proteger las tools de un agente](#proteger-las-tools-de-un-agente)
-28. [Los cinco contratos](#los-cinco-contratos)
-29. [Modelo de seguridad](#modelo-de-seguridad)
-30. [API HTTP y WebSocket](#api-http-y-websocket)
-31. [Estructura del repositorio](#estructura-del-repositorio)
-32. [Compilación y release](#compilación-y-release)
-33. [Estado de los hitos](#estado-de-los-hitos)
-34. [Diseñado, aún no construido](#diseñado-aún-no-construido)
-35. [Licencia y gobernanza](#licencia-y-gobernanza)
+21. [Aprobación firmada — quién lo permitió](#aprobación-firmada--quién-lo-permitió)
+22. [El broker de credenciales](#el-broker-de-credenciales)
+23. [Regresión contra el ledger](#regresión-contra-el-ledger)
+24. [Aislamiento de skills](#aislamiento-de-skills)
+25. [Witnessing abierto](#witnessing-abierto)
+26. [El marketplace](#el-marketplace)
+27. [Explicabilidad y replay](#explicabilidad-y-replay)
+28. [Federar nodos](#federar-nodos)
+29. [Estándares en las fronteras](#estándares-en-las-fronteras)
+30. [Proteger las tools de un agente](#proteger-las-tools-de-un-agente)
+31. [Los cinco contratos](#los-cinco-contratos)
+32. [Modelo de seguridad](#modelo-de-seguridad)
+33. [API HTTP y WebSocket](#api-http-y-websocket)
+34. [Estructura del repositorio](#estructura-del-repositorio)
+35. [Compilación y release](#compilación-y-release)
+36. [Estado de los hitos](#estado-de-los-hitos)
+37. [Diseñado, aún no construido](#diseñado-aún-no-construido)
+38. [Licencia y gobernanza](#licencia-y-gobernanza)
 
 ---
 
@@ -1477,6 +1480,240 @@ la razón de tener este border y no solo cumplirlo: un entorno que devuelve
 evidencia a prueba de manipulación junto a la observación permite que un
 benchmark reporte los supuestos detrás de una puntuación, no solo la
 puntuación.
+
+---
+
+## Aprobación firmada — quién lo permitió
+
+El modelo de seguridad siempre pudo demostrar *que* un efecto fue gateado y
+respondido. No podía demostrar **quién respondió**, y ese hueco es más grande de
+lo que parece: una revisión de compliance no pregunta si un humano aprobó,
+pregunta cuál. "Un humano aprobó" sin nombre es un log, no un audit trail.
+
+Y no estaba simplemente ausente: era indemostrable en principio. El nodo escribe
+su propio ledger, así que un nodo que quisiera afirmar que hubo una aprobación
+podía escribir una. Toda garantía aquí se apoya en una firma que el nodo no
+puede falsificar *en nombre de otro* — y la aprobación, el único campo que
+describe una decisión humana, no tenía ninguna.
+
+```powershell
+.\kernel\aura.exe operator enroll grace --name "Grace Hopper"
+#  enrolled grace
+#  public key   MCowBQYDK2VwAyEA…
+#  private key  C:\Users\tu\.aura\operator\grace\ed25519.key
+
+.\kernel\aura.exe approvals                    # qué está esperando
+.\kernel\aura.exe approve <id> --as grace      # fírmalo
+#  approved 01J9ZK… — signed as grace
+```
+
+La entry sellada ahora lleva la respuesta:
+
+```json
+"approver": {
+  "operator": "grace",
+  "pubkey":   "MCowBQYDK2VwAyEA…",
+  "envelope": "01J9ZK2M1P…",
+  "decision": "approve",
+  "ts":       1754083200000,
+  "sig":      "base64…"
+}
+```
+
+**El nodo nunca tiene la clave privada.** Vive en el home del propio operador y
+solo se enrola la mitad pública. Eso es lo que convierte una aprobación en algo
+que el nodo no puede fabricar sobre sí mismo, que es todo el punto: la parte
+auditada no debe poder producir su propia evidencia. En una instalación de una
+sola máquina la misma persona posee ambos directorios, así que ahí la separación
+es una convención y no una frontera; se vuelve real en cuanto el operador aprueba
+desde su portátil contra un nodo que está en otro sitio.
+
+Todo lo que hay en la declaración firmada está atado, así que una firma válida no
+se puede mover: ni a otro nodo, ni a otra sesión, ni a otra entrega, ni a otra
+decisión, ni a otro momento. Corren dos chequeos, deliberadamente separados:
+
+| | Qué pregunta | Contra qué | Cuándo |
+|---|---|---|---|
+| **Autoría** | ¿esta clave firmó *esta* resolución? | los bytes sellados | siempre, offline |
+| **Enrolamiento** | ¿ese operador puede aprobar aquí, con esa clave? | el roster vivo | una vez, en el gate |
+
+Unirlos haría que la historia dependiera del presente. **Revocar a un operador no
+invalida las aprobaciones que ya dio** — un audit trail que cambia cuando cambia
+el organigrama no es un audit trail. `aura operator revoke` lo dice explícitamente.
+
+Tres rechazos que conviene conocer, cada uno un ataque real:
+
+- Una clave que el nodo nunca enroló, firmando como `grace`, produce una
+  declaración criptográficamente válida. Se rechaza — el nombre es una
+  afirmación hasta que el roster confirma la clave detrás.
+- Un `deny` firmado, reenviado con `"approve": true` al lado, se rechaza en vez
+  de que gane uno de los dos. La firma cubre la decisión precisamente para que
+  voltear un booleano no autenticado no pueda cambiar la respuesta.
+- Una aprobación de una entrega, reproducida contra otra de la misma sesión, se
+  rechaza. Dentro de una misma conversación, esa es la diferencia entre aprobar
+  un pago y aprobar el siguiente.
+
+Para hacerlas obligatorias:
+
+```yaml
+# aura.policy.yaml
+policy: 1
+default_effect: gate
+require_signed_approval: true
+```
+
+Entonces una respuesta sin firma a un gate es una **denegación**, no un
+fallback — un enforcement que puedes saltarte omitiendo un campo no hace
+enforcement de nada. Un nodo con esto activado y sin nadie enrolado **se niega a
+arrancar**, en vez de levantarse sano y denegar su primera escritura minutos
+después con la causa a varias capas del síntoma.
+
+`aura verify` chequea las firmas de aprobador en el mismo recorrido offline que
+usa para la cadena. Una aprobación que ya no verifica deja el ledger
+**unsound**: es evidencia directa de que una entry fue editada tras sellarse, o
+de que se escribió una afirmando que un humano dijo que sí cuando ninguno lo hizo.
+
+---
+
+## El broker de credenciales
+
+`aura guard` y la política de nodo comparten una limitación que esta guía siempre
+dijo con todas las letras: valen exactamente hasta donde llegue tu control sobre
+la configuración del agente. Nada impide que un proceso se salte el gate — llama
+al ERP directo. Eso hace del checkpoint una excelente barandilla de seguridad y
+una frontera de seguridad débil, y ninguna cantidad de política lo arregla,
+porque la política se aplica en el lugar que el llamante decidió visitar.
+
+La respuesta habitual es enforcement en la red: un proxy, eBPF, un sidecar.
+Funcionan, necesitan infraestructura que este runtime promete que no vas a
+necesitar, y ninguno corre en una Raspberry Pi.
+
+La otra respuesta es dejar de intentar hacer imposible el bypass y hacerlo
+**inútil**. Un agente que se salta el gate llega al ERP y no tiene credencial
+para él, porque la credencial nunca estuvo en su entorno — está en el kernel, y
+la única forma de obtenerla es presentar el recibo de un efecto que acaba de
+pasar el checkpoint.
+
+```powershell
+.\kernel\aura.exe secret set erp_token      # lee stdin: sin historial de shell, sin tabla de procesos
+#  stored erp_token — reference it as ${secret:erp_token}
+
+.\kernel\aura.exe secret ls
+#  ${secret:erp_token}
+```
+
+Referéncialo donde antes estaba la credencial:
+
+```yaml
+name: legacy-erp
+base_url: http://erp.internal
+headers:
+  Authorization: "Bearer ${secret:erp_token}"    # se resuelve al llamar, nunca se guarda expandido
+```
+
+Qué demuestra un recibo, sin que el broker confíe en el llamante en absoluto:
+
+- **el efecto existió y fue autorizado** — la entry está en la cadena, y a la
+  cadena solo se llega pasando el checkpoint;
+- **fue permitido o aprobado** — un efecto denegado no compra nada;
+- **es *este* efecto** — la entry nombra la capability, así que un skill no puede
+  gastar la aprobación de otro en el token de pagos;
+- **es reciente** — 90 segundos, canjeable tres veces. Un recibo no es un bearer
+  token con vida útil útil; el margen existe para reintentar tras un error de
+  conexión, no para fan-out.
+
+Un recibo falsificado no está en el ledger. Uno robado está atado a la capability
+de otro. Uno reproducido está caducado. **Un token de nodo filtrado no se
+convierte en una credencial de ERP filtrada** — tenerlo te deja poner un secreto
+y ver que existe, y no hay ninguna ruta, en ningún sitio, que devuelva un valor.
+
+Los secretos se cifran en reposo con una clave derivada de la propia clave de
+identidad del nodo, y el nombre se autentica junto al valor, así que un
+ciphertext no puede moverse de la fila de un secreto a la de otro con un editor
+de texto. Un directorio de datos copiado sin su subdirectorio `identity/` produce
+ciphertext que nadie puede abrir, que es el resultado correcto para un archivo de
+base de datos robado.
+
+Un skill que corre como proceso propio usa la misma puerta:
+
+```powershell
+curl -X POST localhost:9080/v1/secrets/resolve `
+  -H "Authorization: Bearer $token" `
+  -d '{"receipt":"sha256:…","capability":"motor.api.erp.create_invoice","names":["erp_token"]}'
+```
+
+**Lo que esto no hace**, dicho claro: no impide que un skill que recibió
+legítimamente una credencial se la quede. Una vez que un valor llega a un
+proceso, ese proceso lo tiene, y nada salvo no revelarlo nunca — un oráculo de
+firma, un proxy de egress — cambia eso. Lo que sí elimina es la credencial
+*ambiente y permanente*: el token en el entorno de un agente de larga vida,
+disponible para cada llamada que haga, gateada o no. La ventana se reduce a un
+efecto autorizado.
+
+---
+
+## Regresión contra el ledger
+
+`aura replay` contesta "¿esta sesión reprodujo lo que registró?". Esa es la
+unidad correcta para depurar y la equivocada para la pregunta que los equipos se
+hacen de verdad cada semana:
+
+> vamos a cambiar el modelo. ¿Qué le hace eso a los efectos?
+
+Nada en el mercado la contesta con evidencia. Las suites de evals puntúan salidas
+contra una rúbrica — lo cual mide si el texto mejoró y no dice nada sobre si el
+runtime pasó a cobrar una tarjeta distinta. La observabilidad registra las
+consecuencias. Ninguna puede decir *"339 de 345 sesiones sellaron exactamente los
+mismos efectos; aquí están las 6 que no, y aquí la revisión del modelo de cada
+lado"*.
+
+```powershell
+.\kernel\aura.exe regress --sessions 200
+#    ── regression report ──────────────────────────────────
+#
+#    sessions      200 replayed · 194 reproduced · 6 changed · 0 could not run
+#    effects       412 sealed before · 406 after   ← 6 fewer effects happened
+#
+#    models cited
+#      before  Qwen/Qwen2.5-1.5B-Instruct-GGUF @f1d2d2f (Q4_K_M)
+#      after   Qwen/Qwen2.5-3B-Instruct-GGUF @a7c31e0 (Q4_K_M)
+#
+#    what changed, by capability
+#      motor.payments.refund                    6 session(s)  [count×6]
+#
+#    verdict: 6/200 sessions changed behaviour
+```
+
+La línea que importa es **"6 fewer effects happened"**, y es el hallazgo que un
+diff de salidas estructuralmente *no puede* hacer: un acto que dejó de ocurrir no
+deja texto detrás contra el cual comparar, así que se lee como silencio. Solo
+algo que cuente los efectos sellados puede verlo.
+
+Esto funciona aquí y en ningún otro lado por una razón que no es ingenio — la
+agregación es un fold sobre el diff por sesión que ya existía. Es que C5 ya ata
+revisión del modelo, cuantización y parámetros de muestreo a cada acto, así que
+la comparación es entre dos configuraciones *nombradas y fijadas* en vez de entre
+"antes" y "después", y una divergencia llega con las dos atestaciones que la
+produjeron.
+
+Deliberadamente no es un gate de pass/fail por defecto: un grafo con modelo
+detrás redacta legítimamente distinto entre corridas, y una herramienta que grita
+regresión ante cada reformulación queda silenciada en una semana — que es como
+deja de leerse justo en el momento que importa. `--fail-on-regression` sale con
+código distinto de cero para un job de CI que haya decidido que sus grafos son lo
+bastante deterministas, y `--json` emite el informe completo.
+
+Dos límites honestos:
+
+- Una sesión que **no se pudo reproducir** (su grafo ya no está, un skill que
+  necesita está caído) se cuenta aparte y **no** ensucia la corrida. Convertir
+  en silencio "no se pudo probar" en "la prueba falló" enseña a la gente a
+  ignorar los resultados.
+- **Los gates se autorresponden sin firma durante el replay**, así que un nodo
+  con `require_signed_approval` los verá rechazados. Eso es correcto y no
+  desafortunado: un replay capaz de acuñar una aprobación firmada significaría
+  que la maquinaria para fabricar una existe, y el valor de una aprobación
+  sellada es precisamente que no se puede producir sin la clave de un humano.
 
 ---
 

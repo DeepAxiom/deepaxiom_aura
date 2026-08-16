@@ -253,7 +253,7 @@ func TestDryRunDescribesWithoutCalling(t *testing.T) {
 	}
 	op := Op{OpID: "createPet", Method: "POST", Path: "/pets", Write: true, Mode: ModeDryRun}
 
-	out := h.execute(op, map[string]any{"body": map[string]any{"name": "rex"}})
+	out := h.execute(op, map[string]any{"body": map[string]any{"name": "rex"}}, "")
 
 	if called {
 		t.Fatal("a dry-run reached the upstream API")
@@ -290,7 +290,7 @@ func TestLiveOperationCallsUpstream(t *testing.T) {
 	out := h.execute(op, map[string]any{
 		"params": map[string]any{"petId": "42"},
 		"query":  map[string]any{"limit": 10},
-	})
+	}, "")
 
 	if out["ok"] != true {
 		t.Fatalf("call failed: %v", out)
@@ -313,7 +313,7 @@ func TestUpstreamErrorIsReportedNotPanicked(t *testing.T) {
 		client: api.Client(),
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	out := h.execute(Op{Method: "GET", Path: "/x", Mode: ModeLive}, nil)
+	out := h.execute(Op{Method: "GET", Path: "/x", Mode: ModeLive}, nil, "")
 
 	if out["ok"] != false {
 		t.Errorf("a 500 was reported as ok: %v", out)
@@ -329,7 +329,7 @@ func TestUnreachableUpstreamIsReported(t *testing.T) {
 		client: http.DefaultClient,
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	out := h.execute(Op{Method: "GET", Path: "/x", Mode: ModeLive}, nil)
+	out := h.execute(Op{Method: "GET", Path: "/x", Mode: ModeLive}, nil, "")
 	if out["ok"] != false || out["error"] == nil {
 		t.Errorf("an unreachable API produced %v", out)
 	}
@@ -353,7 +353,7 @@ func TestConfiguredAndRequestHeadersAreSent(t *testing.T) {
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	_ = h.execute(Op{Method: "GET", Path: "/x", Mode: ModeLive},
-		map[string]any{"headers": map[string]any{"X-Trace": "abc"}})
+		map[string]any{"headers": map[string]any{"X-Trace": "abc"}}, "")
 
 	if gotAuth != "Bearer upstream-key" {
 		t.Errorf("configured header did not reach upstream: %q", gotAuth)
@@ -376,7 +376,7 @@ func TestNonJSONResponseIsCarriedAsText(t *testing.T) {
 		client: api.Client(),
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	out := h.execute(Op{Method: "GET", Path: "/x", Mode: ModeLive}, nil)
+	out := h.execute(Op{Method: "GET", Path: "/x", Mode: ModeLive}, nil, "")
 
 	body, ok := out["body"].(string)
 	if !ok || !strings.Contains(body, "maintenance") {

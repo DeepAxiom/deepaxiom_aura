@@ -227,21 +227,39 @@ func cmdApprove(args []string) {
 	fs := flag.NewFlagSet("approve", flag.ExitOnError)
 	port := fs.Int("port", 9080, "kernel port")
 	deny := fs.Bool("deny", false, "refuse the call instead of allowing it")
+	as := fs.String("as", "", "sign the answer as this enrolled operator (C4 v1.3)")
 	ops := parseWithOperands(fs, args, 1)
 	if len(ops) == 0 {
-		fatal(fmt.Errorf("usage: aura approve <approval-id> [--deny] [--port 9080]\n\n" +
-			"List what is waiting with `aura approvals`."))
+		fatal(fmt.Errorf("usage: aura approve <approval-id> [--as <operator>] [--deny] [--port 9080]\n\n" +
+			"List what is waiting with `aura approvals`.\n" +
+			"With --as, the answer is signed with that operator's key and sealed into\n" +
+			"the ledger entry, so the record says who allowed it and not merely that\n" +
+			"somebody did."))
 	}
+
+	answer := map[string]any{"approve": !*deny}
+	if *as != "" {
+		signed, err := signApprovalFor(*port, ops[0], *as, !*deny)
+		if err != nil {
+			fatal(err)
+		}
+		answer["approval"] = signed
+	}
+
 	c := newNodeClient(*port)
-	body, _ := json.Marshal(map[string]bool{"approve": !*deny})
+	body, _ := json.Marshal(answer)
 	if _, err := c.do("POST", "/v1/approvals/"+ops[0], body); err != nil {
 		fatal(err)
 	}
+	verb := "approved"
 	if *deny {
-		fmt.Printf("  denied %s\n", ops[0])
+		verb = "denied"
+	}
+	if *as != "" {
+		fmt.Printf("  %s %s — signed as %s\n", verb, ops[0], *as)
 		return
 	}
-	fmt.Printf("  approved %s\n", ops[0])
+	fmt.Printf("  %s %s\n", verb, ops[0])
 }
 
 func truncate(s string, n int) string {

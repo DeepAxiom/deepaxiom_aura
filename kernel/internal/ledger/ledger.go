@@ -118,6 +118,18 @@ type Entry struct {
 	// fires a write directly, a hand-driven CLI call. Absence is meaningful
 	// and is not the same as "unknown".
 	Inference []string `json:"inference,omitempty"`
+	// Approver is the signed identity of the human who resolved this effect's
+	// gate (C4 v1.3, additive). See approval.go for why the signature rather
+	// than a name is what is sealed.
+	//
+	// Present only on an entry whose Decision is "gate" and whose resolution
+	// carried a verified signature. Absent means one of two things and the
+	// entry does not distinguish them, deliberately: either the effect was
+	// never gated (Decision "allow" — nobody was asked), or it was gated and
+	// answered by a client that did not sign. A node that needs the second case
+	// to be impossible sets `require_signed_approval` in its policy, and then
+	// absence on a gated entry cannot occur at all.
+	Approver *Approval `json:"approver,omitempty"`
 }
 
 // Hash is this entry's identity in the chain: sha256 of its canonical JSON,
@@ -153,6 +165,11 @@ type SealRequest struct {
 	// Seal sorts and de-duplicates it, so callers may pass it in whatever
 	// order they collected it.
 	Inference []string
+	// Approver is the verified signature of the human who answered the gate,
+	// or nil. Seal re-verifies it rather than trusting the caller: an entry is
+	// permanent, and sealing an approval that does not check would put a
+	// forgery beyond reach of correction forever.
+	Approver *Approval
 }
 
 // Ledger is one node's effect ledger: a single writer serialised by mu, so
@@ -258,6 +275,11 @@ func (l *Ledger) Head() Head {
 // checkpoints with — what `aura verify` needs to check them.
 func (l *Ledger) NodePublicKey() string { return l.pubkeyB6 }
 
+// NodeID is the identity every entry is sealed under. Approvals are signed
+// over it (C4 v1.3), so the executor needs it to verify one, and the ledger is
+// where the authoritative value already lives.
+func (l *Ledger) NodeID() string { return l.nodeID }
+
 // Seal authorizes-and-attests one effect: it assigns the next seq, chains it
 // to the current head, persists it, and returns a receipt (the entry's own
 // hash) the caller can attach to the envelope it delivers. It also seals a
@@ -271,6 +293,18 @@ func (l *Ledger) NodePublicKey() string { return l.pubkeyB6 }
 func (l *Ledger) Seal(req SealRequest) (receipt string, err error) {
 	if err := validateVocabulary(req); err != nil {
 		return "", err
+	}
+
+	// Re-verify rather than trust the caller. The executor already checked this
+	// signature before acting on it, and checking twice is still right: an
+	// entry cannot be edited or withdrawn once sealed, so the last moment at
+	// which a bad approval can be stopped is here. The cost is one Ed25519
+	// verification on the gated path only, which is by definition a path that
+	// just waited on a human.
+	if req.Approver != nil {
+		if err := req.Approver.Verify(l.nodeID, req.Session); err != nil {
+			return "", fmt.Errorf("refusing to seal an unverifiable approval: %w", err)
+		}
 	}
 
 	sum := sha256.Sum256(req.Payload)
@@ -288,6 +322,7 @@ func (l *Ledger) Seal(req SealRequest) (receipt string, err error) {
 		PayloadSHA256: payloadHash, Compensation: req.Compensation,
 		Compensates: req.Compensates,
 		Inference:   normalizeInference(req.Inference),
+		Approver:    req.Approver,
 	}
 	hash := entry.Hash()
 

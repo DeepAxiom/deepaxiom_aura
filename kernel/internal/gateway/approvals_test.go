@@ -47,7 +47,7 @@ func TestApprovalsListAndResolve(t *testing.T) {
 	}
 	select {
 	case got := <-decision:
-		if !got {
+		if !got.Approve {
 			t.Error("the route delivered a denial")
 		}
 	case <-time.After(2 * time.Second):
@@ -64,7 +64,7 @@ func TestApprovalsRouteCanDeny(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("resolve: %d", code)
 	}
-	if got := <-decision; got {
+	if got := <-decision; got.Approve {
 		t.Error("approve:false delivered an approval")
 	}
 }

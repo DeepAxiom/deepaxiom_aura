@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"aura/kernel/internal/approvals"
+	"aura/kernel/internal/broker"
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/executor"
 	"aura/kernel/internal/grammar"
@@ -70,7 +71,12 @@ type Gateway struct {
 	// exist. Nil is accepted: the approval routes then answer 404 and a gate
 	// reaching a programmatic client resolves the old way, as a denial.
 	Approvals *approvals.Registry
-	Log       *slog.Logger
+	// Broker is the credential broker: this node's secrets, released only
+	// against the receipt of an effect that passed the Effect Checkpoint. Nil
+	// answers 404 on the secret routes, which is the correct state for a node
+	// whose connectors authenticate with nothing.
+	Broker *broker.Broker
+	Log    *slog.Logger
 	// Auth guards the control surface: bearer token plus the WebSocket origin
 	// allowlist. Nil means an unauthenticated node, which only --no-auth
 	// produces and which prints a warning at startup.
@@ -126,6 +132,13 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", g.health)
 	mux.HandleFunc("GET /v1/approvals", g.listApprovals)
 	mux.HandleFunc("POST /v1/approvals/{id}", g.resolveApproval)
+	mux.HandleFunc("GET /v1/operators", g.listOperators)
+	mux.HandleFunc("POST /v1/operators", g.enrollOperator)
+	mux.HandleFunc("DELETE /v1/operators/{id}", g.revokeOperator)
+	mux.HandleFunc("GET /v1/secrets", g.listSecrets)
+	mux.HandleFunc("PUT /v1/secrets", g.putSecret)
+	mux.HandleFunc("DELETE /v1/secrets/{name}", g.deleteSecret)
+	mux.HandleFunc("POST /v1/secrets/resolve", g.resolveSecret)
 	mux.HandleFunc("GET /v1/skills", g.listSkills)
 	mux.HandleFunc("GET /v1/skills/config", g.getSkillConfig)
 	mux.HandleFunc("PUT /v1/skills/config", g.putSkillConfig)

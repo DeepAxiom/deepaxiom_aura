@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"aura/kernel/internal/approver"
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/identity"
 	"aura/kernel/internal/ledger"
@@ -70,6 +71,24 @@ type Session struct {
 	// pending human-approval gates: confirm_request id -> held envelope + dest
 	pendMu  sync.Mutex
 	pending map[string]pendingGate
+	// approvers is the node's enrolled roster (C4 v1.3). Nil means this node
+	// cannot check signatures, which is exactly the pre-v1.3 behaviour and is
+	// why most tests never wire one; a policy that *requires* signed approval
+	// is refused at startup unless a roster exists, so nil-plus-required is
+	// not a reachable state at runtime.
+	approvers *approver.Registry
+	// nodeID is what an approval signature is bound to, so a resolution
+	// captured on one node cannot be replayed against another. Derived from
+	// the ledger, which is where the authoritative value already lives.
+	nodeID string
+	// approved carries a verified approval from the moment a gate is resolved
+	// to the moment the effect it released is sealed, keyed by the id of the
+	// envelope that was held. Two hops apart, and the seal happens on the
+	// forward path which has no idea a gate was ever involved — so the answer
+	// has to be parked somewhere the seal can find it by the one id both sides
+	// agree on.
+	apprMu   sync.Mutex
+	approved map[string]*ledger.Approval
 
 	// Cancel bookkeeping — see causal.go. Together these let a cancel naming
 	// one client message reach every skill working on it, at any depth, and
@@ -221,6 +240,7 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		undoOf:     undoOf,
 		log:        log,
 		pending:    map[string]pendingGate{},
+		approved:   map[string]*ledger.Approval{},
 		causal:     newCausalIndex(maxCausalRoots),
 		inFlight:   newInFlightIndex(maxInFlightRoot),
 		cancelled:  newCancelledSet(maxCancelled),
@@ -228,6 +248,9 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		spec:       newSpecIndex(maxSpecRoots),
 		ctxLedger:  newContextLedger(g.ContextBudget),
 		sendClient: sendClient,
+	}
+	if ldg != nil {
+		s.nodeID = ldg.NodeID()
 	}
 
 	for _, e := range g.Edges {
@@ -677,16 +700,107 @@ func (s *Session) resolveGate(resp channel.Envelope) {
 	}
 	var body struct {
 		Approve bool `json:"approve"`
+		// Approval is C4 v1.3 and additive: a client that does not send one
+		// behaves exactly as every client did before, unless policy says
+		// otherwise.
+		Approval *ledger.Approval `json:"approval,omitempty"`
 	}
 	_ = json.Unmarshal(resp.Payload, &body)
 	raw, _ := json.Marshal(resp)
 	_ = s.st.AppendEvent(s.ID, resp.ID, resp.CauseID, resp.Kind, raw)
-	if body.Approve {
-		s.forward(held.env, held.to)
-	} else {
-		s.sealDenial(held)
-		s.emitError(resp.ID, fmt.Sprintf("delivery to %s.%s denied by user", held.to.ref, held.to.port))
+
+	approve, approval, err := s.authorizeGate(held, body.Approve, body.Approval)
+	if err != nil {
+		// A rejected signature is a refused effect, never a downgrade to the
+		// unsigned path: the whole point of requiring one is that failing to
+		// produce it cannot be the cheaper route.
+		s.log.Warn("gate answer refused", "session", s.ID,
+			"to", held.to.ref+"."+held.to.port, "err", err)
+		s.sealDenial(held, nil)
+		s.emitError(resp.ID, fmt.Sprintf("delivery to %s.%s denied: %v",
+			held.to.ref, held.to.port, err))
+		return
 	}
+
+	if approve {
+		if approval != nil {
+			s.apprMu.Lock()
+			s.approved[held.env.ID] = approval
+			s.apprMu.Unlock()
+		}
+		s.forward(held.env, held.to)
+		return
+	}
+	s.sealDenial(held, approval)
+	who := "user"
+	if approval != nil {
+		who = approval.Operator
+	}
+	s.emitError(resp.ID, fmt.Sprintf("delivery to %s.%s denied by %s", held.to.ref, held.to.port, who))
+}
+
+// authorizeGate decides what a gate answer actually authorizes.
+//
+// Three cases, and the third is the one that matters:
+//
+//  1. No signature, policy does not require one — the pre-v1.3 path, unchanged.
+//  2. No signature, policy requires one — refused. Not "warn and proceed":
+//     an enforcement that can be skipped by omitting a field enforces nothing.
+//  3. A signature — verified before it is believed, and then it, not the
+//     boolean beside it, is what decides. The boolean is unauthenticated; the
+//     signature covers the decision precisely so that an intercepted "deny"
+//     cannot be forwarded as an "approve" by flipping a JSON field.
+func (s *Session) authorizeGate(held pendingGate, approve bool, a *ledger.Approval) (bool, *ledger.Approval, error) {
+	required := s.policy != nil && s.policy.SignedApprovalRequired()
+
+	if a == nil {
+		if required {
+			return false, nil, fmt.Errorf("this node requires a signed approval and the answer carried none " +
+				"(`aura approve --as <operator>`)")
+		}
+		return approve, nil, nil
+	}
+	if s.approvers == nil {
+		// Someone signed, but this node has no roster to check them against.
+		// Accepting it would seal an approval nobody verified, which is worse
+		// than having none — it would read as proof in the ledger forever.
+		return false, nil, fmt.Errorf("a signed approval arrived but no operator roster is loaded on this node")
+	}
+	if err := s.approvers.Check(a, s.nodeID, s.ID, held.env.ID); err != nil {
+		return false, nil, err
+	}
+	signed := a.Decision == ledger.ApprovalApprove
+	if signed != approve {
+		return false, nil, fmt.Errorf("the answer says %q but %s signed %q — refusing a resolution "+
+			"whose signed decision and transport disagree",
+			approveWord(approve), a.Operator, a.Decision)
+	}
+	return signed, a, nil
+}
+
+func approveWord(b bool) string {
+	if b {
+		return ledger.ApprovalApprove
+	}
+	return ledger.ApprovalDeny
+}
+
+// takeApproval hands back (once) the verified approval that released a held
+// delivery. Removed on read: the seal is the only consumer, an approval
+// answers exactly one delivery, and leaving it in the map would let a long
+// session accumulate one entry per gate it ever passed.
+func (s *Session) takeApproval(heldID string) *ledger.Approval {
+	if heldID == "" {
+		return nil
+	}
+	s.apprMu.Lock()
+	defer s.apprMu.Unlock()
+	a, ok := s.approved[heldID]
+	if !ok {
+		return nil
+	}
+	delete(s.approved, heldID)
+	return a
 }
 
 // recordAttestation captures a C5 inference attestation (envelope.Attest) and
@@ -766,6 +880,10 @@ func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) {
 		Compensation: compensationOf(d.skill.Manifest),
 		Compensates:  s.undoOf,
 		Inference:    inference,
+		// Keyed on CauseID because that *is* the held envelope's id: forward
+		// mints `out` with CauseID set to the source it was released from, and
+		// for a gated delivery the source is exactly what the human was shown.
+		Approver: s.takeApproval(out.CauseID),
 	}
 	receipt, err := s.ldg.Seal(req)
 	if err != nil {
@@ -780,7 +898,12 @@ func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) {
 // exists purely as the record that the proposal was made and refused, which
 // is exactly the case an auditor asking "what did this session try to do"
 // needs the ledger to answer, not only "what did it succeed at".
-func (s *Session) sealDenial(held pendingGate) {
+// The approval argument is the *verified* refusal when a signed operator said
+// no, and nil when the refusal came from an unsigned client, an expired gate,
+// or a signature this node rejected. Sealing it is the point: "who refused
+// this" is as much a fact an incident review needs as "who allowed it", and a
+// signed denial is the only form of it that cannot be disputed later.
+func (s *Session) sealDenial(held pendingGate, approval *ledger.Approval) {
 	if s.ldg == nil || held.to.skill == nil {
 		return
 	}
@@ -800,6 +923,7 @@ func (s *Session) sealDenial(held pendingGate) {
 		Compensation: compensationOf(held.to.skill.Manifest),
 		Compensates:  s.undoOf,
 		Inference:    inference,
+		Approver:     approval,
 	}
 	if _, err := s.ldg.Seal(req); err != nil {
 		s.log.Error("denial sealing failed", "session", s.ID, "capability", req.Capability, "err", err)

@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 	"sync"
 
+	"aura/kernel/internal/approver"
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/ledger"
 	"aura/kernel/internal/registry"
@@ -36,7 +37,21 @@ type Manager struct {
 	// opens a session per delivery, so without a cap an unauthenticated flood
 	// is an out-of-memory condition rather than a rejected request.
 	maxSessions int
+	// approvers is the node's enrolled operator roster (C4 v1.3). Shared by
+	// every session, for the same reason policy and the ledger are: who may
+	// approve is a property of the node, and a per-session roster would mean
+	// whoever opened the session got to say who could authorize its writes.
+	approvers *approver.Registry
 }
+
+// SetApprovers installs the enrolled operator roster. Separate from NewManager
+// on purpose: the roster is loaded from the same store the manager already has,
+// so threading it through the constructor would only widen a signature every
+// test calls, to pass a value nearly none of them exercise.
+func (m *Manager) SetApprovers(r *approver.Registry) { m.approvers = r }
+
+// Approvers is the roster in force, for the control plane and startup checks.
+func (m *Manager) Approvers() *approver.Registry { return m.approvers }
 
 func NewManager(reg *registry.Registry, st *store.Store, mode string,
 	pol *Policy, ldg *ledger.Ledger, log *slog.Logger) *Manager {
@@ -88,6 +103,7 @@ func (m *Manager) Start(sessionID, graphID, undoOf string,
 	if err != nil {
 		return nil, err
 	}
+	sess.approvers = m.approvers
 	if err := m.st.StartSession(sessionID, graphID); err != nil {
 		return nil, err
 	}

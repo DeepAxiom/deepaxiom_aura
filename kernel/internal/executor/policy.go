@@ -123,7 +123,18 @@ type Policy struct {
 	// that never ask — a graph with no speculative edge is unaffected either
 	// way, so defaulting to allow costs nothing and keeps the flag opt-out.
 	Speculation Speculation `yaml:"speculation,omitempty"`
-	Rules       []Rule      `yaml:"rules,omitempty"`
+	// RequireSignedApproval turns the human-approval gate from "somebody
+	// clicked yes" into "this enrolled person signed yes" (C4 v1.3).
+	//
+	// Off by default, and that default is a real decision rather than
+	// timidity: a node with nobody enrolled would refuse every gated effect,
+	// so switching this on silently at upgrade would break running nodes on
+	// their first write. It is opt-in, it is refused at startup when the
+	// roster is empty, and once on, an unsigned answer to a gate is a denial —
+	// not a warning, since a gate that degrades to trusting whoever holds the
+	// socket is the gate this flag exists to replace.
+	RequireSignedApproval bool   `yaml:"require_signed_approval,omitempty"`
+	Rules                 []Rule `yaml:"rules,omitempty"`
 	// Routes pin a capability to specific packages, in preference order.
 	Routes []Route `yaml:"routes,omitempty"`
 
@@ -233,6 +244,10 @@ func (p *Policy) GraphWaiverAllowed() bool {
 func (p *Policy) SpeculationAllowed() bool {
 	return p.Speculation != SpeculationDeny
 }
+
+// SignedApprovalRequired reports whether a gate may only be answered by an
+// enrolled operator's signature (C4 v1.3).
+func (p *Policy) SignedApprovalRequired() bool { return p.RequireSignedApproval }
 
 // RouteFor returns the node's package preferences for a capability: an
 // ordered `prefer` list and a set to avoid. First matching route wins, like

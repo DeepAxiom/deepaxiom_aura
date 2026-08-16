@@ -136,6 +136,13 @@ Nada de esto vive en tu grafo:
   olvida no tiene gate. Aquí el executor lo aplica en el único punto por el que
   pasa toda entrega, guiado por la política del nodo. Un grafo puede pedir *más*
   supervisión de la que la política exige, nunca menos.
+- **La entry nombra al humano que lo aprobó, y él lo firmó.** No "un humano
+  aprobó" — *cuál* humano, y demostrable. El operador firma una declaración
+  atada a esa entrega concreta con una clave que el nodo nunca ha tenido, así
+  que el aprobador no puede negarlo después y el nodo no puede fabricar una.
+  Esa es la mitad de *"quién autorizó esto"* que todo audit trail se salta,
+  porque la respuesta habitual — la palabra del propio nodo — no vale nada
+  cuando el nodo es justamente lo que se está auditando.
 - **Cada efecto se atestigua, no se registra.** Se sella en un registro
   encadenado por hash, comprometido en una cabeza Merkle RFC 6962 que el nodo
   firma y un tercero puede contrafirmar. `aura verify` recalcula cadena, árbol y
@@ -153,6 +160,24 @@ que ya tienes, sin reescribir nada. Una herramienta queda gateada salvo que su
 servidor demuestre que solo lee *y* tú hayas decidido creerle. Vale exactamente
 hasta donde llegue tu control sobre la configuración del agente; no hay
 enforcement de red. [Detalles](GUIDE-ES.md#proteger-las-tools-de-un-agente).
+
+**¿Y cuando controlar la config no alcanza?** Deja de intentar hacer imposible
+el bypass y hazlo inútil. `aura secret set` guarda la credencial en el kernel en
+vez de en el entorno del agente, y solo se libera contra el recibo de un efecto
+que acaba de pasar el checkpoint — la capability correcta, entregado y no
+denegado, de hace segundos. Saltarse el gate deja de ser una forma de evitar
+escrutinio y pasa a ser una forma de conseguir un 401. Lo que no hace: impedir
+que un skill que recibió legítimamente una credencial se la quede. Lo que sí
+elimina: la credencial ambiente y permanente que estaba disponible para cada
+llamada que el agente hiciera, gateada o no.
+[Detalles](GUIDE-ES.md#el-broker-de-credenciales).
+
+**¿Vas a cambiar de modelo?** `aura regress` reproduce tus sesiones grabadas
+contra él y hace diff de los *efectos*, no de las transcripciones — así "cambió
+la redacción" y "dejó de emitir el reembolso" dejan de ser el mismo resultado.
+Una suite de evals puntúa salidas contra una rúbrica y no puede ver un acto que
+dejó de ocurrir; esto sí, porque C5 ya ata la revisión del modelo al acto.
+[Detalles](GUIDE-ES.md#regresión-contra-el-ledger).
 
 ---
 
