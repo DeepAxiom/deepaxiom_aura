@@ -167,6 +167,17 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/ledger/witness", g.ledgerWitness)
 	mux.HandleFunc("GET /v1/ledger/witness/last-seen", g.ledgerWitnessLastSeen)
 	mux.HandleFunc("POST /v1/ledger/witness/record", g.ledgerRecordWitness)
+	// The witness's own log (C4 v1.4) — read-only, and public on an open
+	// witness, because a log only its operator can read is not auditable.
+	mux.HandleFunc("GET /v1/witness/head", g.witnessLogHead)
+	mux.HandleFunc("GET /v1/witness/log", g.witnessLogEntries)
+	mux.HandleFunc("GET /v1/witness/consistency", g.witnessLogConsistency)
+	mux.HandleFunc("GET /v1/witness/proof/{seq}", g.witnessLogInclusion)
+	// This node following someone else's witness. Authenticated: it is our own
+	// audit baseline, and a stranger who could lower it could erase the record
+	// that would convict a witness.
+	mux.HandleFunc("GET /v1/witness/seen", g.witnessSeen)
+	mux.HandleFunc("POST /v1/witness/seen", g.witnessRecordSeen)
 	mux.HandleFunc("GET /v1/ledger/receipt/{hash}", g.ledgerReceipt)
 	mux.HandleFunc("GET /v1/ledger/attestations/{hash}", g.ledgerAttestation)
 	mux.HandleFunc("POST /v1/skills/wasm", g.registerWasmSkill)

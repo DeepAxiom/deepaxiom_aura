@@ -82,6 +82,12 @@ type Countersignature struct {
 	WitnessKey string `json:"witness_key"` // the witness's Ed25519 public key, base64
 	Signature  string `json:"signature"`
 	TS         int64  `json:"ts"`
+	// LogSeq is this countersignature's position in the witness's own public
+	// log (C4 v1.4, additive). It turns "a witness signed this for me" into a
+	// checkable claim: the holder can ask the witness for an inclusion proof at
+	// that position and show a third party the anchor was published, not merely
+	// handed over in private. Zero from a witness that predates the log.
+	LogSeq uint64 `json:"log_seq,omitempty"`
 }
 
 // Statement builds what this node should present to a witness that last saw
@@ -220,13 +226,29 @@ type Witness struct {
 	mu    sync.Mutex
 	rate  map[string][]time.Time
 	nodes int64
+	// logTree and logSize are the witness's own append-only history of every
+	// countersignature it has issued (C4 v1.4, witnesslog.go). Guarded by mu
+	// together with the rate state, so a countersignature is recorded and
+	// counted under one lock and the log's order can never disagree with the
+	// order signatures were actually issued in.
+	logTree CompactTree
+	logSize uint64
 }
 
 // NewWitness builds the witnessing service. The same node identity keypair
 // signs both this node's own checkpoints and its countersignatures for
 // others; the domain-separated payloads keep the two roles from overlapping.
-func NewWitness(st *store.Store, keys *signing.Keypair) *Witness {
-	return &Witness{st: st, keys: keys, limits: DefaultWitnessLimits(), rate: map[string][]time.Time{}}
+//
+// Returns an error only when its own log cannot be rebuilt from storage. That
+// is fatal rather than degradable: a witness that starts with a tree it cannot
+// reconstruct would sign a head no monitor could reproduce, which is worse than
+// a witness that refuses to start.
+func NewWitness(st *store.Store, keys *signing.Keypair) (*Witness, error) {
+	w := &Witness{st: st, keys: keys, limits: DefaultWitnessLimits(), rate: map[string][]time.Time{}}
+	if err := w.initLog(); err != nil {
+		return nil, err
+	}
+	return w, nil
 }
 
 // Open turns this into a witness anyone may present to, with the given limits.
@@ -389,17 +411,39 @@ func (w *Witness) Countersign(s Statement) (Countersignature, error) {
 
 	// 3. Remember before signing: a countersignature we hand out but do not
 	//    record is one we cannot hold the node to next time.
+	ts := time.Now().UnixMilli()
 	if err := w.st.SaveWitnessedHead(store.WitnessedHead{
 		Node: s.Node, Seq: s.Seq, MerkleRoot: s.MerkleRoot,
-		Pubkey: s.Pubkey, TS: time.Now().UnixMilli(),
+		Pubkey: s.Pubkey, TS: ts,
 	}); err != nil {
 		return Countersignature{}, fmt.Errorf("witness: record what we are about to sign: %w", err)
 	}
 
+	sig := w.keys.Sign(witnessPayload(s.Node, s.Seq, s.MerkleRoot))
+
+	// 4. Append to our own public log, still before returning (C4 v1.4). The
+	//    row above is what this witness *believes now*; this is what it *did*,
+	//    and only the second can be audited. A witness that issued a signature
+	//    it never published could later deny having issued it — which is the
+	//    one move that would let a witness get away with a split view.
+	//
+	//    A failure here refuses the countersignature rather than returning one
+	//    off the record: an unlogged signature is precisely the artefact this
+	//    log exists to make impossible.
+	w.mu.Lock()
+	logErr := w.appendLogLocked(s, sig, ts)
+	seq := w.logSize
+	w.mu.Unlock()
+	if logErr != nil {
+		return Countersignature{}, fmt.Errorf(
+			"witness: refusing to counter-sign — could not append to our own log: %w", logErr)
+	}
+
 	return Countersignature{
 		WitnessKey: w.keys.PublicB64(),
-		Signature:  w.keys.Sign(witnessPayload(s.Node, s.Seq, s.MerkleRoot)),
-		TS:         time.Now().UnixMilli(),
+		Signature:  sig,
+		TS:         ts,
+		LogSeq:     seq,
 	}, nil
 }
 

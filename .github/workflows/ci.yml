@@ -262,6 +262,19 @@ jobs:
       - name: a default node refuses what it should
         run: ./scripts/adversarial.sh ./kernel/aura
 
+      # A witness is the party everyone else is asked to rely on, so "the
+      # witness can be caught" is the claim that most needs testing the way it
+      # would actually be attacked: by editing the database behind a running
+      # binary, not by calling an API wrongly. Stands up a witness and a node,
+      # anchors real sealed effects, then rewrites an already-published entry
+      # in SQLite and requires the monitor to refuse and exit non-zero.
+      - name: a witness that rewrites its own log is caught
+        run: |
+          pip install --quiet websockets
+          python scripts/witness_adversarial.py \
+            --witness-port 9411 --node-port 9412 \
+            --data "$RUNNER_TEMP/aura-witness" --aura-binary ./kernel/aura
+
       # `aura guard` is a safety claim, so the claim gets exercised against a
       # real binary and a real MCP server rather than only in unit tests: an
       # unannotated tool must come back gated, and --trust-annotations must be

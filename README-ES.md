@@ -13,8 +13,9 @@ y con contrapresión. Tres propiedades lo sostienen:
 
 - **Streaming** — la unidad de trabajo es la conexión, no la ejecución. 0.42 ms por salto.
 - **Concurrencia** — el throughput *sube* con la carga. 1,000 sesiones concurrentes, medidas.
-- **Auditable** — cada efecto autorizado por política, gateado y sellado en un
-  ledger encadenado que se verifica sin conexión. En el kernel, no en tu grafo.
+- **Auditable** — cada efecto autorizado por política, firmado por un humano con
+  nombre, y sellado en un ledger encadenado que se verifica sin conexión, anclado
+  donde un tercero ya puede estar mirando. En el kernel, no en tu grafo.
 
 Un binario. 23 MB. Sin cuenta, sin nube, sin Postgres, sin broker, sin clúster.
 
@@ -147,6 +148,14 @@ Nada de esto vive en tu grafo:
   encadenado por hash, comprometido en una cabeza Merkle RFC 6962 que el nodo
   firma y un tercero puede contrafirmar. `aura verify` recalcula cadena, árbol y
   firmas desde el archivo de base de datos solo, sin kernel corriendo.
+- **Y ese tercero también rinde cuentas.** Un witness publica su propio log
+  append-only, firma su cabeza, y firma su respuesta a *hasta dónde has
+  respaldado a este nodo* — así que decirle una cosa a uno y otra a otro deja de
+  ser indetectable y pasa a ser dos declaraciones firmadas que no pueden ser
+  ambas ciertas. `aura witness audit` lo sigue y lo rechaza si reescribió algo.
+  Los nodos se anclan por defecto en un witness público y gratuito, y con un
+  flag pueden apuntar a cualquier otro; un recibo vale lo que valga para quien
+  ya esté siguiendo el mismo ancla.
 - **Cita el modelo que lo argumentó.** Un skill que corre inferencia atestigua
   motor, modelo, revisión, cuantización, parámetros de muestreo y semilla —
   atados a cada efecto que esa salida causó. Un cambio silencioso de modelo

@@ -1,6 +1,6 @@
 # C4 — Effect Ledger & Policy (frozen contract)
 
-**Protocol major: 1 · Status: v1.3 — FROZEN (2026-08-16: the `approver` signature added — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.4 — FROZEN (2026-08-16: the witness's own published log, signed `last-seen`, and `log_seq` on a countersignature — all additive; v1.3 2026-08-16 added the `approver` signature — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
 
 C1, C2 and C3 answer *what a skill is*, *how a graph is wired*, and *how
 envelopes flow*. None of them answer the question a node actually has to
@@ -311,6 +311,70 @@ that node, which can drop the inconvenient ones. A report of "0 witnesses" is
 therefore not proof that none were issued; the authoritative copy is the
 witness's own record. Implementations MUST NOT present their own witness count
 as complete.
+
+## The witness's own log (v1.4)
+
+v1.2 answered "can a node rewrite its own history?" — no, because a witness
+remembers. It left the next question open, and it is the one anyone evaluating
+a shared witness asks immediately: **who watches the witness?**
+
+Through v1.3 the answer was nobody. A witness kept one record per node,
+replaced as that node advanced. A replaced record says nothing about what it
+used to say, so a witness could quietly revise what it had vouched for and no
+one could demonstrate it — which makes a witness a party you have to *trust*,
+the exact thing this contract exists to stop needing.
+
+A conforming witness therefore **MUST** maintain its own append-only log:
+
+- **Every countersignature it issues is appended**, before the signature is
+  returned to the caller, and never updated or deleted. A signature issued but
+  not published is one the witness could later deny having made, which is the
+  single move that would let a split view go unpunished. A witness that cannot
+  append MUST refuse to counter-sign rather than return an unlogged signature.
+- **The log has an RFC 6962 tree**, and the witness MUST serve its **signed
+  head** — size, root, its own key, a timestamp, and a signature over them.
+- **It MUST serve consistency proofs** over that log, so a follower can check
+  the history it verified last week is still a prefix of this week's.
+- **It SHOULD serve inclusion proofs**, so a node holding a countersignature
+  can show a third party the anchor was *published*, not handed over privately.
+  `log_seq` on a countersignature (additive) names the position to ask about.
+
+These routes carry heads, roots, keys and signatures — **never a payload,
+capability, session or operator**. A witness must have nothing to leak, or the
+organisations that most need one cannot use it.
+
+### Signed `last-seen`
+
+A node asks a witness how far it has already vouched for it, before building a
+consistency proof. A conforming witness **MUST** sign that answer, and the
+signature **MUST** cover the witness's own log size and root at the moment of
+answering.
+
+```
+"aura-witness-lastseen-v1:" + witness_key + ":" + node + ":" + seq + ":"
+    + merkle_root + ":" + log_size + ":" + log_root + ":" + ts
+```
+
+This is the load-bearing requirement of v1.4. **Unsigned, two different answers
+to two parties are two rumours; signed, they are two statements over one key
+that cannot both be true.** A split view stops being undetectable and becomes
+self-incriminating. "Never seen this node" is also a signed answer — a witness
+must be holdable to a denial, or denial is the one free lie.
+
+An implementation SHOULD provide a way to compare two such statements and
+report an irreconcilable pair. Contradiction means: the same witness, about the
+same node, giving different answers at the same log size; or reporting a
+smaller position later than it reported earlier.
+
+### The follower's baseline
+
+The value of all of this is in what a *follower* keeps. A witness that publishes
+a head and later publishes a smaller or incompatible one is caught by whoever
+retained the earlier head, and by nobody else. An implementation that follows a
+witness therefore SHOULD persist each verified head, MUST verify a head's
+signature before recording it, and MUST NOT lower a recorded baseline — a
+follower that can be talked into forgetting is one that can be talked into
+forgetting the evidence.
 
 ## The portable receipt (v1.2)
 

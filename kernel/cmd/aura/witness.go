@@ -66,7 +66,38 @@ func (w *witnessClient) do(method, url string, body []byte) (int, []byte, error)
 //
 // The peer needs no special software: every node is a witness (see main.go),
 // so any two nodes can anchor each other.
+// DefaultWitnessURL is the project's public witness: free, anonymous, and
+// operated as `aura up --open-witness` like any other.
+//
+// It exists because a witness everyone *can* run is not a witness everyone
+// *does* run, and an anchor is worth what it is worth to a third party. Two
+// nodes anchoring each other prove something to each other and nothing to
+// anyone else; a witness many independent nodes present to is a reference
+// point an auditor can already be following. Concentration is the property —
+// so the address ships in the binary rather than in a paragraph somebody has
+// to read first.
+//
+// Nothing about it is privileged. It holds no key of yours, sees no payload,
+// and can be replaced with `--witness` or removed with `--no-default-witness`.
+// Its own history is public and checkable at `aura witness audit` — the point
+// of the whole arrangement is that you never have to trust it.
+const DefaultWitnessURL = "https://witness.deepaxiom.org"
+
 func cmdWitness(args []string) {
+	if len(args) > 0 {
+		switch args[0] {
+		case "audit":
+			cmdWitnessAudit(args[1:])
+			return
+		case "log":
+			cmdWitnessLog(args[1:])
+			return
+		}
+	}
+	cmdWitnessAnchor(args)
+}
+
+func cmdWitnessAnchor(args []string) {
 	fs := flag.NewFlagSet("witness", flag.ExitOnError)
 	port := fs.Int("port", 9080, "local node port")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-request timeout")
@@ -78,14 +109,16 @@ func cmdWitness(args []string) {
 		"bearer token for the witness node (or AURA_WITNESS_TOKEN)")
 	operands := parseWithOperands(fs, args, 1)
 
-	if len(operands) < 1 {
-		fatal(fmt.Errorf("usage: aura witness <witness-url> [--token <t>] [--port 9080]\n\n" +
-			"  <witness-url> is another node that will vouch for this one's ledger,\n" +
-			"  e.g. http://peer.internal:9080 — any node can act as a witness.\n\n" +
-			"  --token is the WITNESS node's bearer token (or AURA_WITNESS_TOKEN).\n" +
-			"  Not needed if that node runs with --no-auth."))
+	// No witness named: use the public one. Anchoring somewhere by default is
+	// the whole point — an anchor nobody creates protects nothing, and the
+	// version of this that requires reading the docs first is the version that
+	// stays unused.
+	remote := DefaultWitnessURL
+	if len(operands) >= 1 {
+		remote = strings.TrimRight(operands[0], "/")
+	} else {
+		fmt.Printf("no witness named — anchoring at the public witness %s\n", remote)
 	}
-	remote := strings.TrimRight(operands[0], "/")
 	local := newNodeClient(*port)
 	http := &witnessClient{c: &nethttp.Client{Timeout: *timeout}, token: *remoteToken}
 
