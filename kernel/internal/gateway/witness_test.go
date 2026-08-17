@@ -47,11 +47,15 @@ func namedGateway(t *testing.T, id string) (*Gateway, http.Handler) {
 
 	reg := registry.New()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	wit, err := ledger.NewWitness(st, keys)
+	if err != nil {
+		t.Fatalf("ledger.NewWitness: %v", err)
+	}
 	g := &Gateway{
 		Node: &identity.Node{ID: id, Mode: identity.ModeLocal},
 		Reg:  reg, St: st,
 		Mgr: executor.NewManager(reg, st, string(identity.ModeLocal), nil, ldg, log),
-		Adm: NewAdmission(0), Ldg: ldg, Wit: ledger.NewWitness(st, keys), Log: log,
+		Adm: NewAdmission(0), Ldg: ldg, Wit: wit, Log: log,
 	}
 	return g, g.Handler()
 }

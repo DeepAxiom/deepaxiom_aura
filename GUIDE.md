@@ -86,19 +86,20 @@ kernel/SDK/spec themselves.
 23. [Regression testing against the ledger](#regression-testing-against-the-ledger)
 24. [Skill isolation](#skill-isolation)
 25. [Open witnessing](#open-witnessing)
-26. [The marketplace](#the-marketplace)
-27. [Explainability & replay](#explainability--replay)
-28. [Federating nodes](#federating-nodes)
-29. [Standards at the borders](#standards-at-the-borders)
-30. [Guarding an agent's tools](#guarding-an-agents-tools)
-31. [The five contracts](#the-five-contracts)
-32. [Security model](#security-model)
-33. [HTTP & WebSocket API](#http--websocket-api)
-34. [Repository layout](#repository-layout)
-35. [Build & release](#build--release)
-36. [Milestone status](#milestone-status)
-37. [Designed, not yet built](#designed-not-yet-built)
-38. [License & governance](#license--governance)
+26. [Who watches the witness](#who-watches-the-witness)
+27. [The marketplace](#the-marketplace)
+28. [Explainability & replay](#explainability--replay)
+29. [Federating nodes](#federating-nodes)
+30. [Standards at the borders](#standards-at-the-borders)
+31. [Guarding an agent's tools](#guarding-an-agents-tools)
+32. [The five contracts](#the-five-contracts)
+33. [Security model](#security-model)
+34. [HTTP & WebSocket API](#http--websocket-api)
+35. [Repository layout](#repository-layout)
+36. [Build & release](#build--release)
+37. [Milestone status](#milestone-status)
+38. [Designed, not yet built](#designed-not-yet-built)
+39. [License & governance](#license--governance)
 
 ---
 
@@ -479,6 +480,7 @@ The `aura` binary is the kernel, the client, the registry, and the fleet tool.
 | `aura up [--port 9080] [--data <dir>] [--mode local\|site\|published] [--memory-budget 8Gi] [--config <file>]` | Start a node. `--memory-budget` enables resource admission; `--config` sets skill defaults (see [Runtime skill config](#runtime-skill-config)). |
 | ↳ `[--listen 0.0.0.0] [--no-auth] [--tls-cert <f> --tls-key <f>] [--allow-origin <o>]` | Access control. Default is loopback with a generated bearer token — see [Security model](#security-model). `--listen` and `--no-auth` both widen exposure and both print a warning. |
 | ↳ `[--open-witness]` | Let any node anchor its ledger here without a token, rate- and capacity-bounded. See [Open witnessing](#open-witnessing). |
+| ↳ `[--anchor default\|<url>] [--anchor-every 1h]` | Keep this node's ledger anchored at a witness in the background, so the guarantee is a property of running the node rather than of remembering a command. |
 | ↳ `[--policy <file>] [--max-sessions 1000]` | `--policy` loads an authorization document (deny-by-default for `motor.*`); `--max-sessions` caps live sessions, which matters when an ingress route is public. |
 | `aura status [--port 9080]` | Health of a running node plus its connected skills. |
 | `aura verify [--data <dir>]` | Recompute the effect ledger's hash chain and Merkle tree, and check every checkpoint signature and witness countersignature — offline, no running kernel required. Exits nonzero if anything fails to verify. See [Security model](#security-model). |
@@ -491,7 +493,9 @@ Everything here is about proving, afterwards, what a node did — see
 
 | Command | Purpose |
 |---|---|
-| `aura witness <witness-url> [--port 9080]` | Anchor this node's ledger with a third party: present the signed head plus a consistency proof, and record the countersignature. Any node can act as a witness. |
+| `aura witness [witness-url] [--port 9080]` | Anchor this node's ledger with a third party: present the signed head plus a consistency proof, and record the countersignature. With no URL, uses the public witness. Any node can act as a witness. |
+| `aura witness audit [witness-url] [--full] [--port 9080]` | Follow a witness and hold it to what it published: verify its signed head, prove its history still extends the one you verified last time, and with `--full` rebuild its tree from the entries it serves. Exits non-zero if it has rewritten anything. See [Who watches the witness](#who-watches-the-witness). |
+| `aura witness log [witness-url] [--from 1] [--limit 50]` | What a witness has vouched for, and for whom. |
 | `aura receipt <effect-hash> [--out <file>] [--data <dir>]` | Build the portable evidence document for one sealed effect — entry, inclusion proof, signed head, witness countersignatures, cited attestations. |
 | `aura receipt --verify <file>` | Check a receipt with no database, no node and no network. What a third party runs. |
 | `aura bundle <session> [--out <file>] [--data <dir>]` | Assemble one session's audit bundle: trajectory, a verifiable receipt per sealed effect, and the model configurations behind them. |
@@ -1796,6 +1800,101 @@ The statement is self-authenticating — it carries the presenting node's public
 key and a signature over the head — so an open witness verifies before it
 remembers anything, and refuses before it does any cryptography for a caller
 over its rate limit.
+
+### Anchoring by default
+
+An anchor protects nothing until somebody creates one, and a guarantee that
+depends on remembering to run a command is stale on the day it matters. So a
+node can keep itself anchored:
+
+```powershell
+.\kernel\aura.exe up --anchor default --anchor-every 1h
+#  auto-anchoring enabled  witness=https://witness.deepaxiom.org every=1h0m0s
+```
+
+`--anchor default` uses the project's public witness — free, anonymous, no
+account. `--anchor https://…` names another. `aura witness` with no argument
+does the same thing once, by hand.
+
+Nothing about the public one is privileged. It holds no key of yours, sees no
+payload, and its own history is public and checkable with the command below.
+Two nodes anchoring each other prove something to each other and nothing to
+anyone else; a witness many independent nodes present to is a reference point a
+third party can already be following — which is the only reason to prefer it.
+
+---
+
+## Who watches the witness
+
+Anchoring answers "can this node rewrite its own history?" It leaves the
+question a sceptical reader asks next, and until this release the honest answer
+was *nobody*: a witness kept one record per node, replaced as that node
+advanced. A replaced record says nothing about what it used to say, so a witness
+could quietly revise what it had vouched for and no one could show it.
+
+Certificate Transparency's answer is not "trust the log operator" — it is that
+logs publish their own Merkle history and independent monitors follow them, so a
+log that rewrites or forks is *caught*, publicly, by anyone who kept the
+previous head. That is what a witness does now.
+
+```powershell
+.\kernel\aura.exe witness audit                    # audit the public witness
+.\kernel\aura.exe witness audit http://peer:9080   # or any other
+#    ok    head signed by a445e1661f20
+#    ok    grew 1 → 2 entries, and the old history is still a prefix
+#    ok    the published root matches the entries it serves (2 rebuilt)
+
+.\kernel\aura.exe witness log                      # what it has vouched for, for whom
+#    SEQ    NODE                     ENTRIES  ROOT
+#    1      node-dc25cb65f36bf7d6    2        sha256:007b27d81f3cf90…
+#    2      node-dc25cb65f36bf7d6    4        sha256:89d0d75fecfbe1f…
+```
+
+Three checks, each a distinct way a witness can be dishonest:
+
+| | Catches |
+|---|---|
+| The head verifies against the key it claims | following a number somebody typed |
+| The new head extends the one you already verified (consistency proof) | an entry dropped or rewritten after publication |
+| `--full` rebuilds the tree from the served entries | a witness signing a root unrelated to the log it hands out |
+
+**What the monitor keeps between runs is the point.** A snapshot proves nothing;
+a *remembered* snapshot proves a witness has not gone back on it. The baseline
+lives on the follower, never on the witness, and only ever moves forward — a
+monitor that could be talked into lowering it could be talked into forgetting
+the evidence that would convict.
+
+Exercised in CI the way it would actually be attacked, not by calling an API
+wrongly: `scripts/witness_adversarial.py` stands up a witness and a node, anchors
+real sealed effects, then **rewrites an already-published entry directly in
+SQLite** and requires the monitor to refuse and exit non-zero.
+
+```
+FAIL  same size (2), DIFFERENT root.
+      was  sha256:0ea42ce0769c2dcc…
+      now  sha256:1070b0e4c531639b…
+      This witness rewrote history it had already published.
+```
+
+### The signed answer
+
+The change underneath all of this is small and is the one that matters. A node
+asks a witness *how far have you vouched for me?* before building its proof.
+That answer used to be a bare integer, which meant a witness could tell the node
+one thing and an auditor another and neither could prove it — two rumours.
+
+It is signed now, and the signature covers the witness's own log position at the
+moment it answered. **The same two answers become two statements over one key
+that cannot both be true.** A split view stops being undetectable and becomes
+self-incriminating, which is what lets several parties who do not trust each
+other rely on one witness without any of them having to believe it.
+
+"Never seen this node" is signed too. A witness has to be holdable to a denial,
+or denial is the one free lie.
+
+What travels on these routes is heads, roots, keys and signatures — no payload,
+no capability, no session, no operator. A witness has nothing to leak, which is
+what makes one usable by the organisations that most need it.
 
 ---
 

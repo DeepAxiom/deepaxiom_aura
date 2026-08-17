@@ -34,8 +34,11 @@ func witnessPair(t *testing.T) (witnessedNode, *Witness) {
 	}
 
 	witnessStore, _ := testStore(t)
-	return witnessedNode{st: st, dir: dir, keys: keys, ldg: ldg, id: id},
-		NewWitness(witnessStore, testKeys(t))
+	wit, err := NewWitness(witnessStore, testKeys(t))
+	if err != nil {
+		t.Fatalf("NewWitness: %v", err)
+	}
+	return witnessedNode{st: st, dir: dir, keys: keys, ldg: ldg, id: id}, wit
 }
 
 func sealN(t *testing.T, l *Ledger, n int) {

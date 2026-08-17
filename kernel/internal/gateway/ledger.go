@@ -208,12 +208,23 @@ func (g *Gateway) ledgerWitnessLastSeen(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 400, map[string]string{"error": "missing ?node="})
 		return
 	}
-	seq, err := g.Wit.LastSeen(node)
+	// Signed since C4 v1.4, and this is the change that makes a shared witness
+	// worth relying on. An unsigned integer here let a witness tell the node
+	// one thing and an auditor another, with neither able to prove it: two
+	// rumours. Signed, the same two answers are two statements over the same
+	// key that cannot both be true — a split view stops being undetectable and
+	// becomes self-incriminating.
+	//
+	// `node` and `seq` stay at the top level so a node built against the
+	// unsigned shape keeps working unchanged; everything else is additive.
+	stmt, err := g.Wit.LastSeenSigned(node)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"node": node, "seq": seq})
+	writeJSON(w, 200, map[string]any{
+		"node": stmt.Node, "seq": stmt.Seq, "statement": stmt,
+	})
 }
 
 // ledgerRecordWitness stores a countersignature this node collected about its

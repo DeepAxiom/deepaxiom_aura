@@ -155,7 +155,16 @@ Usage:
 // default bounds and a background pruner; a closed one needs neither, since
 // every caller already holds a credential.
 func witnessService(st *store.Store, node *identity.Node, open bool, log *slog.Logger) *ledger.Witness {
-	w := ledger.NewWitness(st, node.Keys)
+	w, err := ledger.NewWitness(st, node.Keys)
+	if err != nil {
+		// A witness whose own log will not rebuild cannot sign a head anyone
+		// could reproduce. Refusing the role is the honest degradation: the
+		// node keeps running and answers 404 on the witness routes, rather than
+		// vouching for others out of a history it cannot account for.
+		log.Error("witness role disabled — this node's own witness log will not rebuild",
+			"err", err)
+		return nil
+	}
 	if !open {
 		return w
 	}
@@ -209,6 +218,11 @@ func cmdUp(args []string) {
 	pprofAddr := fs.String("pprof", "", "expose Go profiling on this address (e.g. 127.0.0.1:6060); off by default")
 	openWitness := fs.Bool("open-witness", false,
 		"let any node anchor its ledger here without a token (rate- and capacity-bounded)")
+	anchor := fs.String("anchor", "",
+		"keep this node's ledger anchored at a witness, in the background "+
+			"(pass a URL, or \"default\" for the public witness)")
+	anchorEvery := fs.Duration("anchor-every", time.Hour,
+		"how often to re-anchor when --anchor is set")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS/WSS)")
 	tlsKey := fs.String("tls-key", "", "TLS private key file")
 	var allowOrigins stringList
@@ -403,6 +417,10 @@ func cmdUp(args []string) {
 	// Projection hosts dial back into this same server; their retry loop
 	// tolerates the listener not being up yet.
 	go gw.StartSavedProjections()
+
+	if *anchor != "" {
+		go autoAnchor(*anchor, *port, *anchorEvery, ldg, log)
+	}
 
 	printBanner(bannerInfo{
 		version: version, node: node, addr: addr, port: *port,

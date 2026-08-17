@@ -121,8 +121,33 @@ func openPath(p string, openWitness bool) bool {
 		return true
 	case openWitness && p == "/v1/ledger/witness/last-seen":
 		return true
+	case openWitness && publicWitnessLogPath(p):
+		// The witness's own log (C4 v1.4). Read-only, and public for the same
+		// reason the witness is open at all: an anchor several mutually
+		// suspicious parties rely on has to be one none of them is obliged to
+		// trust, and that means all of them can read its history. These records
+		// are heads, roots, keys and signatures — there is no payload, session
+		// or capability in them to leak.
+		return true
 	}
 	return false
+}
+
+// publicWitnessLogPath matches only the routes that publish *this* witness's
+// own history.
+//
+// Enumerated rather than matched on the `/v1/witness/` prefix, and the
+// difference is not cosmetic: `/v1/witness/seen` lives under the same prefix
+// and is this node's private record of what it has verified about *other*
+// witnesses. Opening that would let anyone lower the baseline an audit compares
+// against — erasing, from outside, the evidence that would convict a witness of
+// rewriting its log. A prefix match would have done exactly that.
+func publicWitnessLogPath(p string) bool {
+	switch p {
+	case "/v1/witness/head", "/v1/witness/log", "/v1/witness/consistency":
+		return true
+	}
+	return strings.HasPrefix(p, "/v1/witness/proof/")
 }
 
 // isUIAsset matches the embedded single-page app: its root and its bundled

@@ -496,6 +496,16 @@ func (s *Server) callToolStreaming(ctx context.Context, name string, arguments m
 	if hello.Kind == channel.KindError {
 		return toolError(string(hello.Payload)), nil
 	}
+	// The session id the kernel assigned, so the effects this call seals can be
+	// read back and returned as evidence with the result.
+	var ready struct {
+		Session string `json:"session"`
+	}
+	_ = json.Unmarshal(hello.Payload, &ready)
+	session := ready.Session
+	if session == "" {
+		session = hello.Session
+	}
 
 	payload, _ := json.Marshal(arguments)
 	env := channel.Envelope{
@@ -533,7 +543,10 @@ func (s *Server) callToolStreaming(ctx context.Context, name string, arguments m
 				text.WriteString(*body.Text)
 				emit(*body.Text)
 				if body.Final {
-					return toolText(text.String()), nil
+					// Same evidence on the early exit as on the ordinary one: a
+					// skill that marks its reply final must not be a way to get
+					// an effect back without its receipt.
+					return withEffects(toolText(text.String()), s.effectsFor(session)), nil
 				}
 			} else {
 				structured = reply.Payload
@@ -576,13 +589,19 @@ func (s *Server) callToolStreaming(ctx context.Context, name string, arguments m
 		}
 	}
 done:
+	// Read back what this call actually did before answering. An agent that
+	// learns only what a tool *said* has no way to show, later, what it *did*
+	// or on whose authority — and by the time anyone asks, the call is a line
+	// in a transcript with nothing attached to it.
+	effects := s.effectsFor(session)
+
 	if structured != nil {
 		var pretty bytes.Buffer
 		_ = json.Indent(&pretty, structured, "", "  ")
-		return toolText(pretty.String()), nil
+		return withEffects(toolText(pretty.String()), effects), nil
 	}
 	if text.Len() > 0 {
-		return toolText(text.String()), nil
+		return withEffects(toolText(text.String()), effects), nil
 	}
 	return toolError("no reply from the skill"), nil
 }
@@ -591,6 +610,98 @@ func toolText(text string) map[string]any {
 	return map[string]any{
 		"content": []map[string]any{{"type": "text", "text": text}},
 	}
+}
+
+// EffectsMetaKey is where a tool result carries evidence of what it did.
+//
+// MCP tells an agent which tools exist and what they returned. It has nothing
+// to say about what a call *did to the world*, or on whose authority — so an
+// agent that calls `create_invoice` gets back some text and no way to
+// demonstrate afterwards that the call was authorized, by whom, or that the
+// record of it has not been edited since.
+//
+// `_meta` is the extension point MCP provides for exactly this, and the key is
+// reverse-DNS namespaced per its convention. What travels here is a *receipt* —
+// the hash of a sealed ledger entry — never the entry itself and never a
+// payload. A receipt is small, is safe to log, and is checkable by anyone with
+// `aura receipt --verify`, which needs no database, no node and no network.
+//
+// See spec/proposals/mcp-effect-receipts.md for the argument that this belongs
+// in MCP rather than in one implementation's private namespace.
+const EffectsMetaKey = "org.deepaxiom/effects"
+
+// EffectReceipt is one sealed effect a tool call produced, as an MCP client
+// sees it.
+type EffectReceipt struct {
+	Receipt    string `json:"receipt"`
+	Capability string `json:"capability"`
+	Decision   string `json:"decision"`
+	Outcome    string `json:"outcome"`
+	// Approver names the human who answered the gate, when one signed
+	// (C4 v1.3). Absent on an effect the policy allowed outright, which is a
+	// meaningful difference and not a gap.
+	Approver string `json:"approver,omitempty"`
+}
+
+// withEffects attaches receipts to a tool result.
+//
+// Attached rather than returned separately so that an agent, a transcript and a
+// log all carry the evidence together with the thing it is evidence *of*. A
+// receipt filed anywhere else is one that has to be correlated back later,
+// which in practice means never.
+func withEffects(result map[string]any, effects []EffectReceipt) map[string]any {
+	if len(effects) == 0 {
+		return result
+	}
+	meta, _ := result["_meta"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta[EffectsMetaKey] = effects
+	result["_meta"] = meta
+	return result
+}
+
+// effectsFor reads back what this session actually sealed.
+//
+// Read from the ledger rather than collected from the stream, deliberately: the
+// receipt on an envelope is attached to the delivery going *into* the skill, and
+// this server is a client watching what comes back out. Asking the ledger means
+// the evidence an agent receives is the same evidence `aura verify` will check
+// — one source, no second path that could disagree with it.
+func (s *Server) effectsFor(session string) []EffectReceipt {
+	if session == "" {
+		return nil
+	}
+	resp, err := s.get("/v1/sessions/" + session + "/ledger")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var body struct {
+		Entries []ledger.Entry `json:"entries"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body) != nil {
+		return nil
+	}
+	out := make([]EffectReceipt, 0, len(body.Entries))
+	for _, e := range body.Entries {
+		r := EffectReceipt{
+			Receipt: e.Hash(), Capability: e.Capability,
+			Decision: e.Decision, Outcome: e.Outcome,
+		}
+		if e.Approver != nil {
+			r.Approver = e.Approver.Operator
+		}
+		out = append(out, r)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func toolError(detail string) map[string]any {

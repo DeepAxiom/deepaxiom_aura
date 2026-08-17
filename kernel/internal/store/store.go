@@ -214,6 +214,24 @@ CREATE TABLE IF NOT EXISTS witnessed_heads (
   pubkey      TEXT NOT NULL,
   ts          INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS witness_log (
+  seq         INTEGER PRIMARY KEY,
+  node        TEXT NOT NULL,
+  node_seq    INTEGER NOT NULL,
+  merkle_root TEXT NOT NULL,
+  node_pubkey TEXT NOT NULL,
+  signature   TEXT NOT NULL,
+  ts          INTEGER NOT NULL,
+  entry       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_witness_log_node ON witness_log(node, seq);
+CREATE TABLE IF NOT EXISTS seen_witness_heads (
+  witness_key TEXT PRIMARY KEY,
+  witness_url TEXT,
+  size        INTEGER NOT NULL,
+  root        TEXT NOT NULL,
+  ts          INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS operators (
   id      TEXT PRIMARY KEY,
   pubkey  TEXT NOT NULL,
@@ -925,6 +943,148 @@ func (s *Store) LastWitnessedHead(nodeID string) (h WitnessedHead, ok bool, err 
 		return WitnessedHead{}, false, nil
 	}
 	return h, err == nil, err
+}
+
+// ── the witness's own log (C4 v1.4) ─────────────────────────────────
+//
+// `witnessed_heads` is what this witness currently believes about each node —
+// one row per node, replaced as it advances. Useful, and not evidence: a table
+// that is replaced cannot be audited, because nothing in it records what it
+// used to say.
+//
+// This is the other half, and the half that makes a witness accountable rather
+// than merely trusted: **every countersignature it ever issues, appended, never
+// updated, never deleted**, with a Merkle tree over it. A witness that can
+// silently revise what it vouched for is a witness you have to believe. One
+// whose own history is append-only and publicly checkable is one you can catch.
+//
+// This is Certificate Transparency's own arrangement applied to the witness
+// rather than to the log it watches: CT's logs are themselves Merkle logs that
+// monitors follow, precisely so that "who watches the watcher" has an answer
+// that is not "nobody".
+
+// WitnessLogRow is one countersignature this witness issued, as stored.
+type WitnessLogRow struct {
+	Seq        uint64 `json:"seq"`
+	Node       string `json:"node"`
+	NodeSeq    uint64 `json:"node_seq"`
+	MerkleRoot string `json:"merkle_root"`
+	NodePubkey string `json:"node_pubkey"`
+	Signature  string `json:"signature"`
+	TS         int64  `json:"ts"`
+	// Entry is the canonical JSON the Merkle leaf is computed over — stored
+	// rather than re-marshalled at read time, for the same reason ledger
+	// entries are: the tree a witness publishes and the tree a monitor rebuilds
+	// must not be able to diverge on an encoding detail.
+	Entry []byte `json:"-"`
+}
+
+// AppendWitnessLog records one issued countersignature. The seq is the
+// witness's own monotonic counter and is assigned by the caller under the same
+// lock that computed the tree, so the log's order and its tree can never
+// disagree.
+func (s *Store) AppendWitnessLog(r WitnessLogRow) error {
+	_, err := s.db.Exec(
+		`INSERT INTO witness_log (seq, node, node_seq, merkle_root, node_pubkey, signature, ts, entry)
+		 VALUES (?,?,?,?,?,?,?,?)`,
+		r.Seq, r.Node, r.NodeSeq, r.MerkleRoot, r.NodePubkey, r.Signature, r.TS, string(r.Entry))
+	return err
+}
+
+// WitnessLogEntries returns the witness's own log from seq (1-based, inclusive)
+// in order. limit 0 means all.
+func (s *Store) WitnessLogEntries(fromSeq uint64, limit int) ([]WitnessLogRow, error) {
+	q := `SELECT seq, node, node_seq, merkle_root, node_pubkey, signature, ts, entry
+	        FROM witness_log WHERE seq >= ? ORDER BY seq`
+	args := []any{fromSeq}
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WitnessLogRow
+	for rows.Next() {
+		var r WitnessLogRow
+		var entry string
+		if err := rows.Scan(&r.Seq, &r.Node, &r.NodeSeq, &r.MerkleRoot,
+			&r.NodePubkey, &r.Signature, &r.TS, &entry); err != nil {
+			return nil, err
+		}
+		r.Entry = []byte(entry)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// WitnessLogSize reports how many countersignatures this witness has issued.
+func (s *Store) WitnessLogSize() (uint64, error) {
+	var n uint64
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM witness_log`).Scan(&n)
+	return n, err
+}
+
+// ── monitoring somebody else's witness ──────────────────────────────
+
+// SeenWitnessHead is the furthest point this machine has verified about a
+// witness's own log — the state `aura witness audit` compares against.
+//
+// Keeping it is what turns auditing from a snapshot into a guarantee: a
+// witness that shrinks, forks, or cannot prove its new history extends the
+// history you already recorded is caught only if you recorded it.
+type SeenWitnessHead struct {
+	WitnessKey string `json:"witness_key"`
+	WitnessURL string `json:"witness_url,omitempty"`
+	Size       uint64 `json:"size"`
+	Root       string `json:"root"`
+	TS         int64  `json:"ts"`
+}
+
+// SaveSeenWitnessHead records the furthest verified point for a witness.
+func (s *Store) SaveSeenWitnessHead(h SeenWitnessHead) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO seen_witness_heads (witness_key, witness_url, size, root, ts)
+		 VALUES (?,?,?,?,?)`,
+		h.WitnessKey, h.WitnessURL, h.Size, h.Root, h.TS)
+	return err
+}
+
+// SeenWitnessHeadFor returns what this machine last verified about a witness.
+func (s *Store) SeenWitnessHeadFor(witnessKey string) (h SeenWitnessHead, ok bool, err error) {
+	var url sql.NullString
+	err = s.db.QueryRow(
+		`SELECT witness_key, witness_url, size, root, ts FROM seen_witness_heads WHERE witness_key = ?`,
+		witnessKey,
+	).Scan(&h.WitnessKey, &url, &h.Size, &h.Root, &h.TS)
+	if err == sql.ErrNoRows {
+		return SeenWitnessHead{}, false, nil
+	}
+	h.WitnessURL = url.String
+	return h, err == nil, err
+}
+
+// SeenWitnessHeads lists every witness this machine follows.
+func (s *Store) SeenWitnessHeads() ([]SeenWitnessHead, error) {
+	rows, err := s.db.Query(
+		`SELECT witness_key, witness_url, size, root, ts FROM seen_witness_heads ORDER BY witness_key`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SeenWitnessHead
+	for rows.Next() {
+		var h SeenWitnessHead
+		var url sql.NullString
+		if err := rows.Scan(&h.WitnessKey, &url, &h.Size, &h.Root, &h.TS); err != nil {
+			return nil, err
+		}
+		h.WitnessURL = url.String
+		out = append(out, h)
+	}
+	return out, rows.Err()
 }
 
 // ── operators (C4 v1.3) ─────────────────────────────────────────────

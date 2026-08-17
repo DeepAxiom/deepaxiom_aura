@@ -13,8 +13,9 @@ Three properties hold it together:
 
 - **Streaming** — the connection is the unit of work, not the run. 0.42 ms per hop.
 - **Concurrency** — throughput *rises* with load. 1,000 concurrent sessions, measured.
-- **Auditable** — every effect authorized by policy, gated, and sealed into a
-  hash-chained ledger that verifies offline. In the kernel, not in your graph.
+- **Auditable** — every effect authorized by policy, signed for by a named
+  human, and sealed into a hash-chained ledger that verifies offline, anchored
+  where a third party can already be watching. In the kernel, not in your graph.
 
 One binary. 23 MB. No account, no cloud, no Postgres, no broker, no cluster.
 
@@ -143,6 +144,14 @@ None of this lives in your graph:
   committed to an RFC 6962 Merkle head the node signs, which a third party can
   counter-sign. `aura verify` recomputes chain, tree and signatures from the
   database file alone, with no kernel running.
+- **And the third party is accountable too.** A witness publishes its own
+  append-only log, signs its head, and signs its answer to *how far have you
+  vouched for this node* — so telling one party one thing and another something
+  else stops being undetectable and becomes two signed statements that cannot
+  both be true. `aura witness audit` follows one and refuses it if it has
+  rewritten anything. Nodes anchor at a free public witness by default and can
+  point anywhere else with one flag; a receipt is worth what it is worth to
+  whoever is already following the same anchor.
 - **It cites the model that argued for it.** A skill running inference attests to
   engine, model, revision, quantization, sampling parameters and seed — bound
   into every effect that output caused. A silent model swap changes hashes
@@ -189,6 +198,14 @@ ports. At the borders: an **MCP server** (every skill is a tool for Claude Code
 or Cursor, and `tools/call` streams), an A2A discovery card, and OpenTelemetry
 export of the causal tree.
 
+An MCP tool call comes back with the receipts for what it did — capability,
+decision, outcome, and the human who signed for it — in `_meta`, so the evidence
+travels with the action instead of in a log somebody has to correlate later.
+That shape is written up as
+[a proposal to MCP](spec/proposals/mcp-effect-receipts.md): one optional field,
+no change to the transport, and the alternative is every vendor inventing its
+own namespace and an auditor reconciling five formats by timestamp.
+
 The nine skills in [`skills/`](skills/) are **worked examples, not a
 catalogue** — hence the `example/` org. A skill is any process that speaks the
 channel protocol and declares a manifest: Python, TypeScript, Go, Rust, Wasm, or
@@ -202,7 +219,7 @@ copyleft obligation, ever.
 
 | | |
 |---|---|
-| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry** · **the credential broker (a secret only against a valid receipt)** · cancellation · session resume · deterministic replay · **effect-level regression across sessions** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC |
+| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry** · **the credential broker (a secret only against a valid receipt)** · **the witness's own published log, and a monitor that catches one rewriting it** · cancellation · session resume · deterministic replay · **effect-level regression across sessions** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC |
 | **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · OpenTelemetry export · ML-BOM |
 | **Not there yet** | No multi-device view of one live session · no failover if the node dies · **no process isolation for `format: source` skills** — a skill runs with the privileges of whoever started it |
 
@@ -216,7 +233,12 @@ between tested and hand-verified. This is pre-production; treat it that way.
 ---
 
 **License.** The spec and SDKs are Apache-2.0 — build a conformant kernel, write
-and sell skills, no copyleft obligation ever. The kernel and UI are AGPLv3, with
-a commercial license available instead. Running `aura` unmodified — your laptop,
-your servers, inside your company — triggers no AGPL obligation. See
-[LICENSE.md](LICENSE.md) · Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
+and sell skills, no copyleft obligation ever. That includes the parts a second
+implementation would need most: the ledger contract, the witness protocol, and a
+59-check conformance suite to demonstrate compliance with. A verifier is worth
+less the fewer things it can verify, and an anchor is worth less the fewer
+parties present to it — neither is a good thing to own. The kernel and UI are
+AGPLv3, with a commercial license available instead. Running `aura`
+unmodified — your laptop, your servers, inside your company — triggers no AGPL
+obligation. See [LICENSE.md](LICENSE.md) · Contributions:
+[CONTRIBUTING.md](CONTRIBUTING.md).
