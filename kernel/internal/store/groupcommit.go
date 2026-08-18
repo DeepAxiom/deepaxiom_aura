@@ -292,3 +292,25 @@ func (w *writer) tryBatch(db *sql.DB, batch []*writeReq) error {
 	}
 	return tx.Commit()
 }
+
+// Stats snapshots what the batcher has done since the process started.
+//
+// Exposed because these are the numbers that answer "is the write path the
+// limit?" and they were previously computed and then only printed once, at
+// startup, when they were all zero. Mean batch size is the load-bearing one: if
+// batches are filling, the commit itself is the ceiling and adding writers to
+// one SQLite file would make it worse rather than better.
+func (w *writer) Stats() WriteStats {
+	batches := w.batches.Load()
+	s := WriteStats{
+		Batches:       batches,
+		Rows:          w.rows.Load(),
+		LargestBatch:  w.maxSeen.Load(),
+		FallbackCount: w.fallbacks.Load(),
+	}
+	if batches > 0 {
+		s.MeanBatch = float64(s.Rows) / float64(batches)
+		s.MeanCommitMs = float64(w.commitNs.Load()) / float64(batches) / 1e6
+	}
+	return s
+}

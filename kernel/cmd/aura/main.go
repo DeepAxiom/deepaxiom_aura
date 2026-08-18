@@ -14,8 +14,10 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"aura/kernel/internal/channel"
@@ -363,15 +365,64 @@ func cmdUp(args []string) {
 		Handler:           gw.Handler(),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
-	if *tlsCert != "" {
-		err = srv.ListenAndServeTLS(*tlsCert, *tlsKey)
-	} else {
-		err = srv.ListenAndServe()
-	}
-	if err != nil {
-		fatal(err)
+
+	// Serve until a signal, then shut down in order.
+	//
+	// This block is what makes every Close() in this codebase mean anything.
+	// Before it, `ListenAndServe` blocked forever and the deferred cleanup never
+	// ran: a SIGTERM — which is what `docker stop`, a Kubernetes pod deletion and
+	// `systemctl stop` all send — killed the process outright. The store's
+	// shutdown ordering, seglog's 1 MiB buffered writer, the SQLite writer's
+	// drain: none of it executed, on every single deploy.
+	//
+	// Under a container runtime that is worse than it sounds, because the kill
+	// follows the signal by a fixed grace period. An orderly shutdown was not
+	// unlikely, it was impossible.
+	//
+	// The order below is the same one store.Close documents and for the same
+	// reason: stop accepting first, let what was accepted finish, and only then
+	// close what it was writing to.
+	serveErr := make(chan error, 1)
+	go func() {
+		if *tlsCert != "" {
+			serveErr <- srv.ListenAndServeTLS(*tlsCert, *tlsKey)
+			return
+		}
+		serveErr <- srv.ListenAndServe()
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case err := <-serveErr:
+		if err != nil && err != http.ErrServerClosed {
+			fatal(err)
+		}
+	case sig := <-stop:
+		fmt.Printf("\n  %s — draining\n", sig)
+		// Refuse new connections and give in-flight requests a bounded window.
+		// Bounded because a hung request must not outlast the runtime's own
+		// patience: a container runtime will SIGKILL regardless, and finishing
+		// the durable writes matters more than finishing one HTTP response.
+		ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Warn("some connections did not close within the drain window", "err", err)
+		}
+		// `defer n.Close()` above now runs, and it is the half that matters:
+		// admission closes, both writers drain what they accepted, and the
+		// database closes with no transaction open against it.
+		fmt.Printf("  stopped cleanly — the ledger and the event log are consistent\n")
 	}
 }
+
+// drainTimeout bounds the graceful shutdown window.
+//
+// Ten seconds because that is Docker's default grace period before SIGKILL, and
+// a value longer than the runtime's own patience is a value that never gets
+// used. Kubernetes defaults to 30s, so this fits inside both.
+const drainTimeout = 10 * time.Second
 
 type bannerInfo struct {
 	version      string

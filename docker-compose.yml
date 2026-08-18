@@ -1,0 +1,74 @@
+# The shape a full-stack team actually deploys: the kernel beside the app, with
+# the app's own functions exposed as skills.
+#
+# `docker compose up` gives you a node with a persistent ledger and one skill
+# connected. What it does not give you is failover — a node is one process, and
+# if it dies the live sessions die with it while the event log survives. That is
+# stated in the README and it is the reason this file describes an auxiliary
+# service rather than a critical path.
+
+services:
+  aura:
+    build: .
+    # A named volume, not a bind mount, and not nothing. This directory holds the
+    # node identity, the effect ledger and the broker's encrypted secrets — and
+    # the broker's key is derived from the identity, so losing identity/ makes
+    # every stored secret permanently unopenable. Back this up like a database.
+    volumes:
+      - aura-data:/data
+    ports:
+      - "9080:9080/tcp"
+      - "9080:9080/udp" # QUIC/WebTransport, same port number, different protocol
+    environment:
+      # FULL costs latency and buys durability across a power cut. NORMAL — the
+      # default — is crash-safe but may lose the last transactions to a hard
+      # power loss. A node sealing payments wants FULL.
+      AURA_SQLITE_SYNCHRONOUS: NORMAL
+    command:
+      - up
+      - --listen=0.0.0.0
+      - --port=9080
+      - --data=/data
+      # Bound the replayable history. Set this ABOVE your retention obligation:
+      # under the EU AI Act deployers keep logs at least six months, and this
+      # flag reclaims the oldest segments first.
+      - --event-log-max=20Gi
+      # Refuse an effect the ledger could not seal, rather than delivering it and
+      # logging the gap. The right stance for anything that moves money; drop it
+      # if you would rather a full disk degrade than stop.
+      - --policy=/data/aura.policy.yaml
+    # Compose does not read Dockerfile HEALTHCHECK for dependency ordering, so it
+    # is repeated here — /readyz is the one that means "send it traffic".
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/aura", "status", "--port", "9080"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    # Long enough for the drain window in cmd/aura/main.go (10s) to finish.
+    # Docker's default is also 10s, which would race it.
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  # Your existing backend, announcing the functions it already has. Six lines of
+  # integration; see GUIDE.md, "When the app is yours".
+  app:
+    build:
+      # Repo root as the context: the Dockerfile copies sdk/node from source
+      # because the SDK is not published to npm yet.
+      context: .
+      dockerfile: examples/expose-app/Dockerfile
+    depends_on:
+      aura:
+        condition: service_healthy
+    environment:
+      AURA_WS_URL: ws://aura:9080/ws/skill
+      # A scoped credential, not the operator token. This process may register
+      # its own capability and spend the receipts it is handed — it cannot
+      # register a graph or read the ledger. Mint one with:
+      #   docker compose exec aura aura token issue --capability motor.api.shop.refund_order
+      AURA_TOKEN: ${AURA_SKILL_TOKEN:?set AURA_SKILL_TOKEN — see the comment above}
+    restart: unless-stopped
+
+volumes:
+  aura-data:

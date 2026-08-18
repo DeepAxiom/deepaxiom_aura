@@ -71,6 +71,8 @@ interface Exposed {
   handler: Handler;
   config: Record<string, unknown>;
   socket?: WebSocket;
+  /** Resolved the first time the kernel acknowledges this skill's register. */
+  registered?: () => void;
   seq: Map<string, number>;
   seen: Set<string>;
   seenOrder: string[];
@@ -82,6 +84,7 @@ export class AuraNode {
   private readonly log: (message: string, detail?: unknown) => void;
   private readonly exposed: Exposed[] = [];
   private running = false;
+  private serving: Promise<void>[] = [];
 
   constructor(options: NodeOptions) {
     this.options = {
@@ -103,14 +106,27 @@ export class AuraNode {
     const kind = options.write ? "motor" : "sensorial";
     const capability = `${kind}.api.${this.options.app.replace(/-/g, "_")}.${fn.replace(/-/g, "_")}`;
 
+    // Two functions under one capability is not a configuration to resolve, it
+    // is a bug to report. The kernel would register both and resolve to
+    // whichever it picked, so one of the two would silently never run — and
+    // because `slug()` normalises, `getOrder` and `get-order` collide without
+    // looking like they do.
+    const clash = this.exposed.find((e) => e.manifest.capability === capability);
+    if (clash) {
+      throw new Error(
+        `expose("${name}") produces ${capability}, which is already exposed as ` +
+          `"${clash.manifest.name}". Names are slugified, so "getOrder" and ` +
+          `"get-order" collide — rename one, or one of them would never be called.`,
+      );
+    }
+
     let description = options.summary?.trim() || `${name} on ${this.options.app}`;
     if (!description.endsWith(".")) description += ".";
     description += ` (app "${this.options.app}")`;
-    // ojo: esta lista de parametros al final NO es cosmetica, es un
-    // contrato con el planner — el planner la parsea para separar los
-    // argumentos reales del resto del body. Si cambias el formato aca,
-    // cambialo tambien en kernel/internal/projection/host.go, si no se
-    // desincroniza todo.
+    // The trailing parameter list is NOT cosmetic — it is a contract with the
+    // planner, which parses it to tell real arguments from the rest of the body.
+    // Changing the format here means changing it in
+    // kernel/internal/projection/host.go too, or the two drift apart.
     if (options.params?.length) {
       description += " parameters: " + options.params.map((p) => `arg:${p}`).join(", ");
     }
@@ -153,24 +169,62 @@ export class AuraNode {
       `connecting ${this.exposed.length} skill(s) to ${this.options.url}`,
       this.exposed.map((e) => e.manifest.capability),
     );
-    await Promise.all(this.exposed.map((e) => this.serve(e)));
+
+    // Resolve once every skill has been acknowledged, not when the connections
+    // end — which is never, since each one reconnects forever.
+    //
+    // This used to `await Promise.all(serve(...))`, so `await node.start()`
+    // never returned and any line after it was dead code. The documented
+    // example had `console.log` after `await aura.start()` and it did not run.
+    // A caller needs to know when its functions are reachable; a promise that
+    // resolves at shutdown cannot tell them that.
+    const ready = this.exposed.map(
+      (e) => new Promise<void>((resolve) => { e.registered = resolve; }),
+    );
+    this.serving = this.exposed.map((e) => this.serve(e));
+    await Promise.all(ready);
+  }
+
+  /**
+   * Disconnect every skill and stop reconnecting.
+   *
+   * Needed for the same reason the kernel needs a signal handler: a process that
+   * cannot shut down cleanly does not, and a reconnect loop with no exit keeps
+   * the Node event loop alive so the process never exits at all. Call this from
+   * your own SIGTERM handler.
+   *
+   * Idempotent, and safe to call before `start()`.
+   */
+  async stop(): Promise<void> {
+    this.running = false;
+    for (const skill of this.exposed) {
+      try {
+        skill.socket?.close();
+      } catch {
+        // Already closed; a shutdown path must not throw.
+      }
+      skill.socket = undefined;
+    }
+    await Promise.allSettled(this.serving);
+    this.serving = [];
   }
 
   /** One skill's connection, reconnecting for as long as the process lives. */
   private async serve(skill: Exposed): Promise<void> {
     let attempt = 0;
-    for (;;) {
+    while (this.running) {
       const startedAt = Date.now();
       try {
         await this.session(skill);
       } catch (error) {
         this.log(`${skill.manifest.capability}: ${error}`);
       }
-      // si la conexion se mantuvo arriba un rato, eso ya es evidencia de
-      // que el kernel esta sano — asi que el proximo corte arranca el
-      // backoff desde cero de nuevo. Sin esto: un uptime largo despues de
-      // un tropiezo inicial igual reconecta tarde, un minuto entero tarde,
-      // solo porque el attempt counter nunca se reseteo. Molesto de debuggear.
+      if (!this.running) return;
+      // A connection that stayed up for a while is itself evidence the kernel is
+      // healthy, so the next drop restarts the backoff from zero. Without this a
+      // long uptime after one early stumble still reconnects late — a whole
+      // minute late — only because the attempt counter was never reset. That is
+      // an unpleasant thing to debug.
       if (Date.now() - startedAt > HEALTHY_CONNECTION_MS) attempt = 0;
       const delay = BACKOFF_SECONDS[Math.min(attempt, BACKOFF_SECONDS.length - 1)] ?? 60;
       attempt++;
@@ -211,6 +265,11 @@ export class AuraNode {
       if (payload?.state === "registered") {
         if (payload.config) Object.assign(skill.config, payload.config);
         this.log(`registered ${skill.manifest.capability}`);
+        // What `start()` is waiting on: the caller learns its functions are
+        // reachable at the moment they become reachable, and a reconnect later
+        // is not a second start.
+        skill.registered?.();
+        skill.registered = undefined;
       }
       return;
     }
