@@ -261,6 +261,18 @@ skill es una herramienta para Claude Code o Cursor, y `tools/call` hace
 streaming), una tarjeta de descubrimiento A2A, y exportación OpenTelemetry del
 árbol causal.
 
+El aprobador firmado está escrito de la misma forma, como un
+[Internet-Draft](spec/proposals/draft-signed-human-approval.md). El draft de
+audit trail para agentes que ya existe en la IETF registra *que* un humano
+intervino, con un id pseudónimo y sin firma, y firma los registros con la clave
+del **agente** — así que la única evidencia de que un humano aprobó es la
+palabra del sistema que está siendo auditado. Esa es justo la afirmación sobre
+la que una auditoría no puede descansar, y el arreglo es pequeño: una clave que
+el sistema que registra nunca tiene, un payload atado a una sola acción, y una
+separación estricta entre "¿firmó esto?" (permanente) y "¿puede aprobar ahora?"
+(mutable). El draft es independiente del transporte y del formato, y encaja
+dentro del campo que ese draft ya reserva.
+
 **Los nueve skills en [`skills/`](skills/) son demos.** Existen para mostrar la
 forma de un skill y para darle a un nodo frío algo que correr — no para ser un
 catálogo, y no para que dependas de ellos en producción; por eso llevan el org

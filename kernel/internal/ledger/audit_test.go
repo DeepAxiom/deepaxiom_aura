@@ -295,3 +295,108 @@ func TestCheckpointIsIdempotentAtAnUnchangedHead(t *testing.T) {
 		t.Fatalf("a moved head produced %d checkpoints, want %d", len(after), len(before)+1)
 	}
 }
+
+// "On what basis" is the third question an auditor asks, after "what acted" and
+// "who authorized it". The report has to answer it without laundering a claim
+// into evidence: a model configuration a skill merely declared and one a TEE
+// quote binds to that exact declaration are different things.
+func TestAuditSeparatesDeclaredFromHardwareBoundInference(t *testing.T) {
+	ldg, pub := auditFixture(t)
+
+	// One self-declared attestation, one carrying evidence bound to itself.
+	declared := []byte(`{"engine":"llama.cpp","model":"acme/declared-model","ts":1}`)
+	declaredHash := AttestationHash(declared)
+	if err := RecordAttestation(ldg.st, declaredHash, declared); err != nil {
+		t.Fatalf("RecordAttestation: %v", err)
+	}
+	bound := attestWithEvidence(t, nil)
+	boundHash := AttestationHash(bound)
+	if err := RecordAttestation(ldg.st, boundHash, bound); err != nil {
+		t.Fatalf("RecordAttestation: %v", err)
+	}
+
+	if _, err := ldg.Seal(SealRequest{
+		Session: "sess-basis", Envelope: "env-1", Cause: "c-1",
+		Actor: "acme/motor/writer@1.0.0", Capability: "motor.erp.write",
+		Decision: spec.DecisionAllow, Outcome: spec.OutcomeDelivered,
+		Policy: "sha256:p", Payload: []byte(`{}`),
+		Inference: []string{declaredHash, boundHash},
+	}); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	checkpoint(t, ldg)
+
+	rep, err := BuildAudit(ldg.st, "node-test", pub,
+		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("BuildAudit: %v", err)
+	}
+
+	in := rep.Inference
+	if in.Cited != 2 {
+		t.Fatalf("cited %d attestations, want 2", in.Cited)
+	}
+	if in.SelfDeclared != 1 {
+		t.Errorf("self-declared = %d, want 1", in.SelfDeclared)
+	}
+	if in.Bound != 1 {
+		t.Errorf("hardware-bound = %d, want 1", in.Bound)
+	}
+	// No anchors were supplied, so nothing may claim `verified`.
+	if in.Verified != 0 {
+		t.Errorf("verified = %d with no trust anchor configured; that claim was not earned",
+			in.Verified)
+	}
+	if len(in.Models) != 2 {
+		t.Errorf("got %d distinct models, want 2: %v", len(in.Models), in.Models)
+	}
+
+	// A mixed period is still sound, and the reviewer is told which half is
+	// which rather than left to assume the stronger one.
+	v := VerifyAudit(rep)
+	if !v.Sound {
+		t.Fatalf("a report with mixed evidence was reported unsound: %+v", v.Findings)
+	}
+	if !hasFinding(v, "note", "no vendor trust anchor") {
+		t.Errorf("the unchecked vendor chain was not surfaced; findings: %+v", v.Findings)
+	}
+}
+
+// An entry citing evidence that is gone or altered is a broken promise, not a
+// note: the ledger points at something that no longer says what it said.
+func TestAuditFlagsInferenceThatNoLongerMatchesItsAddress(t *testing.T) {
+	ldg, pub := auditFixture(t)
+
+	record := []byte(`{"engine":"llama.cpp","model":"acme/m","ts":1}`)
+	hash := AttestationHash(record)
+	if err := RecordAttestation(ldg.st, hash, record); err != nil {
+		t.Fatalf("RecordAttestation: %v", err)
+	}
+	if _, err := ldg.Seal(SealRequest{
+		Session: "sess-broken", Envelope: "env-1", Cause: "c-1",
+		Actor: "acme/motor/writer@1.0.0", Capability: "motor.erp.write",
+		Decision: spec.DecisionAllow, Outcome: spec.OutcomeDelivered,
+		Policy: "sha256:p", Payload: []byte(`{}`),
+		// Cite an attestation that was never stored.
+		Inference: []string{"sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+	}); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	checkpoint(t, ldg)
+
+	rep, err := BuildAudit(ldg.st, "node-test", pub,
+		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("BuildAudit: %v", err)
+	}
+	if rep.Inference.Unreadable != 1 {
+		t.Fatalf("unreadable = %d, want 1", rep.Inference.Unreadable)
+	}
+	v := VerifyAudit(rep)
+	if v.Sound {
+		t.Fatal("a report citing evidence that is gone verified as sound")
+	}
+	if !hasFinding(v, "high", "no longer") {
+		t.Errorf("the missing evidence was not reported as a failure; findings: %+v", v.Findings)
+	}
+}
