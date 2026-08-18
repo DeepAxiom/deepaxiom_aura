@@ -224,3 +224,40 @@ func TestHashTokenIsStableAndPrefixed(t *testing.T) {
 		t.Error("the hash contains the token")
 	}
 }
+
+// `/metrics` was served without a token the moment it existed, because the
+// asset rule asked "does this path have one segment" rather than "is this a
+// route". Every future single-segment route would have been public the same way.
+func TestOperationalRoutesAreNotMistakenForAssets(t *testing.T) {
+	// Closed: they are routes, and metrics describes what the node is doing.
+	for _, p := range []string{"/metrics"} {
+		if openPath(p, false, registeredPaths) {
+			t.Errorf("%s is served without a credential", p)
+		}
+	}
+	// Open: a probe holds no credential, and refusing readiness keeps a healthy
+	// node out of rotation forever.
+	for _, p := range []string{"/healthz", "/readyz"} {
+		if !openPath(p, false, registeredPaths) {
+			t.Errorf("%s needs a credential; an orchestrator has none", p)
+		}
+	}
+	// Still open: a browser must load the app shell before it can present a
+	// token, so a client-side route is not a route this node serves.
+	if !openPath("/sessions", false, registeredPaths) {
+		t.Error("a single-page-app route was refused; the shell could never load")
+	}
+}
+
+// The whole point of deriving the closed set from the mux: a route added later
+// is closed because it was added, not because someone remembered.
+func TestARouteInTheTableIsClosedWithoutBeingListedTwice(t *testing.T) {
+	future := map[string]bool{"/some-route-added-next-year": true}
+	if openPath("/some-route-added-next-year", false, future) {
+		t.Fatal("a registered route was treated as a public asset")
+	}
+	if !openPath("/some-route-added-next-year", false, nil) {
+		t.Fatal("fixture check: without the table the path looks like an app route, " +
+			"which is exactly why the table has to come from the mux")
+	}
+}

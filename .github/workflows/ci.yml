@@ -112,6 +112,9 @@ jobs:
       - name: test
         working-directory: sdk/node
         run: npm test
+        # 15 tests: 6 on framing, 9 on createNode() — the path a full-stack app
+        # uses, which had none. Two API bugs came out of writing them: start()
+        # never resolved, and duplicate names were accepted.
 
   skills:
     name: first-party skills
@@ -296,6 +299,102 @@ jobs:
           test "$(code -H "Authorization: Bearer $SKILL"             http://127.0.0.1:9131/v1/ledger)" = 403             || { echo "FAIL: a skill token read the ledger"; exit 1; }
           test "$(code -H "Authorization: Bearer $OP"             http://127.0.0.1:9131/v1/ledger)" = 200             || { echo "FAIL: the operator was refused its own ledger"; exit 1; }
           test "$(code -H "Authorization: Bearer not-a-real-token"             http://127.0.0.1:9131/v1/ledger)" = 401             || { echo "FAIL: an invented token was not refused"; exit 1; }
+
+      # SIGTERM is what `docker stop`, a pod deletion and `systemctl stop` all
+      # send, so it is the shutdown path that runs on every deploy — and until
+      # cmd/aura/main.go handled it, none of the careful Close() ordering below
+      # it ever executed. This asserts the drain happens AND that the ledger is
+      # verifiable afterwards, because a clean-looking log with a corrupt chain
+      # would be the worst of both.
+      - name: SIGTERM drains rather than kills
+        run: |
+          pip install --quiet websockets
+          ./kernel/aura up --port 9161 --data /tmp/term-ci --no-auth > /tmp/term.log 2>&1 &
+          node_pid=$!
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9161/healthz >/dev/null && break
+            sleep 0.25
+          done
+          # Real sealed effects, so there is something in flight to lose.
+          python3 - <<'PY'
+          import asyncio, pathlib
+          src = pathlib.Path("scripts/ledger_adversarial.py").read_text()
+          ns = {}
+          exec(compile(src[:src.index("def run_aura_verify")], "seal", "exec"), ns)
+          asyncio.run(ns["seal_two_effects"](9161))
+          PY
+          kill -TERM "$node_pid"
+          for i in $(seq 1 40); do
+            kill -0 "$node_pid" 2>/dev/null || break
+            sleep 0.5
+          done
+          if kill -0 "$node_pid" 2>/dev/null; then
+            echo "FAIL: the node ignored SIGTERM and had to be killed"
+            kill -9 "$node_pid"; exit 1
+          fi
+          cat /tmp/term.log
+          grep -q "stopped cleanly" /tmp/term.log \
+            || { echo "FAIL: no orderly shutdown; the drain did not run"; exit 1; }
+          # The point of draining: what was accepted is on disk and verifies.
+          ./kernel/aura verify --data /tmp/term-ci | tee /tmp/term-verify.txt
+          grep -q "SOUND" /tmp/term-verify.txt \
+            || { echo "FAIL: the ledger did not survive a graceful shutdown"; exit 1; }
+
+      # `/metrics` was served without a token the moment it existed, because the
+      # asset rule matched a path shape rather than a route. Any future
+      # single-segment route would have been public the same way, so this checks
+      # the boundary rather than the one symptom.
+      - name: operational endpoints have the right exposure
+        run: |
+          ./kernel/aura up --port 9171 --data /tmp/ops-ci > /tmp/ops.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9171/healthz >/dev/null && break
+            sleep 0.25
+          done
+          tok=$(cat /tmp/ops-ci/node.token)
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          test "$(code http://127.0.0.1:9171/readyz)" = 200 \
+            || { echo "FAIL: readiness needs a credential an orchestrator has none of"; exit 1; }
+          test "$(code http://127.0.0.1:9171/metrics)" = 401 \
+            || { echo "FAIL: /metrics is served without a token"; exit 1; }
+          test "$(code -H "Authorization: Bearer $tok" http://127.0.0.1:9171/metrics)" = 200 \
+            || { echo "FAIL: /metrics refused the operator"; exit 1; }
+          curl -sf -H "Authorization: Bearer $tok" http://127.0.0.1:9171/metrics \
+            | grep -q '^aura_store_batch_mean' \
+            || { echo "FAIL: the write-path metrics are missing"; exit 1; }
+
+      # The integration path a full-stack team actually uses: an app announces
+      # two functions it already has, and `write: true` alone is what makes the
+      # kernel gate and seal the second one. Exercised against a real binary
+      # because the guarantee is the kernel's, not the SDK's.
+      - name: an app exposing its own functions gets a gate it did not write
+        run: |
+          pip install --quiet websockets
+          npm --prefix sdk/node ci --no-audit --no-fund
+          npm --prefix sdk/node run build
+          ./kernel/aura up --port 9181 --data /tmp/expose-ci --no-auth > /tmp/expose.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9181/healthz >/dev/null && break
+            sleep 0.25
+          done
+          mkdir -p /tmp/expose-app/node_modules/@deepaxiom
+          cp -r sdk/node /tmp/expose-app/node_modules/@deepaxiom/aura
+          cp examples/expose-app/app.mjs /tmp/expose-app/
+          echo '{"type":"module"}' > /tmp/expose-app/package.json
+          ( cd /tmp/expose-app && AURA_WS_URL=ws://127.0.0.1:9181/ws/skill node app.mjs & )
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9181/v1/skills | grep -q motor.api.shop.refund_order && break
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:9181/v1/skills | grep -q '"type":"motor"' \
+            || { echo "FAIL: write:true did not become a motor capability"; exit 1; }
+          curl -sf http://127.0.0.1:9181/v1/skills | grep -q sensorial.api.shop.get_order \
+            || { echo "FAIL: the read was not exposed"; exit 1; }
+          python3 scripts/expose_gate_check.py --port 9181 \
+            || { echo "FAIL: the gate did not fire on an edge that declared none"; exit 1; }
+          ./kernel/aura audit --data /tmp/expose-ci | tee /tmp/expose-audit.txt
+          grep -q "motor.api.shop.refund_order" /tmp/expose-audit.txt \
+            || { echo "FAIL: the effect was not sealed into the ledger"; exit 1; }
 
       # The compliance deliverable: a period report that verifies from itself.
       # Generated against a ledger with real sealed effects, then checked with

@@ -1374,3 +1374,12 @@ func (s *Store) RevokeToken(id string, ts int64) (bool, error) {
 	n, err := res.RowsAffected()
 	return n > 0, err
 }
+
+// WriteStats reports what the group-commit batcher has done. See
+// writer.Stats for why the mean batch size is the number that matters.
+func (s *Store) WriteStats() WriteStats {
+	if s.w == nil {
+		return WriteStats{}
+	}
+	return s.w.Stats()
+}

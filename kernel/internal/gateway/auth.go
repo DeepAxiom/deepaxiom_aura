@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -75,6 +76,10 @@ type Auth struct {
 	// TrustedProxy relaxes the origin check for deployments that terminate TLS
 	// upstream. Off by default.
 	TrustedProxy bool
+	// APIRoutes is every path registered on the mux. Populated by
+	// Gateway.Handler, so a route added there is authenticated by construction
+	// rather than by anyone remembering to close it. See isUIAsset.
+	APIRoutes map[string]bool
 	// OpenWitness exempts the witnessing endpoints from the bearer token, so
 	// nodes outside this trust domain can anchor their ledgers here. Set by
 	// --open-witness. Off by default, because it turns a read-mostly control
@@ -132,13 +137,24 @@ func LoadOrCreateToken(dataDir string) (token string, created bool, err error) {
 // Note what is deliberately absent: /v1/skills and the A2A card. The
 // capability catalog tells an attacker exactly which effects this node can
 // produce, which is the most useful thing they could learn.
-func openPath(p string, openWitness bool) bool {
+func openPath(p string, openWitness bool, apiRoutes map[string]bool) bool {
 	switch {
 	case p == "/healthz":
 		return true
+	case p == "/readyz":
+		// Readiness, for the same reason as liveness: a container runtime's probe
+		// holds no credential, and a readiness check that answers 401 keeps a
+		// healthy pod out of rotation forever. It reveals which subsystems opened
+		// and nothing about what the node has done.
+		//
+		// `/metrics` is deliberately NOT here. A scraper can carry a bearer token,
+		// and the series include live session counts, ledger size and the pending
+		// approval queue — a useful picture of what this node is doing, for
+		// somebody who should not have one.
+		return true
 	case strings.HasPrefix(p, "/hooks/"):
 		return true
-	case isUIAsset(p):
+	case isUIAsset(p, apiRoutes):
 		return true
 	case openWitness && p == "/v1/ledger/witness":
 		return true
@@ -173,15 +189,47 @@ func publicWitnessLogPath(p string) bool {
 	return strings.HasPrefix(p, "/v1/witness/proof/")
 }
 
-// isUIAsset matches the embedded single-page app: its root and its bundled
-// files. Anything under a versioned API prefix is never an asset, so a new
-// /v1 route cannot be mistaken for one.
-func isUIAsset(p string) bool {
+// isUIAsset reports whether a path is the single-page app rather than a route.
+//
+// The rule used to be "does this path have a single segment", and that was
+// backwards in a way that bit as soon as `/metrics` existed: a single-segment
+// path was served without a token, so a new operational route was public the
+// moment it was written, silently, because the rule described a *shape* instead
+// of a *thing*. An authorization default that opens up as the API grows is the
+// wrong default — the same argument scope.go makes about its route table.
+//
+// The correct question is "is this a route this node serves?", and the mux
+// already knows. `apiRoutes` is populated from the same registrations, so
+// closing a new route is not something anyone has to remember: adding it to the
+// mux is what closes it. Everything else is the app — a real bundled file, or a
+// client-side route that must be able to load the shell before it can present
+// a credential.
+func isUIAsset(p string, apiRoutes map[string]bool) bool {
+	if p == "/" {
+		return true
+	}
 	if strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/ws/") ||
-		p == "/mcp" || p == "/.well-known/agent.json" {
+		p == "/mcp" || p == "/.well-known/agent.json" ||
+		strings.HasPrefix(p, "/openenv/") || strings.HasPrefix(p, "/hooks/") {
 		return false
 	}
-	return p == "/" || !strings.Contains(strings.TrimPrefix(p, "/"), "/")
+	if apiRoutes[p] {
+		return false
+	}
+	name := strings.TrimPrefix(p, "/")
+	return name != "" && !strings.Contains(name, "..")
+}
+
+// bundledAsset reports whether a path names a file actually present in the
+// embedded UI bundle. Used by the tests that assert the difference between a
+// real asset and a client-side route.
+func bundledAsset(p string) bool {
+	dist, err := fs.Sub(uiFS, "ui/dist")
+	if err != nil {
+		return false
+	}
+	info, err := fs.Stat(dist, strings.TrimPrefix(p, "/"))
+	return err == nil && !info.IsDir()
 }
 
 // Authenticate wraps a handler with bearer-token enforcement.
@@ -201,7 +249,7 @@ func (a *Auth) Authenticate(next http.Handler) http.Handler {
 				Principal{Scope: ScopeOperator})))
 			return
 		}
-		if openPath(r.URL.Path, a.OpenWitness) {
+		if openPath(r.URL.Path, a.OpenWitness, a.APIRoutes) {
 			// An open path serves callers holding nothing, so it cannot demand a
 			// credential — but it must not *launder* one either. Resolving here
 			// keeps a skill token a skill token; skipping resolution would hand

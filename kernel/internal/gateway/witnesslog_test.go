@@ -88,10 +88,10 @@ func TestOnlyTheWitnessOwnLogIsPublic(t *testing.T) {
 		"/v1/witness/proof/1",
 	}
 	for _, p := range public {
-		if !openPath(p, true) {
+		if !openPath(p, true, registeredPaths) {
 			t.Errorf("%s should be readable on an open witness", p)
 		}
-		if openPath(p, false) {
+		if openPath(p, false, registeredPaths) {
 			t.Errorf("%s is exempt even without --open-witness", p)
 		}
 	}
@@ -104,7 +104,7 @@ func TestOnlyTheWitnessOwnLogIsPublic(t *testing.T) {
 		"/v1/skills",
 	}
 	for _, p := range private {
-		if openPath(p, true) {
+		if openPath(p, true, registeredPaths) {
 			t.Errorf("%s is exposed on an open witness and must not be", p)
 		}
 	}

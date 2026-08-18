@@ -130,6 +130,8 @@ func (g *Gateway) Handler() http.Handler {
 		mux.HandleFunc("GET /mcp", g.MCP) // handler answers 405 (no SSE stream)
 	}
 	mux.HandleFunc("GET /healthz", g.health)
+	mux.HandleFunc("GET /readyz", g.readiness)
+	mux.HandleFunc("GET /metrics", g.metrics)
 	mux.HandleFunc("GET /v1/approvals", g.listApprovals)
 	mux.HandleFunc("POST /v1/approvals/{id}", g.resolveApproval)
 	mux.HandleFunc("GET /v1/operators", g.listOperators)
@@ -201,7 +203,27 @@ func (g *Gateway) Handler() http.Handler {
 	if auth == nil {
 		auth = &Auth{}
 	}
+	// Tell the authenticator which paths are routes rather than app assets, from
+	// the registrations above rather than from a second hand-maintained list. A
+	// route added to this mux is closed to unauthenticated callers because it is
+	// on the mux — see isUIAsset for the bug that made this necessary.
+	auth.APIRoutes = registeredPaths
 	return auth.Authenticate(mux)
+}
+
+// registeredPaths is every non-asset path this gateway serves.
+//
+// It exists because the authenticator has to distinguish "a route nobody has
+// authorised yet" from "a client-side route of the single-page app", and the
+// only honest source for that is the route table itself. Kept beside Handler so
+// the two are edited together; the ssot CI job would not catch a drift here, so
+// proximity is the mechanism.
+var registeredPaths = map[string]bool{
+	"/metrics":                true,
+	"/healthz":                true,
+	"/readyz":                 true,
+	"/mcp":                    true,
+	"/.well-known/agent.json": true,
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
