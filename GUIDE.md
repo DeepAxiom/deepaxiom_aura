@@ -108,6 +108,7 @@ are decisions a deployment makes and an example cannot make for it. See
 37. [Milestone status](#milestone-status)
 38. [Designed, not yet built](#designed-not-yet-built)
 39. [License & governance](#license--governance)
+40. [References](#references)
 
 ---
 
@@ -2128,6 +2129,36 @@ Security is *designed* to be **progressive** — friction appears exactly where
 risk appears, and nowhere else. That is the intent; what follows is how much of
 it the code enforces today, because the gap matters more than the intent.
 
+### What already requires this
+
+The rest of this section describes mechanisms. This part says why they are not
+optional, because the deadline is specific and it has passed the drafting stage.
+
+**[Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/) — the EU AI
+Act — applies to high-risk AI systems from 2 August 2026.** Two of its articles
+are directly about what a runtime must emit rather than about what an
+organisation must promise:
+
+| | Requirement | What answers it here |
+|---|---|---|
+| **Art. 12** — Record-keeping | *Automatic* recording of events over the system's lifetime, serving risk identification (Art. 79), post-market monitoring (Art. 72) and deployer oversight (Art. 26(5)). Deployers retain logs **at least six months**. | The causal event log (C3 rule 7) and the effect ledger (C4). Automatic because the executor writes them, not the graph author. Retention is an operator decision: the log keeps everything by default, and `--event-log-max` bounds it — set it above your retention obligation, not below. |
+| **Art. 14** — Human oversight | The system can be effectively overseen by **natural persons** while in use. | The approval gate as a kernel invariant, and the **signed approver** — a log recording that "a human approved" evidences oversight by nobody in particular. See [Signed approval](#signed-approval--who-allowed-it). |
+
+Two more frameworks ask for the same evidence in a different vocabulary.
+**ISO/IEC 42001** clause 9.2 requires internal audit against your own AI policies
+with a documented chain from finding to correction — which is `aura audit` plus
+`aura why`. The **harmonised standards** that will operationalise Article 12 —
+prEN 18229-1, ISO/IEC DIS 24970 — are still drafts, which is worth knowing for
+two reasons: nobody can yet claim conformance to them, and the shape of the
+required evidence is being decided now rather than settled.
+
+A caution that belongs in a security model rather than in marketing: **none of
+the above makes a deployment compliant.** Article 12 is one obligation among
+many, this kernel emits records rather than performing a conformity assessment,
+and no tool can do that part for you. What it removes is the common failure where
+an organisation discovers at audit time that the records exist only as
+application logs nobody can prove were not edited.
+
 ### Authentication — what a default node does
 
 `aura up` with no flags binds **loopback**, generates a **bearer token** on
@@ -2823,6 +2854,56 @@ running real nodes), there is no visual graph editor, and the integration
 catalog is small. [Milestone
 status](#milestone-status) is the accurate summary; if it and this document
 ever disagree, Milestone status is right.*
+
+---
+
+## References
+
+What the claims in this guide rest on. Several of these describe the same
+problem this runtime does and solve it differently; those are the most useful
+ones to read, because they are the ones that show where a design decision here
+was a choice rather than the only option.
+
+**The threat this is a response to**
+
+1. Kumar et al., *Model Context Protocol Threat Modeling and Analyzing Vulnerabilities to Prompt Injection with Tool Poisoning* — [arXiv:2603.22489](https://arxiv.org/abs/2603.22489). STRIDE/DREAD across MCP's six components; tool metadata is the primary client-side attack surface, and most clients validate it insufficiently. This is why `aura guard` types an unannotated tool as `motor` and refuses to believe `readOnlyHint` without an operator saying so.
+2. *Parasites in the Toolchain: A Large-Scale Analysis of Attacks on the MCP Ecosystem* — [arXiv:2509.06572](https://arxiv.org/abs/2509.06572).
+3. Cai et al., *Are You Getting What You Pay For? Auditing Model Substitution in LLM APIs* — [arXiv:2504.04715](https://arxiv.org/abs/2504.04715). Silent model substitution measured in deployed APIs — the concrete failure C5's attestation binding makes detectable.
+
+**Evidence, transparency logs and witnessing**
+
+4. Syta et al., *Keeping Authorities "Honest or Bust" with Decentralized Witness Cosigning* — [arXiv:1503.08768](https://arxiv.org/abs/1503.08768). The origin of the argument the witness protocol rests on: an authority that can be caught equivocating does not have to be trusted.
+5. *Right to History: A Sovereignty Kernel for Verifiable AI Agent Execution* — [arXiv:2602.20214](https://arxiv.org/abs/2602.20214). RFC 6962 logs and capability boundaries in a Rust kernel — the closest architectural neighbour to this one.
+6. *Notarized Agents: Receiver-Attested Confidential Receipts for AI Agent Actions* — [arXiv:2606.04193](https://arxiv.org/abs/2606.04193). Receiver-side signing plus witness-cosigned logs; a genuinely different cut at the same evidence problem, and worth comparing against the C4 receipt.
+7. *Context Lineage Assurance for Non-Human Identities in Critical Multi-Agent Systems* — [arXiv:2509.18415](https://arxiv.org/abs/2509.18415).
+
+**Human oversight**
+
+8. *Oversight Has a Capacity: Calibrating Agent Guards to a Subjective, Fatiguing Human* — [arXiv:2606.08919](https://arxiv.org/abs/2606.08919). The strongest available argument against over-gating, and the reason node policy decides what is gated rather than the graph: a gate that fires on everything is a gate that gets rubber-stamped.
+
+**Credentials and confidential computing**
+
+9. *When Agents Handle Secrets: A Survey of Confidential Computing for Agentic AI* — [arXiv:2605.03213](https://arxiv.org/abs/2605.03213).
+10. *CapSeal: Capability-Sealed Secret Mediation for Secure Agent Execution* — [arXiv:2604.16762](https://arxiv.org/abs/2604.16762). Independent convergence on the credential-broker shape.
+11. *Confidential LLM Inference: Performance and Cost Across CPU and GPU TEEs* — [arXiv:2509.18886](https://arxiv.org/abs/2509.18886). Where the 4–8% H100 figure comes from, and why TEE-backed inference stopped being theoretical.
+
+**Evaluation and the audit bundle**
+
+12. *Do Agent Benchmarks Measure Capability? Protocol Validity in the Age of Agentic AI* — [arXiv:2607.22368](https://arxiv.org/abs/2607.22368). The four-part retained-materials shape `aura bundle` implements.
+
+**Storage**
+
+13. Chursin, Kokoris-Kogias, Orlov, Sonnino, Zablotchi, *Tidehunter: Large-Value Storage With Minimal Data Relocation* — [arXiv:2602.01873](https://arxiv.org/abs/2602.01873). Treat the log as permanent storage rather than a recovery buffer, and compaction stops existing because nothing is relocated. The shape `internal/seglog` follows.
+14. Silvestre et al., *Failure Transparency in Stateful Dataflow Systems* — [arXiv:2407.06738](https://arxiv.org/abs/2407.06738). The correctness property session resume is an instance of.
+
+**Standards and regulation, non-arXiv and load-bearing**
+
+- [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962) — Certificate Transparency. The Merkle construction, inclusion and consistency proofs C4 v1.2 uses verbatim.
+- [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) — Ed25519. Every signature in this system.
+- [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446), [RFC 9000](https://www.rfc-editor.org/rfc/rfc9000) — TLS 1.3 and QUIC, under WebTransport.
+- [Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/) — the EU AI Act. Articles 12 and 14 in particular; see [Security model](#security-model).
+- [draft-sharif-agent-audit-trail](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/) — an individual Internet-Draft, not endorsed by the IETF, defining a JSON agent audit record. Our [signed-approval draft](spec/proposals/draft-signed-human-approval.md) is designed to fit inside its `human_override` member.
+- ISO/IEC 42001 (AI management systems, clause 9.2 internal audit); prEN 18229-1 and ISO/IEC DIS 24970, both still drafts.
 
 ---
 
