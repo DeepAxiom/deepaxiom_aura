@@ -3,7 +3,7 @@
 ### Despliega asistentes y automatizaciones que corren en vivo — y puede demostrar qué hicieron.
 
 [Guía completa](GUIDE-ES.md) · [English](README.md) ·
-[Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos) ·
+[Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos) · [Roadmap](ROADMAP-ES.md) ·
 **v0.3.0 — pre-1.0, pre-producción**
 
 ---
@@ -248,7 +248,7 @@ correr código de otras personas.
 |---|---|
 | **Con pruebas** | Envelopes en streaming con QoS por arista sobre WebSocket y QUIC · el ledger y la verificación sin conexión · el gate como invariante del kernel · **identidad firmada del aprobador sellada en la entry** · **credenciales de skill con alcance** · **el broker de credenciales** · **el log propio del witness, y un monitor que atrapa a uno reescribiéndolo** · cancelación · reanudación de sesión · replay determinista · **regresión a nivel de efectos** · **reportes de auditoría por periodo que se verifican solos** · puertos tipados con gramáticas compiladas · la frontera MCP en ambos sentidos · `aura guard` · skills Wasm en un sandbox real · CDC de Postgres · rotación y recuperación del log de eventos |
 | **Verificado a mano** | Voz con barge-in · el planner (`aura do`) · `aura why` · exportación OpenTelemetry · ML-BOM |
-| **Todavía no** | Sin vista multidispositivo de una misma sesión viva · sin failover si el nodo muere · la evidencia TEE llega a `bound`, nunca a `verified` — la verificación de cadena del fabricante está declarada y rechazada, no stubbeada |
+| **Todavía no** | Sin vista multidispositivo de una misma sesión viva · **sin failover si el nodo muere** — un proceso, y el estado de ruteo vivo se va con él · la evidencia TEE llega a `bound`, nunca a `verified` — la verificación de cadena del fabricante está declarada y rechazada, no stubbeada · los SDKs están empaquetados pero sin publicar · sin procedimiento documentado de backup/restore, ni de rotación de la clave del nodo |
 
 **El hueco que más importa para lo que sigue: un skill `format: source` no está
 contenido.** `--sandbox process` limpia su entorno, encierra su directorio de
@@ -264,8 +264,8 @@ suite de conformidad de 59 verificaciones ejercita el kernel sobre el cable, y
 jobs de CI aparte demuestran que el ledger detecta manipulación editando una base
 de datos real a espaldas de un binario real, y que un token con alcance no puede
 actuar como el operador. Lee [Modelo de
-seguridad](GUIDE-ES.md#modelo-de-seguridad) antes de exponer un puerto. Esto es
-pre-producción; trátalo como tal.
+seguridad](GUIDE-ES.md#modelo-de-seguridad) antes de exponer un puerto, y [el roadmap](ROADMAP-ES.md) para lo que falta y a
+quién le bloquea. Esto es pre-producción; trátalo como tal.
 
 ---
 
@@ -302,6 +302,60 @@ catálogo, y no para que dependas de ellos en producción; por eso llevan el org
 por [`skills/echo/`](skills/echo/), unas 100 líneas.
 
 ---
+
+---
+
+## Correrlo al lado de tu app
+
+La integración son seis líneas. El despliegue es un proceso, y esa distinción es
+la que decide si esto encaja en tu stack:
+
+```js
+import { createNode } from "@deepaxiom/aura";
+const aura = createNode({ org: "acme", app: "shop" });
+
+aura.expose("get-order",    ({id}) => db.orders.find(id),   { params: ["id"] });
+aura.expose("refund-order", ({id}) => db.orders.refund(id), { params: ["id"], write: true });
+
+await aura.start();
+```
+
+`write: true` es la única línea aquí que trata de seguridad, y es una declaración
+y no una implementación: el executor gatea esa llamada en toda arista que la
+alcance —incluso en un grafo cuyo autor nunca lo pidió— y sella el efecto en el
+ledger. CI lo demuestra exactamente así contra un binario real; ver
+[`examples/expose-app/`](examples/expose-app/).
+
+```bash
+docker compose up      # el kernel, con ledger persistente, al lado de tu app
+```
+
+El contenedor es distroless, non-root y sin CGO, y `STOPSIGNAL SIGTERM` con
+entrypoint en forma exec no es boilerplate: sin eso la señal nunca llega al
+kernel, `docker stop` se convierte en un SIGKILL diez segundos después, y el
+orden de cierre del store se salta en cada deploy. El nodo drena en una ventana
+acotada y lo dice.
+
+**El directorio de datos no es una caché.** Tiene la identidad del nodo, el
+ledger de efectos y los secretos cifrados del broker — y la clave del broker se
+*deriva* de la identidad, así que un restore sin `identity/` produce texto
+cifrado que nadie puede abrir. Respáldalo como una base de datos.
+
+Dos endpoints que un orquestador necesita:
+
+| | |
+|---|---|
+| `GET /readyz` | Abierto, porque una probe no tiene credencial. Más estricto que `/healthz`: responde solo cuando el store y el ledger son usables, así un rolling deploy no manda tráfico a un nodo que está arriba pero no funciona. |
+| `GET /metrics` | Texto Prometheus, **autenticado** — las series incluyen conteos de sesiones vivas, tamaño del ledger y la cola de aprobaciones pendientes. `aura_store_batch_mean` es la de capacidad: cerca del tope del batch significa que el commit es tu techo y más escritores no ayudarían. |
+
+**Lo que esto no sobrevive es que el nodo muera.** Un proceso, sin failover; el
+log de eventos sobrevive, el estado de ruteo vivo no. Contesta eso con honestidad
+antes de desplegar: si AURA se cae, ¿tu app degrada o se detiene? Si degrada, esto
+es desplegable hoy. Si se detiene, lee primero [el roadmap](ROADMAP-ES.md).
+
+**Los SDKs están empaquetados y sin publicar.** `@deepaxiom/aura` y `aura-sdk`
+existen, compilan y tienen tests; todavía no hay `npm install` para ellos, así que
+hoy se copian desde el repo.
 
 ## Conectar lo que ya tienes
 
