@@ -491,6 +491,22 @@ func (l *Ledger) Checkpoint() error {
 	if l.lastSeq == 0 {
 		return fmt.Errorf("nothing to checkpoint: the ledger has sealed no effects yet")
 	}
+	// Idempotent at an unchanged head.
+	//
+	// Checkpoints are keyed by the sequence they cover, so signing the same
+	// head twice used to fail on a UNIQUE constraint — which made "commit the
+	// current head before you read it" an operation a caller could only perform
+	// once. `aura audit` does exactly that on every run, and the second run of
+	// the day is not an error; there is simply nothing new to sign, and the
+	// existing signature over that head is already what a receipt would point
+	// at.
+	if checkpoints, err := l.st.LedgerCheckpoints(); err == nil {
+		for _, c := range checkpoints {
+			if c.Seq == l.lastSeq {
+				return nil
+			}
+		}
+	}
 	return l.sealCheckpointLocked()
 }
 

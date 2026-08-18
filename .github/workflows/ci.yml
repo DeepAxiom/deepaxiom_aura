@@ -297,6 +297,34 @@ jobs:
           test "$(code -H "Authorization: Bearer $OP"             http://127.0.0.1:9131/v1/ledger)" = 200             || { echo "FAIL: the operator was refused its own ledger"; exit 1; }
           test "$(code -H "Authorization: Bearer not-a-real-token"             http://127.0.0.1:9131/v1/ledger)" = 401             || { echo "FAIL: an invented token was not refused"; exit 1; }
 
+      # The compliance deliverable: a period report that verifies from itself.
+      # Generated against a ledger with real sealed effects, then checked with
+      # no node running, because that second property is the whole product.
+      - name: an audit report verifies with no node running
+        run: |
+          pip install --quiet websockets
+          ./kernel/aura up --port 9151 --data /tmp/audit-ci --no-auth &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9151/healthz >/dev/null && break
+            sleep 0.25
+          done
+          # Reuse the adversarial harness's setup — a real motor skill, a real
+          # graph, two real gated effects — without its tampering half.
+          python3 - <<'PY'
+          import asyncio, pathlib
+          src = pathlib.Path("scripts/ledger_adversarial.py").read_text()
+          ns = {}
+          exec(compile(src[:src.index("def run_aura_verify")], "seal", "exec"), ns)
+          asyncio.run(ns["seal_two_effects"](9151))
+          PY
+          ./kernel/aura audit --data /tmp/audit-ci --out /tmp/audit-ci.json
+          out=$(./kernel/aura audit --verify /tmp/audit-ci.json)
+          echo "$out"
+          echo "$out" | grep -q "SOUND" \
+            || { echo "FAIL: a freshly written audit report did not verify"; exit 1; }
+          echo "$out" | grep -q "2 verify" \
+            || { echo "FAIL: the report did not attach a receipt per gated effect"; exit 1; }
+
       # The adoption path this command exists for: no node, no port, no setup.
       # If it ever needs `aura up` first, the wedge is gone.
       - name: guard runs with no node standing

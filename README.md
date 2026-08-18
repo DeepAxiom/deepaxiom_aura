@@ -229,6 +229,15 @@ credential it legitimately received. What it removes is the standing, ambient
 token that was available for every call an agent ever made, gated or not.
 [Details](GUIDE.md#the-credential-broker).
 
+**An auditor asking about a period?** `aura audit --since 2026-07-01 --out q3.json`
+answers the question they actually arrive with — what acted on the world, who
+authorized each one, under which policy document, and whether the record has
+been edited — with a portable receipt per gated effect. Receipts prove one
+effect and bundles explain one session; both start from something an engineer
+already has. A date range is what a compliance obligation names, and
+`aura audit --verify q3.json` checks the whole document with no database, no
+node and no network.
+
 **Shipping a new model?** `aura regress` replays your recorded sessions against
 it and diffs the *effects*, not the transcripts — so "the wording changed" and
 "it stopped issuing the refund" are no longer the same result. An eval suite

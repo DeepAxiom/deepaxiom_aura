@@ -229,6 +229,15 @@ elimina: la credencial ambiente y permanente que estaba disponible para cada
 llamada que el agente hiciera, gateada o no.
 [Detalles](GUIDE-ES.md#el-broker-de-credenciales).
 
+**¿Un auditor preguntando por un periodo?** `aura audit --since 2026-07-01 --out q3.json`
+contesta la pregunta con la que realmente llega — qué actuó sobre el mundo, quién
+autorizó cada cosa, bajo qué documento de policy, y si el registro fue editado —
+con un recibo portable por cada efecto gateado. Los recibos prueban un efecto y
+los bundles explican una sesión; ambos parten de algo que un ingeniero ya tiene.
+Un rango de fechas es lo que nombra una obligación de cumplimiento, y
+`aura audit --verify q3.json` verifica el documento entero sin base de datos, sin
+nodo y sin red.
+
 **¿Vas a cambiar de modelo?** `aura regress` reproduce tus sesiones grabadas
 contra él y hace diff de los *efectos*, no de las transcripciones — así "cambió
 la redacción" y "dejó de emitir el reembolso" dejan de ser el mismo resultado.

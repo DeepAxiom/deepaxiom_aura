@@ -85,6 +85,8 @@ func main() {
 		cmdStatus(os.Args[2:])
 	case "verify":
 		cmdVerify(os.Args[2:])
+	case "audit":
+		cmdAudit(os.Args[2:])
 	case "witness":
 		cmdWitness(os.Args[2:])
 	case "receipt":
@@ -135,6 +137,7 @@ Usage:
   aura run <org/cat/name> [--port 9080]
   aura status [--port 9080]
   aura verify [--data <dir>]
+  aura audit [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out <f>] | --verify <f>
   aura witness <witness-url> [--token <t>] [--port 9080]
   aura receipt <effect-hash> [--out <f>] | --verify <f>
   aura bundle <session> [--out <f>] | --verify <f>
