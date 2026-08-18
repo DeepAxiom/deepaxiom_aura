@@ -1,7 +1,6 @@
 # C5 — Inference Attestation (frozen contract)
 
-**Protocol major: 1 · Status: v1.0 — FROZEN (2026-08-15, initial release, Phase 4).
-Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.1 — FROZEN (2026-08-18: hardware evidence in `tee`, with the nonce-binding rule that makes a quote be about one declaration — additive; base v1.0 frozen 2026-08-15, initial release, Phase 4). Changes: additive only; breaking = new major via RFC.**
 
 C4 answers *what acted on the world, and who authorized it*. It does not answer
 the question that comes next in any real incident review: **what produced the
@@ -35,10 +34,13 @@ What a conforming implementation guarantees is narrower, and still useful:
 | The claim cannot be backdated or reordered | That no other model also contributed |
 | A verifier needs neither the node nor its operator | Anything about the skill's internal honesty |
 
-Closing the remaining gap requires hardware attestation — a TEE quote binding
-a measurement of the process that actually executed the model. The `tee` field
-is reserved for exactly that and is absent on every implementation today. Its
-absence is what keeps this contract in the "assertion" column.
+Closing the remaining gap requires hardware attestation — a TEE quote binding a
+measurement of the process that actually executed the model. The `tee` field
+carries exactly that, and "Hardware evidence" below specifies the rule that
+makes a quote evidence *about this record* rather than about a process. Its
+absence — the state of every attestation produced without a TEE — is what keeps
+that record in the "assertion" column, and a verifier reports which of the
+three levels applies rather than a boolean.
 
 Implementations MUST NOT describe C5 output as proof of what executed. The
 phrase this specification uses, and that tooling should echo, is: *who claimed
@@ -80,7 +82,103 @@ additive). The record is JSON:
 | `params` | Free-form JSON: the sampling configuration actually used, including `seed`. Free-form because no contract should have to model every engine's knobs; hashed verbatim, so the record commits to exactly what was sent. |
 | `prompt_sha256` / `output_sha256` | Bind the record to its input and output **without storing either**. Same rule as C4's `payload_sha256`: user data must not become permanently undeletable. |
 | `energy` | Optional. See below. |
-| `tee` | Reserved for a hardware attestation quote. Absent means the record is an assertion. |
+| `tee` | v1.1, additive. A hardware attestation quote bound to this record by the nonce rule below. Absent means the record is an assertion. |
+
+## Hardware evidence (v1.1)
+
+The section above states the limit this one narrows: an attestation is an
+assertion, and a skill that lies produces a sealed record of a lie. A Trusted
+Execution Environment can constrain that, because a quote is signed by hardware
+the skill does not control.
+
+A quote on its own, however, proves very little here. "This process runs in an
+enclave" is a claim about a process, and the question C5 asks is about a
+*record*: did the enclave produce **this** declaration, naming **this** model,
+with **these** sampling parameters? Evidence that merely accompanies a record
+answers the first and not the second.
+
+### The binding rule
+
+Every TEE quote format carries a caller-supplied nonce, present so a verifier
+can tell a fresh quote from a replayed one. That field is what binds the two:
+
+> The nonce a conforming implementation asks the hardware to quote **MUST** be
+> the SHA-256 of the attestation record with its `tee` member removed, keys
+> sorted, rendered as compact JSON, hex-encoded.
+
+A skill computes its declaration, hashes it, asks the hardware to quote that
+hash, and attaches the result. A verifier recomputes the hash from the record it
+holds and compares. A quote taken on another machine, at another moment, or for
+another model's run carries a different nonce and fails — so the evidence is
+*about* the declaration rather than merely next to it. Editing the declaration
+after the quote was taken breaks it in the same way, which is the property that
+matters most: a skill cannot quote an honest configuration and then ship a
+different one.
+
+This canonicalisation is the one place in this contract where a JSON object is
+re-encoded before hashing, and it is unavoidable: the value must be computable
+by a party that never saw the original bytes, which is exactly what the
+`AttestationHash` rule (hash what was sent) is designed to avoid needing. The
+two hashes answer different questions and a conforming implementation computes
+both.
+
+### The evidence block
+
+```json
+{
+  "format":   "nvidia-eat/1",
+  "nonce":    "b3a1c9…",
+  "quote":    "eyJhbGciOi…",
+  "ts":       1754083200000,
+  "verifier": "NRAS"
+}
+```
+
+| Field | Norm |
+|---|---|
+| `format` | **Required.** One of `nvidia-eat/1` (an Entity Attestation Token from a GPU attestation service), `amd-sev-snp/1` (a raw SEV-SNP attestation report), `intel-tdx/1` (a raw TDX quote). A verifier that does not recognise the value MUST report the evidence as unchecked rather than reject the attestation. |
+| `nonce` | **Required.** Hex, and MUST equal the binding hash above. |
+| `quote` | **Required.** The evidence itself, base64. Opaque to this contract beyond the coarse structural checks each format implies. |
+| `ts` | **Required.** When the quote was taken. A verifier MUST reject evidence more than 10 minutes from the attestation's own timestamp. |
+| `verifier` | Optional. Names a remote attestation service that already checked the raw hardware evidence. **Informational**: a conforming verifier MUST NOT treat its presence as trust. |
+
+The whole block MUST NOT exceed 65536 bytes, and the enclosing attestation's
+8192-byte cap does not apply to it — a certificate chain is legitimately larger
+than the record it accompanies, and applying the smaller cap would make the
+field unusable rather than bounded.
+
+### Three levels, and why they are not one
+
+What a verifier may conclude depends on what it holds. A conforming
+implementation MUST report one of:
+
+| Level | Means |
+|---|---|
+| `none` | No `tee` block. The claim is the skill's word. |
+| `bound` | A quote is present and its nonce binds this exact record. Checkable offline by anyone, with no vendor roots. Proves the evidence was produced for this declaration — **not** that the hardware is genuine. |
+| `verified` | The quote's signature also chains to a vendor root the verifier was configured with. |
+
+`bound` is deliberately not named "attested". It is a real improvement on
+nothing, it is not what an unqualified word would imply, and the gap between the
+two is where a reader is otherwise misled.
+
+An implementation MUST NOT report `verified` unless it performed chain
+verification against a trust anchor it was given. In particular it MUST NOT
+report `verified` because a `verifier` was named, because an anchor was
+configured but unused, or because the format was recognised.
+
+### Trust anchors are supplied, never embedded
+
+A conforming implementation MUST NOT ship vendor roots compiled into the binary.
+A root that cannot be rotated fails closed at the worst moment or open at the
+wrong one, and an implementation cannot validate a root it did not obtain
+through the deployment's own trust process. Anchors are configuration.
+
+A format asked to reach `verified` on a node with no anchor for it MUST be
+reported as `bound` with the reason stated — never silently downgraded, and
+never silently promoted.
+
+---
 
 ### Size
 

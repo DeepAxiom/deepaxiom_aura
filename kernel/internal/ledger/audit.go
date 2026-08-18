@@ -90,6 +90,9 @@ type AuditReport struct {
 	Policies []AuditPolicy `json:"policies"`
 	// Capabilities breaks the period down by what actually acted.
 	Capabilities []AuditCapability `json:"capabilities"`
+	// Inference reports the distinct model configurations cited over the period
+	// and how much of what they claim rests on the skill's word.
+	Inference AuditInference `json:"inference"`
 	// Approvers counts sealed approvals per operator. Present only for effects
 	// whose gate was answered with a verified signature.
 	Approvers []AuditApprover `json:"approvers,omitempty"`
@@ -142,6 +145,29 @@ type AuditOmission struct {
 	Reason    string `json:"reason"`
 }
 
+// AuditInference is what argued for the period's effects, and how far each
+// claim can be checked.
+//
+// The counts are the answer to a question an auditor asks and a summary of
+// effect counts cannot address: *how much of this do I have to take the
+// operator”'s word for?* A model configuration a skill merely declared and one
+// a TEE quote binds to that exact declaration are different kinds of evidence,
+// and reporting them as one number would launder the weaker into the stronger —
+// the same mistake C5 spends a page warning about with energy figures.
+type AuditInference struct {
+	// Cited is how many distinct attestations the period'''s effects referenced.
+	Cited int `json:"cited"`
+	// SelfDeclared, Bound and Verified partition Cited by EvidenceLevel.
+	SelfDeclared int `json:"self_declared"`
+	Bound        int `json:"bound"`
+	Verified     int `json:"verified"`
+	// Unreadable counts attestations the ledger cites that could not be loaded
+	// or no longer match their content address. Non-zero is a finding.
+	Unreadable int `json:"unreadable,omitempty"`
+	// Models lists the distinct model identifiers cited, sorted.
+	Models []string `json:"models,omitempty"`
+}
+
 // AuditPolicy is one policy document that was in force.
 type AuditPolicy struct {
 	Hash    string `json:"hash"`
@@ -181,6 +207,14 @@ type AuditIntegrity struct {
 
 // BuildAudit assembles the report for [from, until).
 func BuildAudit(st *store.Store, nodeID, pubkeyB64 string, from, until time.Time) (AuditReport, error) {
+	return BuildAuditWith(st, nodeID, pubkeyB64, from, until, TrustAnchors{})
+}
+
+// BuildAuditWith is BuildAudit with the operator”'s TEE trust anchors, which
+// decide whether hardware evidence can reach EvidenceVerified. Separate rather
+// than a sixth positional argument so the common call stays readable.
+func BuildAuditWith(st *store.Store, nodeID, pubkeyB64 string, from, until time.Time,
+	anchors TrustAnchors) (AuditReport, error) {
 	if !until.After(from) {
 		return AuditReport{}, fmt.Errorf("the period ends at or before it starts (%s → %s)",
 			from.Format(time.RFC3339), until.Format(time.RFC3339))
@@ -202,6 +236,7 @@ func BuildAudit(st *store.Store, nodeID, pubkeyB64 string, from, until time.Time
 	approvers := map[string]*AuditApprover{}
 	sessions := map[string]bool{}
 	actors := map[string]bool{}
+	cited := map[string]bool{}
 	var gatedHashes []string
 
 	for _, r := range raw {
@@ -246,6 +281,9 @@ func BuildAudit(st *store.Store, nodeID, pubkeyB64 string, from, until time.Time
 		}
 		if len(e.Inference) > 0 {
 			s.WithInference++
+		}
+		for _, h := range e.Inference {
+			cited[h] = true
 		}
 
 		p := policies[e.Policy]
@@ -335,6 +373,32 @@ func BuildAudit(st *store.Store, nodeID, pubkeyB64 string, from, until time.Time
 		}
 		rep.Gated = append(rep.Gated, rc)
 	}
+
+	// What argued for these effects, and how far each claim can be checked.
+	// Loaded from storage rather than trusted from the entry, because the point
+	// of the citation is that the record it names is still there and still
+	// hashes to what was cited.
+	models := map[string]bool{}
+	for _, h := range sortedSet(cited) {
+		raw, err := st.Attestation(h)
+		if err != nil || AttestationHash(raw) != h {
+			rep.Inference.Unreadable++
+			continue
+		}
+		rep.Inference.Cited++
+		if a, _, err := ParseAttestation(raw); err == nil && a.Model != "" {
+			models[a.Model] = true
+		}
+		switch CheckEvidence(raw, anchors).Level {
+		case EvidenceVerified:
+			rep.Inference.Verified++
+		case EvidenceBound:
+			rep.Inference.Bound++
+		default:
+			rep.Inference.SelfDeclared++
+		}
+	}
+	rep.Inference.Models = sortedSet(models)
 
 	// The integrity section covers the whole chain, not the period. An edit
 	// anywhere rewrites every hash after it, so a period cannot be shown intact
@@ -451,6 +515,25 @@ func VerifyAudit(rep AuditReport) AuditVerdict {
 		v.Findings = append(v.Findings, AuditFinding{Severity: "note",
 			Detail: fmt.Sprintf("%d effect(s) were excused from their gate by the graph rather than "+
 				"by policy — see `waived` in C4", rep.Summary.Waived)})
+	}
+	if n := rep.Inference.Unreadable; n > 0 {
+		v.Findings = append(v.Findings, AuditFinding{Severity: "high",
+			Detail: fmt.Sprintf("%d cited inference attestation(s) could not be read or no longer "+
+				"match their content address — the ledger points at evidence that is gone or "+
+				"altered", n)})
+	}
+	if rep.Inference.Cited > 0 && rep.Inference.Bound+rep.Inference.Verified == 0 {
+		v.Findings = append(v.Findings, AuditFinding{Severity: "note",
+			Detail: fmt.Sprintf("all %d model configuration(s) cited are self-declared: the skill "+
+				"stated what it ran and no hardware evidence binds the claim to the run. "+
+				"Verifiable: who claimed what, when, and what it caused. Not verifiable: "+
+				"whether the claim was true", rep.Inference.Cited)})
+	}
+	if rep.Inference.Bound > 0 && rep.Inference.Verified == 0 {
+		v.Findings = append(v.Findings, AuditFinding{Severity: "note",
+			Detail: fmt.Sprintf("%d model configuration(s) carry hardware evidence bound to the "+
+				"declaration, but no vendor trust anchor was configured, so the hardware'''s own "+
+				"signature was not checked", rep.Inference.Bound)})
 	}
 	if rep.Integrity.Witnesses == 0 {
 		v.Findings = append(v.Findings, AuditFinding{Severity: "note",

@@ -202,10 +202,17 @@ None of this lives in your graph:
   rewritten anything. Nodes anchor at a free public witness by default and can
   point anywhere else with one flag; a receipt is worth what it is worth to
   whoever is already following the same anchor.
-- **It cites the model that argued for it.** A skill running inference attests to
-  engine, model, revision, quantization, sampling parameters and seed — bound
-  into every effect that output caused. A silent model swap changes hashes
-  already committed to an append-only chain.
+- **It cites the model that argued for it — and says how far to believe it.** A
+  skill running inference attests to engine, model, revision, quantization,
+  sampling parameters and seed, bound into every effect that output caused, so a
+  silent model swap changes hashes already committed to an append-only chain.
+  That is still the skill's own word, and C5 has always said so. Where hardware
+  can narrow it, the quote's nonce **is** the hash of that exact declaration — so
+  the evidence is about *this* record rather than merely beside it, and editing
+  the declaration afterwards breaks it. A verifier reports `none`, `bound` or
+  `verified` rather than a boolean, because "a quote exists" and "genuine
+  hardware signed this" are different claims and collapsing them is how a reader
+  gets misled. Vendor roots are supplied by the operator, never compiled in.
 - **`aura undo`** reverses an effect through a declared compensation port. The
   undo is itself gated and sealed.
 
@@ -267,6 +274,17 @@ That shape is written up as
 [a proposal to MCP](spec/proposals/mcp-effect-receipts.md): one optional field,
 no change to the transport, and the alternative is every vendor inventing its
 own namespace and an auditor reconciling five formats by timestamp.
+
+The signed approver is written up the same way, as an
+[Internet-Draft](spec/proposals/draft-signed-human-approval.md). The existing
+agent audit-trail draft at the IETF records *that* a human intervened, with a
+pseudonymous id and no signature, and signs records with the **agent's** key —
+so the only evidence a human approved is the word of the system under review.
+That is the one claim an audit cannot rest on, and the fix is small: a key the
+recording system never holds, a payload bound to one action, and a strict
+separation between "did they sign this" (permanent) and "may they approve now"
+(mutable). The draft is transport- and format-independent and fits inside the
+field that draft already reserves.
 
 **The nine skills in [`skills/`](skills/) are demos.** They exist to show the
 shape of a skill and to give a cold node something to run — not to be a
