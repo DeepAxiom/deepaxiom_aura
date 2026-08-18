@@ -3,7 +3,7 @@
 ### Deploy assistants and automations that run live — and can prove what they did.
 
 [Full guide](GUIDE.md) · [Versión en español](README-ES.md) ·
-[Milestone status](GUIDE.md#milestone-status) ·
+[Milestone status](GUIDE.md#milestone-status) · [Roadmap](ROADMAP.md) ·
 **v0.3.0 — pre-1.0, pre-production**
 
 ---
@@ -236,7 +236,7 @@ other people's code.
 |---|---|
 | **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry** · **scoped skill credentials** · **the credential broker** · **the witness's own published log, and a monitor that catches one rewriting it** · cancellation · session resume · deterministic replay · **effect-level regression** · **period audit reports that verify standalone** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC · event-log rotation and recovery |
 | **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · OpenTelemetry export · ML-BOM |
-| **Not there yet** | No multi-device view of one live session · no failover if the node dies · TEE evidence reaches `bound`, never `verified` — vendor chain verification is declared and refused rather than stubbed |
+| **Not there yet** | No multi-device view of one live session · **no failover if the node dies** — one process, and the live routing state goes with it · TEE evidence reaches `bound`, never `verified` — vendor chain verification is declared and refused rather than stubbed · the SDKs are packaged but unpublished · no documented backup/restore procedure, and none for rotating the node key |
 
 **The gap that matters most for what follows: a `format: source` skill is not
 contained.** `--sandbox process` scrubs its environment, jails its working
@@ -250,8 +250,8 @@ startup rather than quietly downgraded.
 59-check conformance suite runs the kernel over the wire, and separate CI jobs
 prove the ledger detects tampering by editing a real database behind a real
 binary's back, and that a scoped token cannot act as the operator. Read
-[Security model](GUIDE.md#security-model) before you expose a port. This is
-pre-production; treat it that way.
+[Security model](GUIDE.md#security-model) before you expose a port, and [the roadmap](ROADMAP.md) for what is left and what it blocks.
+This is pre-production; treat it that way.
 
 ---
 
@@ -287,6 +287,60 @@ manifest. Copy the closest one and replace it. Start from
 [`skills/echo/`](skills/echo/), about 100 lines.
 
 ---
+
+---
+
+## Running it beside your app
+
+The integration is six lines. The deployment is a process, and that distinction
+is the one that decides whether this fits your stack:
+
+```js
+import { createNode } from "@deepaxiom/aura";
+const aura = createNode({ org: "acme", app: "shop" });
+
+aura.expose("get-order",    ({id}) => db.orders.find(id),   { params: ["id"] });
+aura.expose("refund-order", ({id}) => db.orders.refund(id), { params: ["id"], write: true });
+
+await aura.start();
+```
+
+`write: true` is the only line here about safety, and it is a declaration rather
+than an implementation: the executor gates that call on every edge that reaches
+it, including in a graph whose author never asked for one, and seals the effect
+into the ledger. CI proves exactly that against a real binary — see
+[`examples/expose-app/`](examples/expose-app/).
+
+```bash
+docker compose up      # the kernel, with a persistent ledger, beside your app
+```
+
+The container is distroless, non-root and CGO-free, and `STOPSIGNAL SIGTERM`
+with an exec-form entrypoint is not boilerplate: without it the signal never
+reaches the kernel, `docker stop` becomes a SIGKILL ten seconds later, and the
+store's shutdown ordering is skipped on every deploy. The node drains within a
+bounded window and says so.
+
+**The data directory is not a cache.** It holds the node identity, the effect
+ledger and the broker's encrypted secrets — and the broker's key is *derived*
+from the identity, so a restore without `identity/` yields ciphertext nobody can
+open. Back it up like a database.
+
+Two endpoints an orchestrator needs:
+
+| | |
+|---|---|
+| `GET /readyz` | Open, because a probe holds no credential. Stricter than `/healthz`: it answers only once the store and ledger are usable, so a rolling deploy does not send traffic to a node that is up but not working. |
+| `GET /metrics` | Prometheus text, **authenticated** — the series include live session counts, ledger size and the pending approval queue. `aura_store_batch_mean` is the one for capacity: near the batch cap means the commit is your ceiling and more writers would not help. |
+
+**What this does not survive is the node dying.** One process, no failover; the
+event log survives, the live routing state does not. Answer that honestly before
+you deploy: if AURA falls over, does your app degrade or stop? If it degrades,
+this is deployable today. If it stops, read [the roadmap](ROADMAP.md) first.
+
+**The SDKs are packaged and not published.** `@deepaxiom/aura` and `aura-sdk`
+exist, build and are tested; there is no `npm install` for them yet, so today you
+vendor them from the repo.
 
 ## Connecting what you already have
 

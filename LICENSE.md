@@ -35,7 +35,7 @@ different jobs, so they carry different licenses:
 | `kernel/` — the `aura` binary (the AURA kernel architecture) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | `ui/` — the control-plane frontend, embedded into the kernel binary | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | `skills/` — first-party skills (echo, llm-chat, asr, tts, sentence-chunker, planner, model-manager, memory-context, postgres-cdc) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
-| Documentation at the repo root (this file, `README.md`, `README-ES.md`, `GUIDE.md`, `GUIDE-ES.md`, `CONTRIBUTING.md`) | Apache-2.0 | `Apache-2.0` |
+| Documentation at the repo root (this file, `README.md`, `README-ES.md`, `GUIDE.md`, `GUIDE-ES.md`, `ROADMAP.md`, `ROADMAP-ES.md`, `CONTRIBUTING.md`) | Apache-2.0 | `Apache-2.0` |
 
 ¹ A commercial license is available in place of AGPLv3 for anyone who does not
 want its obligations — see below. Third-party skills you write yourself against

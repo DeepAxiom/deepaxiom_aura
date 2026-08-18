@@ -1955,6 +1955,102 @@ un humano.
 
 ---
 
+## Desplegar y operar un nodo
+
+Todo lo anterior trata de lo que hace un nodo. Esto trata de correr uno, que es
+otro conjunto de preguntas y hasta hace poco tenía otras respuestas.
+
+### El cierre era lo primero que había que arreglar
+
+`aura up` maneja SIGINT y SIGTERM: deja de aceptar conexiones, da a las peticiones
+en vuelo una ventana acotada (10 s, dentro de los periodos de gracia por defecto
+de Docker y de Kubernetes), y solo entonces cierra los escritores y la base — en
+ese orden, que es el que documenta `store.Close`.
+
+Esa secuencia es la razón de que cada `Close()` de este codebase signifique algo.
+Antes de que existiera, `ListenAndServe` bloqueaba para siempre, la limpieza
+diferida nunca corría, y SIGTERM —lo que mandan `docker stop`, el borrado de un
+pod y `systemctl stop`— mataba el proceso de golpe. El orden de cierre del store,
+el writer bufferizado de 1 MiB de seglog y el drenado del escritor de SQLite eran
+inalcanzables en la práctica, en cada deploy. Con un runtime de contenedores el
+kill sigue a la señal tras un periodo de gracia fijo, así que un cierre ordenado
+no era improbable: era imposible.
+
+Un cierre limpio imprime `stopped cleanly` y deja el ledger y el log de eventos
+consistentes. CI verifica las dos cosas —que el drenado ocurrió, y que
+`aura verify` reporta SOUND después— porque un log de aspecto limpio sobre una
+cadena rota sería el peor de los dos resultados.
+
+### Dos endpoints que un orquestador necesita
+
+```
+GET /readyz    abierto     ¿vale la pena mandarle tráfico a este nodo?
+GET /metrics   con token   texto Prometheus
+```
+
+`/readyz` es deliberadamente más estricto que `/healthz` y deliberadamente
+abierto. Una probe de liveness responde en cuanto el listener está arriba; la de
+readiness responde solo cuando el store y el ledger son usables. Confundir las dos
+es la razón de que un rolling deploy mande tráfico a un pod nuevo que está
+corriendo y no funcionando. Está abierto porque la probe de un runtime de
+contenedores no tiene credencial — un chequeo de readiness que responde 401 deja
+a un nodo sano fuera de rotación para siempre.
+
+`/metrics` **no** está abierto. Las series incluyen conteos de sesiones vivas,
+tamaño del ledger y la cola de aprobaciones pendientes, que es una foto útil de lo
+que este nodo está haciendo para alguien que no debería tenerla. Un scraper puede
+llevar un bearer token.
+
+La métrica que conviene mirar primero es `aura_store_batch_mean`. Cerca del tope
+del batch significa que el commit es tu techo y añadir escritores sobre un archivo
+SQLite lo empeoraría; cerca de 1 bajo carga significa que el límite está en otro
+sitio. `aura_store_commit_fallbacks_total` por encima de cero significa que alguna
+escritura está fallando una constraint y cada una cuesta un commit lento.
+`aura_event_log_damaged_segments` por encima de cero significa que un archivo
+sellado cambió después de cerrarse — investiga en vez de reiniciar.
+
+### El contenedor
+
+```bash
+docker compose up
+```
+
+Distroless, non-root, sin CGO. Dos líneas del Dockerfile cargan peso en vez de
+ser boilerplate: `STOPSIGNAL SIGTERM` con entrypoint en **forma exec**, para que
+la señal llegue a PID 1 y PID 1 sea el kernel. Con un entrypoint en forma de
+shell, el shell es PID 1, no reenvía señales, y cada parada se convierte en un
+SIGKILL — que es exactamente el fallo que describe la sección de arriba.
+
+`docker build` todavía no corre en CI, así que la imagen está escrita y no
+probada. Ver [ROADMAP-ES.md](ROADMAP-ES.md).
+
+### El directorio de datos no es una caché
+
+Tiene tres cosas que no se pueden regenerar:
+
+- **`identity/`** — el par de claves Ed25519 del nodo. Cada checkpoint y cada
+  declaración de witness verifica contra él.
+- **`kernel.db`** — el ledger de efectos. Esto es la evidencia.
+- **los secretos cifrados** — y la clave de cifrado del broker se *deriva* de la
+  clave de identidad, así que un directorio de datos restaurado **sin**
+  `identity/` produce texto cifrado que nadie puede abrir. Ese es el resultado
+  correcto para un archivo de base de datos robado y catastrófico para un backup
+  parcial.
+
+Respáldalo como una base de datos, no como una caché. Todavía no hay
+procedimiento documentado de backup/restore, ni rotación de claves; los dos están
+en [ROADMAP-ES.md](ROADMAP-ES.md) entre lo que bloquea producción.
+
+### Lo que un nodo no sobrevive
+
+Un proceso, sin failover. Un nodo que muere se lleva su estado de ruteo vivo — el
+log de eventos sobrevive, así que la historia y el replay quedan intactos, pero
+las sesiones que estaban abiertas se fueron. Contesta esto antes de desplegar: si
+AURA se cae, ¿tu aplicación degrada o se detiene? Si degrada, esto es desplegable
+hoy como servicio auxiliar. Si se detiene, el failover va primero.
+
+---
+
 ## Los cinco contratos
 
 Todo lo anterior descansa sobre cinco contratos pequeños, formalmente
@@ -2496,7 +2592,7 @@ python spec\conformance\runner.py --port 9080
 
 ## Estado de los hitos
 
-**Esto es pre-1.0.** Ver [Estado de los hitos](#estado-de-los-hitos) para qué está construido y
+**Esto es pre-1.0.** Ver [ROADMAP-ES.md](ROADMAP-ES.md) para lo que falta y a quién le bloquea, y [Estado de los hitos](#estado-de-los-hitos) para qué está construido y
 qué no — los cimientos, la conectividad, la voz multicanal en streaming, la
 seguridad del nodo y el ledger de efectos están todos, cliente de navegador
 incluido. Los dieciocho hitos de abajo corren de extremo a extremo; la suite de

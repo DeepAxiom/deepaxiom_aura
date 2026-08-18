@@ -15,7 +15,7 @@ build something on AURA want that, not this guide.
 
 **This is pre-1.0 (v0.1.0).** The project's central bet — a runtime that is
 real-time and persistent rather than run-shaped — is only partly true of the
-code today. See [Milestone status](GUIDE.md#milestone-status) for what landed and what was
+code today. See [ROADMAP.md](ROADMAP.md) for what is left, and [Milestone status](GUIDE.md#milestone-status) for what landed and what was
 deferred. Connection liveness, transitive cancellation and QoS enforcement are
 in; session resume is the biggest gap still open, and seven kernel packages
 have no automated tests at all.

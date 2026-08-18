@@ -108,6 +108,7 @@ are decisions a deployment makes and an example cannot make for it. See
 37. [Milestone status](#milestone-status)
 38. [Designed, not yet built](#designed-not-yet-built)
 39. [License & governance](#license--governance)
+40. [Deploying and operating a node](#deploying-and-operating-a-node)
 40. [References](#references)
 
 ---
@@ -2073,6 +2074,98 @@ some agents will time out on before a human gets there.
 
 ---
 
+## Deploying and operating a node
+
+Everything above is about what a node does. This is about running one, which is a
+different set of questions and had different answers until recently.
+
+### Shutdown is the part that had to be fixed first
+
+`aura up` handles SIGINT and SIGTERM: it stops accepting connections, gives
+in-flight requests a bounded window (10 s, inside both Docker's and Kubernetes'
+default grace periods), and only then closes the writers and the database — in
+that order, which is the order `store.Close` documents.
+
+That sequence is why every `Close()` in this codebase means anything. Before it
+existed, `ListenAndServe` blocked forever, the deferred cleanup never ran, and
+SIGTERM — what `docker stop`, a pod deletion and `systemctl stop` all send —
+killed the process outright. The store's shutdown ordering, seglog's 1 MiB
+buffered writer and the SQLite writer's drain were all unreachable in practice,
+on every deploy. Under a container runtime the kill follows the signal by a fixed
+grace period, so an orderly shutdown was not unlikely; it was impossible.
+
+A clean stop prints `stopped cleanly` and leaves the ledger and event log
+consistent. CI asserts both — that the drain happened, and that `aura verify`
+reports SOUND afterwards, because a clean-looking log over a broken chain would
+be the worst of the two outcomes.
+
+### Two endpoints an orchestrator needs
+
+```
+GET /readyz    open        is this node worth sending traffic to?
+GET /metrics   token       Prometheus text
+```
+
+`/readyz` is deliberately stricter than `/healthz` and deliberately open. A
+liveness probe answers as soon as the listener is up; readiness answers only once
+the store and the ledger are usable. Conflating the two is why a rolling deploy
+sends traffic to a new pod that is running and not working. It is open because a
+container runtime's probe holds no credential — a readiness check that answers
+401 keeps a healthy node out of rotation forever.
+
+`/metrics` is **not** open. The series include live session counts, ledger size
+and the pending approval queue, which is a useful picture of what this node is
+doing for somebody who should not have one. A scraper can carry a bearer token.
+
+The metric worth watching first is `aura_store_batch_mean`. Near the batch cap
+means the commit itself is your ceiling and adding writers to one SQLite file
+would make it worse; near 1 under load means the limit is somewhere else.
+`aura_store_commit_fallbacks_total` above zero means some write is failing a
+constraint and each one costs a slow commit. `aura_event_log_damaged_segments`
+above zero means a sealed file changed after it was closed — investigate rather
+than restart.
+
+### The container
+
+```bash
+docker compose up
+```
+
+Distroless, non-root, CGO-free. Two lines in the Dockerfile are load-bearing
+rather than boilerplate: `STOPSIGNAL SIGTERM` with an **exec-form** entrypoint,
+so the signal reaches PID 1 and PID 1 is the kernel. With a shell-form entrypoint
+the shell is PID 1, does not forward signals, and every stop becomes a SIGKILL —
+which is exactly the failure the section above describes.
+
+`docker build` is not yet run in CI, so the image is written and not proven. See
+[ROADMAP.md](ROADMAP.md).
+
+### The data directory is not a cache
+
+It holds three things that cannot be regenerated:
+
+- **`identity/`** — the node's Ed25519 keypair. Every checkpoint and every
+  witness statement verifies against it.
+- **`kernel.db`** — the effect ledger. This is the evidence.
+- **the encrypted secrets** — and the broker's encryption key is *derived* from
+  the identity key, so a data directory restored **without** `identity/` yields
+  ciphertext nobody can open. That is the correct outcome for a stolen database
+  file and a catastrophic one for a partial backup.
+
+Back it up like a database, not like a cache. There is no documented
+backup/restore procedure yet, and no key rotation; both are in
+[ROADMAP.md](ROADMAP.md) under what blocks production.
+
+### What a node does not survive
+
+One process, no failover. A node that dies takes its live routing state with it —
+the event log survives, so history and replay are intact, but the sessions that
+were open are gone. Answer this before deploying: if AURA falls over, does your
+application degrade or stop? If it degrades, this is deployable today as an
+auxiliary service. If it stops, failover comes first.
+
+---
+
 ## The five contracts
 
 Everything above rests on five small, formally specified, version-frozen
@@ -2631,7 +2724,7 @@ python spec\conformance\runner.py --port 9080
 
 ## Milestone status
 
-**This is pre-1.0.** See [Milestone status](#milestone-status) for what is built and what
+**This is pre-1.0.** See [ROADMAP.md](ROADMAP.md) for what is left and who it blocks, and [Milestone status](#milestone-status) for what is built and what
 is not — the foundations, the connectivity work, streaming multi-channel voice,
 node security and the effect ledger are all in, browser client included. The
 eighteen milestones below run end-to-end; the conformance suite (59 checks,
