@@ -93,12 +93,15 @@ rules:
 func TestGraphWaiverIsIgnoredUnderAPolicy(t *testing.T) {
 	p := mustLoadPolicy(t, "policy: 1\ndefault_effect: gate\n")
 
-	gate, err := p.Authorize("motor.api.writer", GateNone)
+	auth, err := p.Authorize("motor.api.writer", GateNone)
 	if err != nil {
 		t.Fatalf("Authorize: %v", err)
 	}
-	if gate != GateHumanApproval {
-		t.Fatalf("a graph waived the gate under a policy that did not grant it; got %q", gate)
+	if auth.Gate != GateHumanApproval {
+		t.Fatalf("a graph waived the gate under a policy that did not grant it; got %q", auth.Gate)
+	}
+	if auth.Waived {
+		t.Error("an ignored waiver was recorded as one; nothing was waived")
 	}
 }
 
@@ -108,12 +111,17 @@ func TestGraphWaiverIsIgnoredUnderAPolicy(t *testing.T) {
 func TestGraphWaiverIsHonouredWhenExplicitlyGranted(t *testing.T) {
 	p := mustLoadPolicy(t, "policy: 1\ndefault_effect: gate\nallow_graph_waiver: true\n")
 
-	gate, err := p.Authorize("motor.tts.speak", GateNone)
+	auth, err := p.Authorize("motor.tts.speak", GateNone)
 	if err != nil {
 		t.Fatalf("Authorize: %v", err)
 	}
-	if gate != "" {
-		t.Fatalf("an explicitly granted waiver was not honoured; got gate %q", gate)
+	if auth.Gate != "" {
+		t.Fatalf("an explicitly granted waiver was not honoured; got gate %q", auth.Gate)
+	}
+	// Honoured, and recorded as what it is: the graph is why there is no gate
+	// here, and the ledger has to be able to say so.
+	if !auth.Waived {
+		t.Error("a honoured waiver was not marked; the entry it seals could not tell an auditor who excused the gate")
 	}
 }
 
@@ -122,14 +130,14 @@ func TestGraphWaiverIsHonouredWhenExplicitlyGranted(t *testing.T) {
 func TestDefaultPolicyPreservesPrePolicyBehaviour(t *testing.T) {
 	p := DefaultPolicy()
 
-	if gate, err := p.Authorize("motor.tts.speak", GateNone); err != nil || gate != "" {
-		t.Errorf("gate:none under the default policy: gate=%q err=%v; want delivered", gate, err)
+	if auth, err := p.Authorize("motor.tts.speak", GateNone); err != nil || auth.Gate != "" {
+		t.Errorf("gate:none under the default policy: gate=%q err=%v; want delivered", auth.Gate, err)
 	}
-	if gate, err := p.Authorize("motor.api.writer", ""); err != nil || gate != GateHumanApproval {
-		t.Errorf("an omitted gate on a motor edge: gate=%q err=%v; want human-approval", gate, err)
+	if auth, err := p.Authorize("motor.api.writer", ""); err != nil || auth.Gate != GateHumanApproval {
+		t.Errorf("an omitted gate on a motor edge: gate=%q err=%v; want human-approval", auth.Gate, err)
 	}
-	if gate, err := p.Authorize("logical.echo", ""); err != nil || gate != "" {
-		t.Errorf("a non-effect: gate=%q err=%v; want delivered", gate, err)
+	if auth, err := p.Authorize("logical.echo", ""); err != nil || auth.Gate != "" {
+		t.Errorf("a non-effect: gate=%q err=%v; want delivered", auth.Gate, err)
 	}
 }
 
@@ -148,8 +156,8 @@ rules:
     decision: allow
 `)
 	// Stricter: policy allows, the author still wants a human to look.
-	if gate, err := permissive.Authorize("motor.api.writer", GateHumanApproval); err != nil || gate != GateHumanApproval {
-		t.Errorf("author asked for a gate policy did not require: gate=%q err=%v", gate, err)
+	if auth, err := permissive.Authorize("motor.api.writer", GateHumanApproval); err != nil || auth.Gate != GateHumanApproval {
+		t.Errorf("author asked for a gate policy did not require: gate=%q err=%v", auth.Gate, err)
 	}
 	// Laxer: policy denies, and no graph may talk its way out of that.
 	strict := mustLoadPolicy(t, `

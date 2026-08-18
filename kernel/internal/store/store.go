@@ -66,7 +66,27 @@ type Store struct {
 // AURA_SQLITE_SYNCHRONOUS overrides it (FULL, NORMAL, OFF). OFF is faster still
 // on paper and is not worth it: batching the appends buys the same win without
 // risking a corrupt database.
-func Open(dataDir string) (*Store, error) {
+func Open(dataDir string) (*Store, error) { return OpenWith(dataDir, Options{}) }
+
+// Options tunes the parts of the store an operator may reasonably want to bound.
+// The zero value is the default configuration, which is what Open uses.
+type Options struct {
+	// EventLogMaxBytes caps the causal event log's total size on disk, reclaimed
+	// by deleting whole segments oldest-first. Zero keeps everything.
+	//
+	// It is a store option rather than a seglog constant because it is a
+	// question only the operator can answer: how much replay history is this
+	// node's disk worth. See seglog.Options.MaxBytes for what "oldest-first"
+	// costs — `aura why` and `aura replay` stop being able to answer about
+	// sessions whose segments were reclaimed.
+	EventLogMaxBytes int64
+	// EventLogSegmentBytes is the rotation threshold. Zero means the seglog
+	// default. Exposed mainly so tests can rotate without writing 128 MiB.
+	EventLogSegmentBytes int64
+}
+
+// OpenWith opens the embedded state with explicit options.
+func OpenWith(dataDir string, opt Options) (*Store, error) {
 	sync := os.Getenv("AURA_SQLITE_SYNCHRONOUS")
 	switch strings.ToUpper(sync) {
 	case "FULL", "NORMAL", "OFF", "EXTRA":
@@ -89,6 +109,15 @@ func Open(dataDir string) (*Store, error) {
 	if _, err := strconv.Atoi(checkpoint); err != nil {
 		checkpoint = "20000"
 	}
+	// The store creates its own directory rather than assuming a caller did.
+	// `aura up` happens to load the node identity first, which creates it as a
+	// side effect — so every command that opens a store *without* doing that
+	// (issuing a token, reading a ledger) failed on a fresh data directory with
+	// SQLite's "out of memory", which is what it reports for a path it cannot
+	// open. A component that needs a directory makes it.
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create data dir %s: %w", dataDir, err)
+	}
 	dsn := filepath.Join(dataDir, "kernel.db") +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(" + sync + ")" +
 		"&_pragma=wal_autocheckpoint(" + checkpoint + ")"
@@ -106,8 +135,13 @@ func Open(dataDir string) (*Store, error) {
 	// synchronous=FULL means the operator asked for durability across a power
 	// cut; the event log honours the same request rather than quietly keeping
 	// the weaker guarantee.
-	evlog, err := seglog.Open(dataDir, sync == "FULL" || sync == "EXTRA")
+	evlog, err := seglog.OpenWith(dataDir, seglog.Options{
+		Sync:         sync == "FULL" || sync == "EXTRA",
+		SegmentBytes: opt.EventLogSegmentBytes,
+		MaxBytes:     opt.EventLogMaxBytes,
+	})
 	if err != nil {
+		s.w.Close()
 		db.Close()
 		return nil, err
 	}
@@ -115,6 +149,25 @@ func Open(dataDir string) (*Store, error) {
 	return s, nil
 }
 
+// EventLogStats reports what the causal event log is holding on disk and in
+// memory. Surfaced because "how big has my history got" is the question that
+// decides whether EventLogMaxBytes wants setting, and a node that cannot answer
+// it leaves the operator guessing.
+func (s *Store) EventLogStats() seglog.Stats {
+	if s.evlog == nil {
+		return seglog.Stats{}
+	}
+	return s.evlog.Stats()
+}
+
+// Close shuts the two write paths down before the database underneath them.
+//
+// The order is a correctness requirement, not tidiness. Both writer.Close and
+// seglog.Close stop admitting, commit what they already accepted, and only then
+// return — so by the time db.Close runs there is no transaction still open
+// against it, and no caller is left blocked on a write that will never be
+// answered. Closing the database first would abort an in-flight ledger commit
+// and report success to the operator running the shutdown.
 func (s *Store) Close() error {
 	if s.w != nil {
 		s.w.Close()
@@ -244,6 +297,16 @@ CREATE TABLE IF NOT EXISTS node_secrets (
   ciphertext TEXT NOT NULL,
   updated    INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS node_tokens (
+  id         TEXT PRIMARY KEY,
+  hash       TEXT NOT NULL UNIQUE,
+  scope      TEXT NOT NULL,
+  capability TEXT,
+  label      TEXT,
+  created    INTEGER NOT NULL,
+  revoked    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_node_tokens_hash ON node_tokens(hash);
 `)
 	if err != nil {
 		return err
@@ -1210,6 +1273,101 @@ func (s *Store) SecretNames() ([]string, error) {
 // DeleteSecret removes a secret, reporting whether one was there.
 func (s *Store) DeleteSecret(name string) (bool, error) {
 	res, err := s.db.Exec(`DELETE FROM node_secrets WHERE name = ?`, name)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ── scoped node tokens ──────────────────────────────────────────────
+//
+// A node used to have exactly one credential, so every caller that could reach
+// it held the operator's authority: a skill process, the CLI and the browser UI
+// all presented the same bearer token. That made the credential broker's
+// guarantee weaker than it reads — a receipt buys a secret, but a caller holding
+// the node token could register a graph, waive its own gate and mint the receipt.
+//
+// These rows are the second kind of credential: narrow, per-skill, revocable,
+// and bound at issue time to the one capability the holder is allowed to be.
+//
+// Only the hash is stored. A token readable out of the database would make the
+// database a credential store, and an operator restoring a backup would be
+// restoring live credentials rather than a record that they existed.
+
+// TokenRow is one issued credential. The token itself is returned once, at
+// issue, and never persisted.
+type TokenRow struct {
+	ID    string `json:"id"`
+	Scope string `json:"scope"`
+	// Capability is the C1 capability a `skill` token may register as. Empty for
+	// scopes to which it does not apply.
+	Capability string `json:"capability,omitempty"`
+	Label      string `json:"label,omitempty"`
+	Created    int64  `json:"created"`
+	// Revoked is unix millis at revocation, or 0 while live. Recorded rather
+	// than deleted for the same reason an operator revocation is: an entry
+	// sealed while the token was valid stays explicable afterwards.
+	Revoked int64 `json:"revoked,omitempty"`
+}
+
+// SaveToken records an issued token by hash.
+func (s *Store) SaveToken(t TokenRow, hash string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO node_tokens (id, hash, scope, capability, label, created, revoked)
+		 VALUES (?,?,?,?,?,?,NULL)`,
+		t.ID, hash, t.Scope, t.Capability, t.Label, t.Created)
+	return err
+}
+
+// TokenByHash resolves a presented credential. The caller hashes; this never
+// sees a token in the clear.
+func (s *Store) TokenByHash(hash string) (TokenRow, bool, error) {
+	var t TokenRow
+	var capability, label sql.NullString
+	var revoked sql.NullInt64
+	err := s.db.QueryRow(
+		`SELECT id, scope, capability, label, created, revoked FROM node_tokens WHERE hash = ?`,
+		hash).Scan(&t.ID, &t.Scope, &capability, &label, &t.Created, &revoked)
+	if err == sql.ErrNoRows {
+		return TokenRow{}, false, nil
+	}
+	if err != nil {
+		return TokenRow{}, false, err
+	}
+	t.Capability, t.Label, t.Revoked = capability.String, label.String, revoked.Int64
+	return t, true, nil
+}
+
+// Tokens lists issued credentials, newest first. Hashes are never returned:
+// a listing endpoint that leaked them would let a reader mount an offline
+// search for the token that produced one.
+func (s *Store) Tokens() ([]TokenRow, error) {
+	rows, err := s.db.Query(
+		`SELECT id, scope, capability, label, created, revoked FROM node_tokens
+		 ORDER BY created DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TokenRow
+	for rows.Next() {
+		var t TokenRow
+		var capability, label sql.NullString
+		var revoked sql.NullInt64
+		if err := rows.Scan(&t.ID, &t.Scope, &capability, &label, &t.Created, &revoked); err != nil {
+			return nil, err
+		}
+		t.Capability, t.Label, t.Revoked = capability.String, label.String, revoked.Int64
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// RevokeToken stops a credential working, reporting whether one was live.
+func (s *Store) RevokeToken(id string, ts int64) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE node_tokens SET revoked = ? WHERE id = ? AND revoked IS NULL`, ts, id)
 	if err != nil {
 		return false, err
 	}

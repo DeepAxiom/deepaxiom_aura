@@ -1,7 +1,7 @@
 name: CI
 
 # The safety net: nothing merges that breaks the build, the tests, or the
-# conformance suite. See ROADMAP.md, "Foundations".
+# conformance suite. See CONTRIBUTING.md.
 on:
   push:
     branches: [main]
@@ -274,6 +274,42 @@ jobs:
           python scripts/witness_adversarial.py \
             --witness-port 9411 --node-port 9412 \
             --data "$RUNNER_TEMP/aura-witness" --aura-binary ./kernel/aura
+
+      # A scoped token is a security claim, so it is attacked with a real
+      # binary: a credential issued for one capability must be refused the
+      # control surface, and must be refused registration as any other
+      # capability. The second is the load-bearing one — a narrow token free to
+      # register as anything is a full token with a smaller name.
+      - name: a scoped token cannot act as the operator
+        run: |
+          ./kernel/aura token issue --data /tmp/tok-ci             --capability logical.echo --label ci > /tmp/tok-out.txt
+          SKILL=$(grep -oE '^  [A-Za-z0-9_-]{40,}$' /tmp/tok-out.txt | tr -d ' ')
+          test -n "$SKILL" || { echo "FAIL: no token was printed"; exit 1; }
+          ./kernel/aura up --port 9131 --data /tmp/tok-ci &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9131/healthz >/dev/null && break
+            sleep 0.25
+          done
+          OP=$(cat /tmp/tok-ci/node.token)
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          test "$(code -X POST -H "Authorization: Bearer $SKILL" -d '{}'             http://127.0.0.1:9131/v1/graphs)" = 403             || { echo "FAIL: a skill token registered a graph"; exit 1; }
+          test "$(code -H "Authorization: Bearer $SKILL"             http://127.0.0.1:9131/v1/ledger)" = 403             || { echo "FAIL: a skill token read the ledger"; exit 1; }
+          test "$(code -H "Authorization: Bearer $OP"             http://127.0.0.1:9131/v1/ledger)" = 200             || { echo "FAIL: the operator was refused its own ledger"; exit 1; }
+          test "$(code -H "Authorization: Bearer not-a-real-token"             http://127.0.0.1:9131/v1/ledger)" = 401             || { echo "FAIL: an invented token was not refused"; exit 1; }
+
+      # The adoption path this command exists for: no node, no port, no setup.
+      # If it ever needs `aura up` first, the wedge is gone.
+      - name: guard runs with no node standing
+        run: |
+          pip install --quiet websockets
+          cat > /tmp/guard-standalone.json <<'JSON'
+          {"mcpServers": {"probe": {"command": "python3",
+            "args": ["scripts/ci_mcp_probe.py"]}}}
+          JSON
+          out=$(./kernel/aura guard --config /tmp/guard-standalone.json                   --port 9141 --data /tmp/guard-standalone --dry-run 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "running an embedded kernel"             || { echo "FAIL: guard did not start its own node"; exit 1; }
+          echo "$out" | grep -q "motor.mcp.probe.write_thing"             || { echo "FAIL: an unannotated tool was not typed motor"; exit 1; }
 
       # `aura guard` is a safety claim, so the claim gets exercised against a
       # real binary and a real MCP server rather than only in unit tests: an

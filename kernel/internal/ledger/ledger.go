@@ -1,29 +1,28 @@
 // Package ledger implements kernel primitive P5 — the effect ledger (C4).
 //
-// Todos los demás primitives contestan "qué pasó". Este contesta algo más
-// puntual: qué actuó sobre el mundo, quién lo permitió, y si eso se puede
-// demostrar después del hecho sin tener que confiar en nadie. Un skill que
-// solo lee jamás aparece acá — el ledger es evidencia de *efectos*, punto,
-// no una copia barata del causal log.
+// Every other primitive answers "what happened". This one answers something
+// narrower: what acted on the world, who permitted it, and whether that can be
+// demonstrated after the fact without having to trust anyone. A skill that only
+// reads never appears here — the ledger is evidence of *effects*, full stop, not
+// a cheap copy of the causal log.
 //
-// La idea en una frase: cada efecto lo autoriza una policy de nodo (P4, ver
-// package executor), se sella acá en un registro hash-chained, y cada N
-// entries o T segundos (lo que llegue primero) el head actual se firma con
-// la Ed25519 key del propio nodo (identity.Node.Keys). Tocar una entry vieja
-// rompe el hash de todo lo que viene después; tocar una entry ya
-// checkpointeada además rompe una firma que nadie, salvo quien tenga la
-// private key del nodo, pudo haber producido. Verify (verify.go) chequea
-// las dos cosas, y lo hace leyendo solo el archivo SQLite — sin kernel
-// corriendo — que es justo lo que convierte esto en evidencia de verdad y
-// no en un log más.
+// The idea in one sentence: every effect is authorized by a node policy (P4, see
+// package executor), sealed here into a hash-chained record, and every N entries
+// or T seconds — whichever comes first — the current head is signed with the
+// node's own Ed25519 key (identity.Node.Keys). Touching an old entry breaks the
+// hash of everything after it; touching an already-checkpointed entry also
+// breaks a signature nobody without the node's private key could have produced.
+// Verify (verify.go) checks both, and it does so reading the SQLite file alone —
+// with no kernel running — which is exactly what makes this evidence rather than
+// one more log.
 //
-// El kernel se mantiene puro acá: este package importa store y signing y
-// nada que sepa de LLMs, modelos o marketplace. Si algún día una feature
-// necesita "inteligencia" para decidir qué entra al ledger, esa decisión se
-// toma en executor (que ya la calcula, vía el policy engine) y se pasa como
-// SealRequest — este package nunca pregunta "qué debería decidirse aquí",
-// solo hace una cosa: "queda registrado que se decidió, y ese registro no
-// se mueve más".
+// The kernel stays pure here: this package imports store and signing and nothing
+// that knows about LLMs, models or a marketplace. If some future feature needs
+// "intelligence" to decide what enters the ledger, that decision is taken in
+// executor — which already computes it, via the policy engine — and arrives as a
+// SealRequest. This package never asks "what should be decided here"; it does
+// one thing: "it is on record that this was decided, and that record does not
+// move again".
 package ledger
 
 import (
@@ -89,6 +88,23 @@ type Entry struct {
 	// Policy is the hash of the policy document in force (Policy.Hash()) —
 	// an auditor can go find the exact document that authorized this.
 	Policy string `json:"policy"`
+	// Waived records that the node's policy wanted a human-approval gate on this
+	// effect and the *graph* is the reason there was not one (C4 v1.5,
+	// additive). Absent — the overwhelmingly common case — means the decision
+	// recorded above is the node's own.
+	//
+	// The distinction is not cosmetic, and it is not the same as Decision. A
+	// graph is a JSON document that anyone able to reach the control surface can
+	// register, so `"gate": "none"` under a policy that permits waivers is an
+	// authorization granted by whoever wrote the graph rather than by the
+	// operator who wrote the policy. Sealing an entry that could not say which
+	// of the two happened would leave an auditor unable to answer the only
+	// question this ledger exists for.
+	//
+	// The credential broker refuses to spend a receipt carrying this, which is
+	// what keeps a waiver a way to lower friction rather than a way to mint the
+	// authorization that buys a credential. See internal/broker.
+	Waived bool `json:"waived,omitempty"`
 	// PayloadSHA256, never the payload. The ledger is evidence, not a data
 	// lake: a payload carrying personal data must not become permanently
 	// undeletable, and this is what keeps entries small regardless of what
@@ -158,6 +174,9 @@ type SealRequest struct {
 	Policy       string
 	Payload      json.RawMessage
 	Compensation *Compensation
+	// Waived marks that policy wanted a gate on this delivery and the graph is
+	// why there was not one. See Entry.Waived.
+	Waived bool
 	// Compensates, when set, marks this entry as the undo of the entry whose
 	// Hash() equals this value. Empty for every ordinary effect.
 	Compensates string
@@ -320,6 +339,7 @@ func (l *Ledger) Seal(req SealRequest) (receipt string, err error) {
 		Actor: req.Actor, Capability: req.Capability,
 		Decision: req.Decision, Outcome: req.Outcome, Policy: req.Policy,
 		PayloadSHA256: payloadHash, Compensation: req.Compensation,
+		Waived:      req.Waived,
 		Compensates: req.Compensates,
 		Inference:   normalizeInference(req.Inference),
 		Approver:    req.Approver,

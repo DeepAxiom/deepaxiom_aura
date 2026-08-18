@@ -1,9 +1,17 @@
-# Reference skills — worked examples, not a catalogue
+# Reference skills — demos, not a catalogue
 
-Everything in this directory is a **template**. These nine skills exist to show
-how a skill is written, not to be the set of skills Deep Axiom offers. Their
-manifests carry the `example/` org for exactly that reason: `example/motor/tts`
-is a demonstration of a `motor` skill, not a product line.
+Everything in this directory is a **demo**. These nine skills exist to show how a
+skill is written, not to be the set of skills Deep Axiom offers, and not to be
+depended on in production. Their manifests carry the `example/` org for exactly
+that reason: `example/motor/tts` is a demonstration of a `motor` skill, not a
+product line.
+
+Working is not the same as finished, and several of these do work — `postgres-cdc`
+really does read a replication stream, `llm-chat` really does run a local GGUF.
+What none of them carries is the retry policy, credential rotation, schema-change
+handling and failure budget a deployment needs, because those are decisions your
+deployment makes and an example cannot make them for you. Copy the closest one
+and replace it; do not extend it and ship it.
 
 A skill is any process that speaks C3 over a WebSocket and declares a C1
 manifest. That is the whole contract. It can be Python, TypeScript, Go, Rust, a

@@ -654,7 +654,7 @@ func TestUnreachableRemoteSurfacesAnErrorEnvelope(t *testing.T) {
 	}, "a dead federation link produced no error envelope; the caller would wait forever")
 }
 
-// --- the pooled connection (Phase 3, ROADMAP.md: negotiated transport) -------
+// --- the pooled connection (negotiated transport) ----------------------------
 
 func markedEnvelope(id, idem, marker string) channel.Envelope {
 	payload, _ := json.Marshal(map[string]any{"text": marker, "final": true})

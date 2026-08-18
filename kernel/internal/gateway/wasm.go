@@ -14,7 +14,7 @@ import (
 	"aura/kernel/internal/wasmrt"
 )
 
-// Wasm skills (Phase 3, ROADMAP.md): what makes C1 rule 3 — "permissions are
+// Wasm skills: what makes C1 rule 3 — "permissions are
 // enforced, not merely declared" — true for `format: wasm`, the same way the
 // Effect Checkpoint (C4) made the motor-gate invariant true rather than
 // documented. A wasm skill never dials in over /ws/skill the way a `source`
@@ -61,7 +61,7 @@ func (g *Gateway) registerWasmSkill(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]string{"error": fmt.Sprintf("manifest declares format %q, not %q", m.Format, spec.FormatWasm)})
 		return
 	}
-	// v1's guest contract (ROADMAP.md, Phase 3) is synchronous single
+	// v1's guest contract is synchronous single
 	// request/response: one ingress port in, one egress port out. A
 	// streaming or multi-port wasm skill is future work, not something this
 	// endpoint silently mishandles.

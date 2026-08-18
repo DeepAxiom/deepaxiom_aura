@@ -14,7 +14,7 @@ import (
 
 // env.http_fetch — the one custom host import a v1 wasm skill may use, and
 // what makes `permissions.egress_http` real rather than merely declared
-// (ROADMAP.md, Phase 3). WASI preview1 has no sockets at all, so this is
+// WASI preview1 has no sockets at all, so this is
 // necessarily a bespoke ABI, not a standard one — kept as small as the job
 // allows: the guest owns both buffers itself (a package-level array is a
 // stable address in its own linear memory), so the host never needs to call

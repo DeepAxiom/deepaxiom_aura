@@ -15,14 +15,14 @@ import (
 
 // Node authentication.
 //
-// Antes de este archivo, none of this existed: no token, no TLS, no origin
-// check, y encima escuchaba en cada interfaz de red. Cualquiera que llegara
-// al puerto podía registrar un grafo y correrlo — lo cual dejaba cada otra
-// garantía del kernel condicionada a "que no haya nadie más en la red", que
-// no es una garantía, es wishful thinking.
+// Before this file none of this existed: no token, no TLS, no origin check, and
+// it listened on every network interface. Anyone who could reach the port could
+// register a graph and run it — which left every other guarantee the kernel
+// makes conditional on "nobody else being on the network", which is not a
+// guarantee, it is wishful thinking.
 //
-// Tres cosas cierran ese hueco, y van separadas a propósito (no es capricho,
-// cada una contesta una pregunta distinta):
+// Three things close that gap, and they are kept separate deliberately, because
+// each answers a different question:
 //
 //   - a bearer token, generated on first start, which answers "may this caller
 //     act at all";
@@ -39,12 +39,35 @@ import (
 // tokenFile is where the node's bearer token lives inside the data dir.
 const tokenFile = "node.token"
 
+// TokenResolver looks up a scoped credential by its hash. Satisfied by
+// *store.Store; an interface so that auth does not depend on the whole store,
+// and so a test can present a roster without one.
+type TokenResolver interface {
+	TokenByHash(hash string) (row TokenRow, found bool, err error)
+}
+
+// TokenRow is what the resolver returns. It mirrors store.TokenRow rather than
+// importing it, so the dependency runs one way: the gateway defines what it
+// needs to authenticate, and storage satisfies it.
+type TokenRow struct {
+	ID         string
+	Scope      string
+	Capability string
+	Label      string
+	Revoked    int64
+}
+
 // Auth holds the node's access configuration.
 type Auth struct {
-	// Token is the bearer token required on the control surface. Empty
-	// disables authentication entirely — only reachable via --no-auth, which
-	// exists for a single-user loopback node and prints a warning.
+	// Token is the operator's bearer token — the node's own authority, read
+	// from `node.token` in the data directory. Empty disables authentication
+	// entirely — only reachable via --no-auth, which exists for a single-user
+	// loopback node and prints a warning.
 	Token string
+	// Tokens resolves scoped credentials issued with `aura token issue`. Nil
+	// means only the operator token is accepted, which is what a node that has
+	// issued none behaves like anyway.
+	Tokens TokenResolver
 	// AllowedOrigins is the exact-match allowlist for the WebSocket Origin
 	// header. Empty means "same-origin only": a browser page served from
 	// somewhere else is refused.
@@ -170,33 +193,109 @@ func isUIAsset(p string) bool {
 // up in an HTTP access log for ordinary API traffic.
 func (a *Auth) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.Token == "" || openPath(r.URL.Path, a.OpenWitness) {
-			next.ServeHTTP(w, r)
+		if a.Token == "" {
+			// An unauthenticated node has no principals to distinguish, so
+			// everything runs as the operator — which is exactly what --no-auth
+			// means and what its warning says.
+			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(),
+				Principal{Scope: ScopeOperator})))
 			return
 		}
-		if !a.tokenOK(r) {
+		if openPath(r.URL.Path, a.OpenWitness) {
+			// An open path serves callers holding nothing, so it cannot demand a
+			// credential — but it must not *launder* one either. Resolving here
+			// keeps a skill token a skill token; skipping resolution would hand
+			// the handler an operator principal for any request that happened to
+			// land on a public route, which is a privilege escalation waiting for
+			// the first open path whose behaviour depends on who is asking.
+			//
+			// A request with no credential gets the zero principal — nobody —
+			// which every scope check refuses.
+			p, err := a.resolve(r)
+			if err != nil {
+				p = Principal{}
+			}
+			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
+			return
+		}
+		p, err := a.resolve(r)
+		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="aura"`)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{
-				"error": "missing or invalid bearer token — find it in <data-dir>/" + tokenFile,
+				"error": "missing or invalid bearer token — the operator token is in <data-dir>/" +
+					tokenFile + "; a skill token comes from `aura token issue`",
 			})
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Scope is enforced here rather than in each handler, so a route added
+		// later is closed to narrow credentials until someone widens the table
+		// in scope.go deliberately. See the comment there.
+		if !p.Allows(r.Method, r.URL.Path) {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "this credential is scoped to " + string(p.Scope) +
+					" and may not " + r.Method + " " + r.URL.Path,
+			})
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 	})
 }
 
-func (a *Auth) tokenOK(r *http.Request) bool {
+// resolve identifies the caller, or returns an error if it cannot.
+//
+// The operator's token is compared first and in constant time. Only a
+// credential that is not the operator's is looked up in storage, so the common
+// path costs no query, and a timing difference between "wrong operator token"
+// and "unknown token" reveals only which of two rejections happened.
+func (a *Auth) resolve(r *http.Request) (Principal, error) {
+	token, ok := presentedToken(r)
+	if !ok {
+		return Principal{}, errNoCredential
+	}
+	if a.constantTimeMatch(token) {
+		return Principal{Scope: ScopeOperator}, nil
+	}
+	if a.Tokens == nil {
+		return Principal{}, errNoCredential
+	}
+	row, found, err := a.Tokens.TokenByHash(HashToken(token))
+	if err != nil || !found || row.Revoked != 0 {
+		return Principal{}, errNoCredential
+	}
+	scope := Scope(row.Scope)
+	if !scope.Valid() {
+		// A row this binary cannot interpret is refused rather than guessed at.
+		// Guessing on the permissive side is how a scope introduced by a newer
+		// binary would silently become "operator" on an older one.
+		return Principal{}, errNoCredential
+	}
+	return Principal{
+		Scope: scope, TokenID: row.ID,
+		Capability: row.Capability, Label: row.Label,
+	}, nil
+}
+
+// presentedToken pulls the credential out of a request, from either place a
+// client can put one.
+//
+// The query form is accepted only on the WebSocket upgrade paths, because the
+// browser WebSocket API cannot set headers — refusing it would mean no browser
+// client could ever connect. Restricting it to those paths keeps a token out of
+// the HTTP access logs of ordinary API traffic.
+func presentedToken(r *http.Request) (string, bool) {
 	if h := r.Header.Get("Authorization"); h != "" {
 		const prefix = "Bearer "
 		if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
-			return a.constantTimeMatch(h[len(prefix):])
+			return h[len(prefix):], true
 		}
-		return false
+		return "", false
 	}
 	if isWebSocketPath(r.URL.Path) {
-		return a.constantTimeMatch(r.URL.Query().Get("token"))
+		if t := r.URL.Query().Get("token"); t != "" {
+			return t, true
+		}
 	}
-	return false
+	return "", false
 }
 
 // constantTimeMatch compares in constant time. A byte-by-byte comparison here

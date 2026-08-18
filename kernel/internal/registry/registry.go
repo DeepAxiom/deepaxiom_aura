@@ -80,6 +80,22 @@ var (
 // SkillTypes are the five kinds of skill (generated from spec/enums.yaml).
 var SkillTypes = spec.SkillTypes
 
+// ValidateCapability checks a C1 capability string on its own, for callers that
+// hold one without a manifest around it — `aura token issue` binds a credential
+// to a capability, and a credential bound to a string no manifest could ever
+// declare is one that can never register.
+//
+// Exported so that check runs against the same pattern Validate uses. A second
+// regex written next to a CLI flag is how the two drift until a token issued by
+// one release stops working on the next.
+func ValidateCapability(capability string) error {
+	if !capRe.MatchString(capability) {
+		return fmt.Errorf("invalid capability %q (want <type>.<function>..., e.g. motor.erp.write)",
+			capability)
+	}
+	return nil
+}
+
 func (m *Manifest) Validate() error {
 	switch {
 	case !idRe.MatchString(m.ID):

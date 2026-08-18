@@ -19,7 +19,8 @@ Three properties hold it together:
 
 One binary. 23 MB. No account, no cloud, no Postgres, no broker, no cluster.
 
-[Full guide](GUIDE.md) · [Versión en español](README-ES.md) · [Roadmap](ROADMAP.md) ·
+[Full guide](GUIDE.md) · [Versión en español](README-ES.md) ·
+[Milestone status](GUIDE.md#milestone-status) ·
 **v0.3.0 — pre-1.0, pre-production**
 
 ---
@@ -29,7 +30,18 @@ One binary. 23 MB. No account, no cloud, no Postgres, no broker, no cluster.
 ```bash
 git clone https://github.com/deepaxiom/aura && cd aura/kernel
 go build -o aura ./cmd/aura     # Go 1.25+, no CGO, no external services
-./aura up                       # UI, local LLM, state store, ledger — all of it
+./aura up                       # kernel, UI, state store, ledger, witness client
+```
+
+`aura up` is the whole runtime and no skills: one process, one port, nothing to
+install alongside it. Skills are separate processes that connect *to* it, so a
+node that has just started is a working kernel with an empty catalogue. Give it
+something to run:
+
+```bash
+pip install -r skills/llm-chat/requirements.txt
+cd skills/llm-chat && PYTHONPATH=../../sdk/python/src python main.py
+# first start downloads a local GGUF model; set OPENAI_API_KEY to use a cloud one
 ```
 
 ```bash
@@ -102,12 +114,23 @@ CPU to 13%. Then the causal event log moved out of SQLite entirely.
 **The event log is not a table.** It is written once per envelope and never
 updated or deleted from, and read back as one session in order — the best case
 for a log and the worst for a B-tree paying for updates that never happen. It is
-now an append-only segment file with a CRC per record, group-committed writes,
-and an index rebuilt from the file on startup; a torn tail from a power cut is
-detected and truncated rather than read as data. On the same workload at matched
+now append-only segment files with a CRC per record, group-committed writes, and
+an index rebuilt from them on startup; a torn tail from a power cut is detected
+and truncated rather than read as data. On the same workload at matched
 durability it sustained 1.5M events/sec against SQLite's 27k. The shape is the
 one [Tidehunter](https://arxiv.org/abs/2602.01873) argues for: treat the log as
 permanent storage, and compaction stops existing because nothing is relocated.
+
+Segmenting is what makes that safe on a runtime that is supposed to never stop.
+A single file that only grows has no way to reclaim space that is not the
+compaction this design exists to avoid, so the log rotates at 128 MiB and
+`--event-log-max` reclaims by deleting whole segments, oldest first — off by
+default, because that history is what `aura why` and `aura replay` read. Two
+smaller properties fall out of the same shape: records are framed per segment, so
+a segment altered after it was sealed costs its own tail and not everything after
+it; and the locator index is capped, with the coldest sessions falling back to
+scanning only the segments they appear in, so memory is bounded by a flag rather
+than by how long the node has been up. The startup banner prints the size.
 
 The effect ledger deliberately stays in SQLite. A bug in the event log loses
 replay history; a bug in the ledger loses evidence.
@@ -121,7 +144,16 @@ process with no failover. Twitch scale means tens of thousands of connections
 per machine across hundreds of machines — and platforms at that scale do not
 seal every event into a hash chain. This does, deliberately. That is the cost of
 pillar 3, and it is the one this runtime will not trade away.
-`kernel/cmd/loadgen/` reproduces the table.
+
+Read the table for the shape, not the absolute numbers, and know what it
+measures: an echo skill over loopback, so it is the kernel's routing and
+durability cost with no real work anywhere in the loop. Aggregate throughput
+divides total round-trips by wall-clock *including* the time spent dialling every
+session, which flatters the high-concurrency rows — a 1,000-session run amortizes
+its connection setup over half a million messages, a 1-session run over five
+hundred. The honest claim is the one the middle rows make on their own: at 200
+sessions the same node went from 344 msg/s to 1,908, and p50 from 489 ms to 63,
+without weakening durability. `kernel/cmd/loadgen/` reproduces the table.
 
 ---
 
@@ -129,10 +161,23 @@ pillar 3, and it is the one this runtime will not trade away.
 
 None of this lives in your graph:
 
+- **A skill is not the operator.** `aura token issue --capability motor.erp.write`
+  mints a credential that may connect, register as *that* capability and spend
+  the receipts it is handed — and cannot register a graph, read the ledger or
+  enrol an approver. Before it, every skill process held the operator's token,
+  which made the checkpoint a fence rather than a boundary: a skill could
+  register a graph waiving its own gate and mint the receipt that buys a
+  credential. One ordered table decides what each scope may reach, deny by
+  default, and registration is bound to the issued capability — a narrow token
+  free to register as anything would be a full one with a smaller name.
 - **The approval gate is a kernel invariant.** In agent libraries the interrupt
   lives in the code you wrote, so code that forgets it has no gate. Here the
   executor applies it at the one point every delivery passes through, driven by
-  node policy. A graph may ask for *more* scrutiny than policy requires, never less.
+  node policy. A graph may ask for *more* scrutiny than policy requires, never
+  less — and where a policy does let a graph waive a gate, the entry records that
+  the *graph* excused it rather than the node, because a graph is a JSON document
+  anyone who can reach the control surface may register. A waived effect seals
+  normally and buys no credential.
 - **The entry names the human who approved it, and they signed it.** Not "a
   human approved" — *which* human, provably. The operator signs a statement
   bound to that one delivery with a key the node has never held, so the
@@ -143,7 +188,12 @@ None of this lives in your graph:
 - **Every effect is attested, not logged.** Sealed into a hash-chained record
   committed to an RFC 6962 Merkle head the node signs, which a third party can
   counter-sign. `aura verify` recomputes chain, tree and signatures from the
-  database file alone, with no kernel running.
+  database file alone, with no kernel running. Sealing writes to a disk, and
+  disks fill up: by default an effect the node cannot seal is delivered anyway
+  and the gap logged loudly, so that a full disk is not an outage. A node where
+  the ledger must be complete sets `on_seal_failure: refuse` and the effect is
+  stopped instead. There is no third option, so the choice is the operator's and
+  the startup banner says which one is in force.
 - **And the third party is accountable too.** A witness publishes its own
   append-only log, signs its head, and signs its answer to *how far have you
   vouched for this node* — so telling one party one thing and another something
@@ -161,6 +211,9 @@ None of this lives in your graph:
 
 **Already running agents?** `aura guard` puts the MCP servers your agent already
 calls behind this same checkpoint — one line in the config you have, no rewrite.
+It needs no runtime standing: with no node on the port it starts an embedded
+kernel in the same data directory, so the shortest path from an unguarded agent
+to a sealed, gated one is a single command and `aura verify` afterwards.
 A tool is gated unless its server proves it only reads *and* you chose to
 believe it. It holds exactly as far as your control over the agent's config
 does; there is no network enforcement.
@@ -206,12 +259,19 @@ That shape is written up as
 no change to the transport, and the alternative is every vendor inventing its
 own namespace and an auditor reconciling five formats by timestamp.
 
-The nine skills in [`skills/`](skills/) are **worked examples, not a
-catalogue** — hence the `example/` org. A skill is any process that speaks the
-channel protocol and declares a manifest: Python, TypeScript, Go, Rust, Wasm, or
-a wrapper around software you already run. Copy [`skills/echo/`](skills/echo/),
-about 100 lines. The SDK is Apache-2.0, so a skill you write and sell carries no
-copyleft obligation, ever.
+**The nine skills in [`skills/`](skills/) are demos.** They exist to show the
+shape of a skill and to give a cold node something to run — not to be a
+catalogue, and not to be depended on in production; hence the `example/` org in
+every one of their manifests. Read them as the reference implementation of the
+C1 manifest and the channel protocol, copy the one closest to what you need, and
+replace it. `postgres-cdc` is a working CDC reader and still a demo: it has no
+retry policy, no credential rotation and no schema-change handling, because
+those are decisions your deployment makes and an example cannot make for you.
+
+A skill is any process that speaks the channel protocol and declares a manifest:
+Python, TypeScript, Go, Rust, Wasm, or a wrapper around software you already run.
+Start from [`skills/echo/`](skills/echo/), about 100 lines. The SDK is
+Apache-2.0, so a skill you write and sell carries no copyleft obligation, ever.
 
 ---
 
@@ -219,11 +279,11 @@ copyleft obligation, ever.
 
 | | |
 |---|---|
-| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry** · **the credential broker (a secret only against a valid receipt)** · **the witness's own published log, and a monitor that catches one rewriting it** · cancellation · session resume · deterministic replay · **effect-level regression across sessions** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC |
+| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry** · **the credential broker (a secret only against a valid receipt, and never against a graph's own waiver)** · **the witness's own published log, and a monitor that catches one rewriting it** · cancellation · session resume · deterministic replay · **effect-level regression across sessions** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC · **event-log rotation, retention and recovery from a corrupted segment** |
 | **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · OpenTelemetry export · ML-BOM |
 | **Not there yet** | No multi-device view of one live session · no failover if the node dies · **no process isolation for `format: source` skills** — a skill runs with the privileges of whoever started it |
 
-`internal/` sits at 72% test coverage, `cmd/aura` at 9.5%, the UI has none. A
+`internal/` sits at ~72% test coverage, `cmd/aura` at 7.5%, the UI has none. A
 59-check conformance suite runs the kernel over the wire, and a separate CI job
 proves the ledger detects tampering by editing a real database behind a real
 binary's back. Read [Security model](GUIDE.md#security-model) before you expose

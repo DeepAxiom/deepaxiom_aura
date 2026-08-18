@@ -242,7 +242,7 @@ func fetchLedgerBySession(port int, session string) []ledger.Entry {
 }
 
 // printLedgerDiff closes the fourth property of the project's thesis
-// (ROADMAP.md): Reproducible. The payload diff above proves the conversation
+// Reproducible. The payload diff above proves the conversation
 // looked the same to a client; this proves the ledger agrees the
 // *authorization* did — same capability, same policy decision, same outcome
 // — using the ledger itself as the oracle, not the transcript.

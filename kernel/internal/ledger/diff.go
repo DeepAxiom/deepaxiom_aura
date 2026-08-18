@@ -3,7 +3,7 @@ package ledger
 import "strconv"
 
 // Deterministic replay against the ledger as oracle — the fourth property of
-// the project's thesis (ROADMAP.md): Authorized, Attested, Reversible,
+// the project's thesis: Authorized, Attested, Reversible,
 // Reproducible. `aura replay` already re-runs a session's recorded client
 // inputs against the current graph and diffs what the client would have
 // seen; that proves the conversation looked the same, not that the

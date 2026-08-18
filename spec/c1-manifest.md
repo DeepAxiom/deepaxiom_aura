@@ -115,7 +115,7 @@ ingress port the skill already declares under `ports.ingress`, carrying
 whatever shape that skill needs to reverse itself — there is no standard
 `compensation` schema, because undoing an invoice and undoing a spoken sentence
 have nothing in common. A future `aura undo` (see
-[`ROADMAP.md`](../ROADMAP.md)) replays a payload onto that port. Declaring this
+`aura undo`) replays a payload onto that port. Declaring this
 changes nothing about how the skill runs today — the field is metadata, read by
 the kernel's effect ledger ([C4](c4-ledger.md)) at the moment an effect is
 sealed, so an entry in the ledger can say whether that specific effect is

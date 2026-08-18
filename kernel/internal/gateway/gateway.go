@@ -190,10 +190,18 @@ func (g *Gateway) Handler() http.Handler {
 	// designing for. /healthz and the inbound hooks opt out inside the
 	// middleware — hooks carry their own HMAC and are called by systems that
 	// will never hold a node token.
-	if g.Auth != nil {
-		return g.Auth.Authenticate(mux)
+	//
+	// The middleware is installed even when there is no Auth, and that is not a
+	// no-op: it is also what attaches the principal every downstream scope check
+	// reads. Skipping it on an unauthenticated node would leave those checks
+	// looking at the zero principal — nobody — and a node started with
+	// --no-auth would refuse to register a single skill. One place decides who
+	// a caller is, and it runs on every request.
+	auth := g.Auth
+	if auth == nil {
+		auth = &Auth{}
 	}
-	return mux
+	return auth.Authenticate(mux)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -640,7 +648,49 @@ func (g *Gateway) skillWS(w http.ResponseWriter, r *http.Request) {
 	writer := newWSWriter(conn)
 	defer writer.Close()
 	defer keepAlive(conn, writer)()
-	g.ServeSkill(&wsWire{conn: conn, writer: writer})
+	g.ServeSkill(&wsWire{conn: conn, writer: writer}, PrincipalOf(r))
+}
+
+// ServeSkillOver serves a skill connection that did not arrive through the HTTP
+// middleware, authenticating it here instead.
+//
+// WebTransport is the caller. Its `/ws/skill` route is served by a separate QUIC
+// listener (internal/wtsrv) whose handlers never passed through
+// Auth.Authenticate — so until this existed, a skill reaching the node over UDP
+// registered with no credential at all, on a node whose TCP path required one.
+// That is the kind of gap a second transport introduces quietly, and it made
+// every scope decision below it decorative: a caller refused on TCP could
+// present nothing on QUIC and be served.
+//
+// Authenticating here rather than inside wtsrv keeps one resolver and one scope
+// table for both transports, which is the only arrangement in which the two
+// cannot drift apart.
+func (g *Gateway) ServeSkillOver(conn wire, r *http.Request) {
+	p, ok := g.authenticateWire(r)
+	if !ok {
+		raw, _ := json.Marshal(channel.Envelope{
+			V: channel.ProtocolMajor, ID: channel.NewID(), Kind: channel.KindError,
+			Payload: json.RawMessage(
+				`{"state":"error","detail":"this connection presented no credential this node accepts"}`),
+		})
+		_ = conn.Send(raw, channel.QoSReliable)
+		return
+	}
+	g.ServeSkill(conn, p)
+}
+
+// authenticateWire resolves a principal for a non-HTTP-middleware connection.
+// A node with authentication disabled has no principals to tell apart, so every
+// caller is the operator — the same rule Authenticate applies.
+func (g *Gateway) authenticateWire(r *http.Request) (Principal, bool) {
+	if g.Auth == nil || g.Auth.Token == "" {
+		return Principal{Scope: ScopeOperator}, true
+	}
+	p, err := g.Auth.resolve(r)
+	if err != nil {
+		return Principal{}, false
+	}
+	return p, p.Allows(http.MethodGet, "/ws/skill")
 }
 
 // wire is a transport as the session loops need it: whole envelopes in, whole
@@ -676,7 +726,7 @@ func (w *wsWire) Send(raw []byte, qos string) error { return w.writer.Send(raw, 
 
 // ServeSkill runs the skill side of a connection to completion, whatever
 // carried it. Exported so the WebTransport listener can reach it.
-func (g *Gateway) ServeSkill(conn wire) {
+func (g *Gateway) ServeSkill(conn wire, p Principal) {
 	connID := channel.NewID()
 	fail := func(cause, msg string) {
 		payload, _ := json.Marshal(map[string]string{"state": "error", "detail": msg})
@@ -708,6 +758,21 @@ func (g *Gateway) ServeSkill(conn wire) {
 	if manifest.Protocol != channel.ProtocolMajor {
 		// N-2 window will land with protocol negotiation; today majors must match.
 		fail(regEnv.ID, "protocol major mismatch")
+		return
+	}
+
+	// The binding that makes a narrow credential narrow.
+	//
+	// Registration is how a process declares what it *is* to the executor, and
+	// everything downstream keys off that: which policy rule applies, whether an
+	// edge into it is an effect, which receipts it can spend at the broker. A
+	// token scoped to one capability that could still register as another would
+	// be a full token with a smaller name.
+	if !p.MayRegister(manifest.Capability) {
+		fail(regEnv.ID, fmt.Sprintf(
+			"this credential may register %q and this manifest declares %q — "+
+				"a scoped token registers as the capability it was issued for, and no other",
+			p.Capability, manifest.Capability))
 		return
 	}
 

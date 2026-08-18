@@ -3,7 +3,6 @@ package seglog
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +21,23 @@ func open(t *testing.T, dir string) *Log {
 	}
 	t.Cleanup(func() { _ = l.Close() })
 	return l
+}
+
+// activeSegment is where a freshly-opened log is appending. The tests that
+// simulate a crash or an edit have to reach past the API to the bytes, and the
+// bytes live in a segment file — asking for it by ordinal rather than hardcoding
+// a name keeps those tests honest about the layout they are attacking.
+func activeSegment(t *testing.T, dir string) string {
+	t.Helper()
+	l, err := Open(dir, false)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	path := l.segs[len(l.segs)-1].path
+	if err := l.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	return path
 }
 
 func entry(session, id, kind, text string) Entry {
@@ -165,7 +181,7 @@ func TestTornTailIsTruncatedNotRead(t *testing.T) {
 	}
 	_ = l.Close()
 
-	path := filepath.Join(dir, "events.log")
+	path := activeSegment(t, dir)
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
@@ -207,7 +223,7 @@ func TestAlteredRecordIsRefused(t *testing.T) {
 	_ = l.Close()
 
 	// Flip a byte inside the payload of a record the index already knows about.
-	path := filepath.Join(dir, "events.log")
+	path := activeSegment(t, dir)
 	raw, _ := os.ReadFile(path)
 	idx := -1
 	for i := 0; i+8 < len(raw); i++ {

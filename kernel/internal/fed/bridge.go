@@ -1,17 +1,16 @@
 // Package fed implements node federation.
 //
-// A federation bridge is pure userland — nada de esto pide privilegios
-// especiales al kernel. Es dos cosas al mismo tiempo: un skill-CLIENT del
-// nodo local (registra proxy skills sobre /ws/skill, tal cual cualquier
-// skill normal) y un stream-CLIENT de un nodo remoto (maneja grafos allá
-// sobre /v1/stream). En el medio, relayea envelopes entre ambos — así una
-// capability que físicamente vive en el nodo remoto se vuelve resolvable
-// acá.
+// A federation bridge is pure userland — none of this asks the kernel for any
+// special privilege. It is two things at once: a skill-CLIENT of the local node
+// (it registers proxy skills over /ws/skill, exactly as any ordinary skill does)
+// and a stream-CLIENT of a remote node (it drives graphs over there via
+// /v1/stream). In between it relays envelopes both ways, so a capability that
+// physically lives on the remote node becomes resolvable here.
 //
-// Lo lindo de esto: leaf-node autonomy sale gratis. Cada nodo corre solo;
-// un bridge únicamente amplía lo que el nodo local puede resolver. Cero
-// cambios en el kernel — federation es infraestructura arriba de los
-// contratos ya congelados, no una excepción a ellos.
+// The good part: leaf-node autonomy comes for free. Every node runs alone; a
+// bridge only widens what the local node can resolve. Zero kernel changes —
+// federation is infrastructure built on top of the frozen contracts, not an
+// exception to them.
 //
 // # What a bridge has to preserve
 //
@@ -348,7 +347,7 @@ func sendCancel(pool *pooledConn, remoteID string) {
 // pooledConn is one persistent /v1/stream connection to the remote node,
 // shared across every relay for one federated capability — the fix for the
 // dial-per-envelope cost this package used to accept as a given (see the
-// package doc comment and ROADMAP.md, Phase 3). A background readLoop
+// package doc comment). A background readLoop
 // demultiplexes replies to whichever relay's channel is registered under
 // the *local* envelope id that relay sent, the same problem relayState
 // already solves for cancel routing, solved here for reply routing.

@@ -36,6 +36,10 @@ func cmdGuard(args []string) {
 	dryRun := fs.Bool("dry-run", false, "connect and report what would be registered, then exit")
 	trust := fs.Bool("trust-annotations", false,
 		"believe a server's readOnlyHint and leave those tools ungated")
+	standalone := fs.Bool("standalone", false,
+		"run an embedded kernel instead of connecting to one (default when no node answers)")
+	data := fs.String("data", defaultDataDir(), "data directory for the embedded kernel")
+	policyPath := fs.String("policy", "", "authorization policy for the embedded kernel")
 	_ = parseWithOperands(fs, args, 1)
 
 	path := *cfgPath
@@ -56,19 +60,57 @@ func cmdGuard(args []string) {
 		fatal(err)
 	}
 
+	// Reaching a node, or becoming one.
+	//
+	// `aura guard` used to require `aura up` first, which made the shortest path
+	// to a guarded agent two processes and a port. That is the wrong shape for
+	// what this command is *for*: it exists so that someone who has not adopted
+	// this runtime can put their agent's existing tools behind a policy, a gate
+	// and a ledger — and asking them to stand up a runtime first is asking them
+	// to adopt it.
+	//
+	// So an unreachable node is not an error unless the operator pinned one.
+	// The embedded kernel is the same kernel: same construction (see node.go),
+	// same policy, same ledger in the same data directory, so `aura verify`
+	// afterwards reads exactly what a long-running node would have written.
+	var (
+		baseURL, token, nodeID string
+		embedded               *node
+	)
 	c := newNodeClient(*port)
-	// Fail on an unreachable node before starting subprocesses: an operator
-	// whose node is down should see that, not a wall of MCP server output.
 	var health struct {
 		Node string `json:"node"`
 		Mode string `json:"mode"`
 	}
-	if err := c.getJSON("/healthz", &health); err != nil {
-		fatal(err)
+	reachErr := c.getJSON("/healthz", &health)
+
+	switch {
+	case reachErr == nil && *standalone:
+		fatal(fmt.Errorf("a node is already answering on port %d — "+
+			"drop --standalone to guard through it, or pick a free port", *port))
+	case reachErr == nil:
+		baseURL, token, nodeID = c.base, c.token, health.Node
+	default:
+		n, srv, err := startEmbeddedNode(*data, *port, *policyPath)
+		if err != nil {
+			fatal(fmt.Errorf("no node answered on port %d and an embedded one could not start: %w",
+				*port, err))
+		}
+		defer n.Close()
+		defer srv.Close()
+		embedded, baseURL, token, nodeID = n, n.BaseURL(), n.Token, n.Identity.ID
+		fmt.Printf("\n  no node on port %d — running an embedded kernel\n", *port)
+		fmt.Printf("  node      %s\n  data      %s\n", n.Identity.ID, *data)
+		fmt.Printf("  policy    %s\n", n.Policy.Source())
+		fmt.Printf("  ledger    every guarded call is sealed here — "+
+			"`aura verify --data %s` reads it with no node running\n\n", *data)
 	}
+	// Held only so the deferred Close above is not the sole reference; the
+	// guard talks to the node over HTTP like any other client, embedded or not.
+	_ = embedded
 
 	g := guard.New(cfg, guard.Options{
-		BaseURL: c.base, Token: c.token,
+		BaseURL: baseURL, Token: token,
 		Log:              slog.New(slog.NewTextHandler(os.Stdout, nil)),
 		TrustAnnotations: *trust, DryRun: *dryRun,
 	})
@@ -80,7 +122,7 @@ func cmdGuard(args []string) {
 		if err := g.Run(ctx); err != nil {
 			fatal(err)
 		}
-		printBindings(g.Bindings(), health.Node, true)
+		printBindings(g.Bindings(), nodeID, true)
 		return
 	}
 
@@ -97,7 +139,7 @@ func cmdGuard(args []string) {
 		return
 	case <-waitForBindings(g):
 	}
-	printBindings(g.Bindings(), health.Node, false)
+	printBindings(g.Bindings(), nodeID, false)
 
 	select {
 	case err := <-done:

@@ -1,6 +1,6 @@
 # C4 — Effect Ledger & Policy (frozen contract)
 
-**Protocol major: 1 · Status: v1.4 — FROZEN (2026-08-16: the witness's own published log, signed `last-seen`, and `log_seq` on a countersignature — all additive; v1.3 2026-08-16 added the `approver` signature — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.5 — FROZEN (2026-08-16: the `waived` flag, distinguishing a gate the node cleared from one a graph excused — additive; v1.4 2026-08-16 added the witness's own published log, signed `last-seen`, and `log_seq` on a countersignature — all additive; v1.3 2026-08-16 added the `approver` signature — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
 
 C1, C2 and C3 answer *what a skill is*, *how a graph is wired*, and *how
 envelopes flow*. None of them answer the question a node actually has to
@@ -71,9 +71,40 @@ be.
 | `policy` | The hash of the policy document in force (the same value a node prints at startup) — an auditor can find the exact document that authorized this. |
 | `payload_sha256` | sha256 of the delivered payload. **Never the payload itself** — the ledger is evidence, not a data lake, and a payload carrying personal data must not become permanently undeletable. |
 | `compensation` | Present only when the skill declared C1 `compensates`; carries its capability, port and schema. Absent (not null-valued — omitted) means the effect was recorded as irreversible. |
-| `compensates` | Present only on an entry that IS an undo: the `hash` (see below) of the entry it reverses. Absent on every ordinary effect. A conforming implementation MUST refuse to seal a second entry with the same `compensates` value — an undo is a one-time action, not a repeatable one (see [`ROADMAP.md`](../ROADMAP.md), Phase 2, `aura undo`). |
+| `compensates` | Present only on an entry that IS an undo: the `hash` (see below) of the entry it reverses. Absent on every ordinary effect. A conforming implementation MUST refuse to seal a second entry with the same `compensates` value — an undo is a one-time action, not a repeatable one. |
 | `inference` | v1.2, additive. The sorted, de-duplicated content addresses of every C5 attestation produced in this effect's causal chain — what the models that argued for this act claimed about themselves. Omitted when none contributed. See [`c5-attestation.md`](c5-attestation.md) for the record, the citation rule, and — importantly — the limits of what it proves. |
 | `approver` | v1.3, additive. The signed identity of the human who resolved this effect's gate. Present only on an entry whose gate was answered with a verified signature; omitted otherwise. See "The approver" below. |
+| `waived` | v1.5, additive. `true` when the node's policy called for a human-approval gate on this delivery and the **graph** is the reason there was not one. Omitted otherwise. See "The waiver" below. |
+
+## The waiver (v1.5)
+
+`decision` records what the policy ruled about a *capability*. It cannot record
+who ruled it, and on one path those are different parties.
+
+A node whose policy sets `allow_graph_waiver: true` lets an edge carrying
+`"gate": "none"` skip a gate the policy would otherwise have applied. That is a
+legitimate and necessary affordance — a voice assistant that asked permission
+before every clause would not be one — but a graph is a JSON document that
+anybody able to reach the control surface may register. So an effect excused that
+way was authorized by whoever wrote the graph, while the sealed entry read
+`"decision": "allow"`, indistinguishable from an effect the operator's own policy
+had cleared.
+
+`waived` is that distinction, and a conforming implementation:
+
+- MUST set it on an entry whose gate was removed by a graph waiver that policy
+  permitted, and MUST NOT set it when the policy already decided `allow` — in
+  that case the waiver asked for nothing it was not already getting, and marking
+  it would make the field cry wolf on every routine graph.
+- MUST NOT release a credential against a receipt for an entry carrying it. A
+  waiver may lower friction; it may not become a way to mint the authorization
+  that buys a secret. (See the credential broker in
+  [`GUIDE.md`](../GUIDE.md#the-credential-broker).)
+- SHOULD surface it wherever `decision` is surfaced. An auditor reading
+  `allow / delivered` is entitled to know whether the node or a graph said so.
+
+A node that never grants waivers (`allow_graph_waiver: false`, the default for
+any policy loaded from a file) never produces an entry carrying this field.
 
 ## The approver (v1.3)
 
@@ -401,7 +432,8 @@ available statement about when the node committed.
 N and T are implementation choices, not part of the wire contract: a verifier
 checks that every checkpoint present *does* verify, not that checkpoints arrive
 at any particular cadence. A reference value (100 entries or 60 seconds) is
-documented in [`ROADMAP.md`](../ROADMAP.md) for context, not normatively here.
+documented in [`GUIDE.md`](../GUIDE.md#milestone-status) for context, not
+normatively here.
 
 ## Verification
 

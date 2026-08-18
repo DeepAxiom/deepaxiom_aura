@@ -32,8 +32,8 @@ enforcement is what we're accountable for, not the skill's intent.
 
 ## What counts as a vulnerability here
 
-This project's own threat model (`ROADMAP.md`, "Fase 0 · Seguridad y
-verdad") is the baseline — anything that breaks one of these is a security
+This project's own threat model ([Security model](GUIDE.md#security-model)) is
+the baseline — anything that breaks one of these is a security
 bug, not a feature request:
 
 - **Authorization gate bypass** — a graph capability running despite
