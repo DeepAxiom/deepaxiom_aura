@@ -14,24 +14,23 @@ import (
 
 // Node-level authorization policy.
 //
-// Quien decide que un efecto no necesita aprobación — ese es el problema real
-// aquí. Antes de este archivo la respuesta era "quien haya escrito el grafo":
-// un edge con `"gate": "none"` waiveaba el motor-gate invariant sin más, y un
-// grafo no es más que un JSON que cualquiera puede POSTear a /v1/graphs. O
-// sea que la garantía más fuerte del kernel no valía nada contra cualquiera
-// que pudiera registrar un grafo — y antes de que el auth llegara en ese
-// mismo release, eso era literalmente cualquiera que alcanzara el puerto.
+// Who gets to decide that an effect needs no approval — that is the real
+// problem here. Before this file the answer was "whoever wrote the graph": an
+// edge carrying `"gate": "none"` waived the motor-gate invariant outright, and a
+// graph is nothing more than a JSON document anyone can POST to /v1/graphs. So
+// the kernel's strongest guarantee was worth nothing against anyone who could
+// register a graph — and before authentication landed in that same release,
+// that was literally anyone who could reach the port.
 //
-// Ahora la autorización vive en un solo documento, cargado al arrancar,
-// afuera de cada grafo, y hasheado — así un auditor puede probar cuál estaba
-// vigente. Un grafo puede pedir menos fricción, pero quien concede o no esa
-// petición es el nodo, nunca el grafo mismo.
+// Authorization now lives in one document, loaded at startup, outside every
+// graph, and hashed — so an auditor can prove which one was in force. A graph
+// may ask for less friction, but the node grants or refuses that request; the
+// graph never decides it.
 //
-// A propósito, esto NO es un rules language con expresiones. Una policy que
-// un auditor no puede leer a simple vista deja de ser una policy — así que
-// aquí es: lista ordenada, gana la primera coincidencia, tres decisiones
-// posibles, rate limit opcional. Nada de callbacks ni de orden de evaluación
-// que haya que reconstruir en la cabeza.
+// Deliberately NOT a rules language with expressions. A policy an auditor
+// cannot read at a glance has stopped being a policy, so this is: an ordered
+// list, first match wins, three possible decisions, an optional rate limit. No
+// callbacks, and no evaluation order anyone has to reconstruct in their head.
 
 // Decision is what the node has decided about an effect. Read them as ordered
 // — allow < gate < deny — because the whole rule this file implements is that
@@ -69,6 +68,38 @@ const (
 	// SpeculationDeny ignores every speculative request on this node.
 	SpeculationDeny Speculation = "deny"
 )
+
+// SealFailure is a node's stance on an effect it could not seal (C4).
+//
+// Sealing writes to disk, and disks fill up and break. The question this answers
+// is which of two bad outcomes an operator prefers when that happens on the
+// delivery path:
+//
+//   - `deliver` keeps the node running and leaves a documented hole in the
+//     ledger. The effect happened; the record of it did not. The error is
+//     logged loudly, but nothing downstream is stopped.
+//   - `refuse` keeps the ledger complete and stops the effect instead. Nothing
+//     acts on the world that this node cannot afterwards prove it authorized.
+//
+// There is no third option where both hold, so it is exposed rather than
+// decided here. `deliver` is the default because a node whose premise is that
+// it never stops running should not turn a full disk into an outage — but a
+// node sealing payments wants `refuse`, and until this existed it could not
+// have it. What the default must never do is be quiet about which one is in
+// force: the startup banner prints it, and the guide says plainly that the
+// ledger's completeness under `deliver` is best-effort.
+type SealFailure string
+
+const (
+	// SealFailureDeliver lets the effect through and logs the gap.
+	SealFailureDeliver SealFailure = "deliver"
+	// SealFailureRefuse stops the effect rather than leave it unattested.
+	SealFailureRefuse SealFailure = "refuse"
+)
+
+func (s SealFailure) valid() bool {
+	return s == "" || s == SealFailureDeliver || s == SealFailureRefuse
+}
 
 // Route pins which package answers a capability, in preference order.
 //
@@ -133,8 +164,11 @@ type Policy struct {
 	// roster is empty, and once on, an unsigned answer to a gate is a denial —
 	// not a warning, since a gate that degrades to trusting whoever holds the
 	// socket is the gate this flag exists to replace.
-	RequireSignedApproval bool   `yaml:"require_signed_approval,omitempty"`
-	Rules                 []Rule `yaml:"rules,omitempty"`
+	RequireSignedApproval bool `yaml:"require_signed_approval,omitempty"`
+	// OnSealFailure decides what happens to an effect the ledger could not seal.
+	// Empty means SealFailureDeliver. See SealFailure.
+	OnSealFailure SealFailure `yaml:"on_seal_failure,omitempty"`
+	Rules         []Rule      `yaml:"rules,omitempty"`
 	// Routes pin a capability to specific packages, in preference order.
 	Routes []Route `yaml:"routes,omitempty"`
 
@@ -189,6 +223,9 @@ func LoadPolicy(path string) (*Policy, error) {
 	}
 	if !p.Default.valid() {
 		return nil, fmt.Errorf("policy %q: default_effect %q must be allow|gate|deny", path, p.Default)
+	}
+	if !p.OnSealFailure.valid() {
+		return nil, fmt.Errorf("policy %q: on_seal_failure %q must be deliver|refuse", path, p.OnSealFailure)
 	}
 	for i, r := range p.Rules {
 		if strings.TrimSpace(r.Match) == "" {
@@ -248,6 +285,19 @@ func (p *Policy) SpeculationAllowed() bool {
 // SignedApprovalRequired reports whether a gate may only be answered by an
 // enrolled operator's signature (C4 v1.3).
 func (p *Policy) SignedApprovalRequired() bool { return p.RequireSignedApproval }
+
+// SealFailureRefuses reports whether an effect that could not be sealed must be
+// stopped rather than delivered unattested. See SealFailure.
+func (p *Policy) SealFailureRefuses() bool { return p.OnSealFailure == SealFailureRefuse }
+
+// SealFailureStance is what the startup banner prints, so that which of the two
+// bad outcomes this node prefers is visible without reading the policy file.
+func (p *Policy) SealFailureStance() SealFailure {
+	if p.OnSealFailure == "" {
+		return SealFailureDeliver
+	}
+	return p.OnSealFailure
+}
 
 // RouteFor returns the node's package preferences for a capability: an
 // ordered `prefer` list and a set to avoid. First matching route wins, like
@@ -315,6 +365,25 @@ func matchCapability(match, capability string) bool {
 	return match == capability
 }
 
+// Authorization is what the node decided about one edge.
+type Authorization struct {
+	// Gate is the gate to apply: "" or GateHumanApproval.
+	Gate string
+	// Waived records that policy wanted a gate here and the *graph* is the
+	// reason there is not one.
+	//
+	// It is tracked separately from `Gate == ""` because the two are not the
+	// same fact, and the difference is the whole of who authorized the effect.
+	// Policy saying `allow` is the node deciding an effect needs no supervision.
+	// A graph saying `gate: none` under a policy that permits waivers is
+	// whoever registered that graph deciding it — and a graph is a JSON document
+	// anyone holding the node token can POST. The ledger records the
+	// distinction (Entry.Waived) and the credential broker refuses to spend a
+	// receipt carrying it, so a waiver can lower friction without also becoming
+	// a way to mint the authorization that buys a credential.
+	Waived bool
+}
+
 // Authorize is the runtime check: it combines the node's decision with what
 // the graph asked for and returns the gate to apply, or an error if the effect
 // is refused outright.
@@ -332,13 +401,13 @@ func matchCapability(match, capability string) bool {
 // a denied graph never starts rather than failing on its first message. The
 // dynamic half — a rule's rate limit, which is inherently per-delivery — is
 // CheckRate, called from the forwarding path.
-func (p *Policy) Authorize(capability, graphGate string) (gate string, err error) {
+func (p *Policy) Authorize(capability, graphGate string) (Authorization, error) {
 	decision, reason, _ := p.Decide(capability)
 
 	// A deny is absolute and is checked first, so nothing below can talk its
 	// way past it.
 	if decision == DecisionDeny {
-		return "", fmt.Errorf("policy denies %s (%s); no graph may override a deny",
+		return Authorization{}, fmt.Errorf("policy denies %s (%s); no graph may override a deny",
 			capability, reason)
 	}
 
@@ -346,7 +415,7 @@ func (p *Policy) Authorize(capability, graphGate string) (gate string, err error
 	// down has asked for more supervision than they were required to have, and
 	// there is never a reason to refuse them that.
 	if graphGate == GateHumanApproval {
-		return GateHumanApproval, nil
+		return Authorization{Gate: GateHumanApproval}, nil
 	}
 
 	// Lowering it does. A waiver is a *request*, granted only by a node that
@@ -354,13 +423,17 @@ func (p *Policy) Authorize(capability, graphGate string) (gate string, err error
 	// ignored rather than rejected — the graph is not malformed, it simply does
 	// not get to decide this.
 	if graphGate == GateNone && p.GraphWaiverAllowed() {
-		return "", nil
+		// Only a waiver that actually removed a gate is a waiver. Under a policy
+		// that already said `allow`, `gate: none` asked for nothing it was not
+		// getting, and recording it as an escalation would make the ledger cry
+		// wolf on every voice graph.
+		return Authorization{Waived: decision == DecisionGate}, nil
 	}
 
 	if decision == DecisionGate {
-		return GateHumanApproval, nil
+		return Authorization{Gate: GateHumanApproval}, nil
 	}
-	return "", nil
+	return Authorization{}, nil
 }
 
 // CheckRate is the dynamic half of the check, called on every delivery into a

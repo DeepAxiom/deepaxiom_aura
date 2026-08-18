@@ -1,7 +1,7 @@
 // Package wasmrt is the sandbox for kernel primitive... no — it is
 // deliberately NOT a kernel primitive. It is what makes C1 rule 3
 // ("permissions" is enforced, not merely declared) true for skills of
-// `format: wasm` (ROADMAP.md, Phase 3). Everything in here is wazero and
+// `format: wasm`. Everything in here is wazero and
 // nothing else: no registry, no executor, no HTTP — the same purity
 // discipline the ledger package holds itself to, for the same reason. A
 // skill of `format: source` never touches this package at all.
@@ -83,7 +83,7 @@ type Module struct {
 // reader is exhausted before the guest is run, so a guest reading to EOF
 // sees exactly this delivery's bytes and nothing from any other; stdout and
 // stderr are captured whole, since v1 has no streaming guest contract (see
-// ROADMAP.md); perm is applied as a WASI directory preopen, or not applied
+// perm is applied as a WASI directory preopen, or not applied
 // at all when perm.FSPath is empty — wazero's own default with no FSConfig
 // is already "no file access," so denial costs this function nothing extra.
 //

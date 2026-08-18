@@ -19,7 +19,8 @@ y con contrapresión. Tres propiedades lo sostienen:
 
 Un binario. 23 MB. Sin cuenta, sin nube, sin Postgres, sin broker, sin clúster.
 
-[Guía completa](GUIDE-ES.md) · [English](README.md) · [Roadmap](ROADMAP.md) ·
+[Guía completa](GUIDE-ES.md) · [English](README.md) ·
+[Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos) ·
 **v0.3.0 — pre-1.0, pre-producción**
 
 ---
@@ -29,7 +30,18 @@ Un binario. 23 MB. Sin cuenta, sin nube, sin Postgres, sin broker, sin clúster.
 ```bash
 git clone https://github.com/deepaxiom/aura && cd aura/kernel
 go build -o aura ./cmd/aura     # Go 1.25+, sin CGO, sin servicios externos
-./aura up                       # UI, LLM local, store de estado, ledger — todo
+./aura up                       # kernel, UI, store de estado, ledger, cliente de witness
+```
+
+`aura up` es el runtime completo y ningún skill: un proceso, un puerto, nada que
+instalar al lado. Los skills son procesos aparte que se conectan *a* él, así que
+un nodo recién arrancado es un kernel funcionando con el catálogo vacío. Dale
+algo que correr:
+
+```bash
+pip install -r skills/llm-chat/requirements.txt
+cd skills/llm-chat && PYTHONPATH=../../sdk/python/src python main.py
+# el primer arranque descarga un GGUF local; con OPENAI_API_KEY usa uno en la nube
 ```
 
 ```bash
@@ -105,12 +117,24 @@ salió de SQLite por completo.
 actualiza ni se borra, y se lee de vuelta como una sesión en orden — el mejor
 caso para un log y el peor para un B-tree que paga por actualizaciones que nunca
 ocurren. Ahora es un archivo de segmentos append-only con CRC por registro,
-escrituras agrupadas e índice reconstruido desde el archivo al arrancar; una cola
+escrituras agrupadas e índice reconstruido desde ellos al arrancar; una cola
 rota por un corte de energía se detecta y se trunca en vez de leerse como datos.
 En la misma carga y con durabilidad igualada sostuvo 1.5M eventos/s contra los
 27k de SQLite. La forma es la que argumenta
 [Tidehunter](https://arxiv.org/abs/2602.01873): tratar el log como almacenamiento
 permanente, y la compactación deja de existir porque nada se reubica.
+
+Segmentar es lo que hace eso sostenible en un runtime que se supone no se detiene
+nunca. Un solo archivo que solo crece no tiene forma de reclamar espacio que no
+sea la compactación que este diseño existe para evitar, así que el log rota a los
+128 MiB y `--event-log-max` reclama borrando segmentos enteros, del más viejo al
+más nuevo — apagado por defecto, porque ese historial es lo que leen `aura why` y
+`aura replay`. De la misma forma salen dos propiedades más: los registros se
+enmarcan por segmento, así que un segmento alterado después de sellado cuesta su
+propia cola y no todo lo que viene después; y el índice de locators está acotado,
+con las sesiones más frías cayendo a escanear solo los segmentos donde aparecen,
+así que la memoria la limita un flag y no cuánto lleva el nodo arriba. El banner
+de arranque imprime el tamaño.
 
 El ledger de efectos se queda en SQLite a propósito. Un bug en el log de eventos
 pierde historial de replay; un bug en el ledger pierde evidencia.
@@ -123,7 +147,17 @@ dejaban nueve ociosas. Un panic al rutear ahora falla una sesión, no el nodo.
 un proceso sin failover. Escala Twitch significa decenas de miles de conexiones
 por máquina en cientos de máquinas — y las plataformas a esa escala **no** sellan
 cada evento en una cadena de hashes. Esto sí, a propósito. Ese es el costo del
-pilar 3, y es el que este runtime no va a ceder. `kernel/cmd/loadgen/` reproduce
+pilar 3, y es el que este runtime no va a ceder.
+
+Lee la tabla por la forma, no por los números absolutos, y sabiendo qué mide: un
+skill echo sobre loopback, o sea el costo de ruteo y durabilidad del kernel sin
+trabajo real en ninguna parte del lazo. El throughput agregado divide los
+round-trips totales entre el tiempo de pared *incluyendo* lo que tarda en abrir
+cada sesión, lo cual favorece a las filas de alta concurrencia — una corrida de
+1,000 sesiones amortiza su setup de conexión sobre medio millón de mensajes, una
+de 1 sesión sobre quinientos. La afirmación honesta es la que hacen solas las
+filas del medio: con 200 sesiones el mismo nodo pasó de 344 msg/s a 1,908, y el
+p50 de 489 ms a 63, sin debilitar la durabilidad. `kernel/cmd/loadgen/` reproduce
 la tabla.
 
 ---
@@ -137,6 +171,14 @@ Nada de esto vive en tu grafo:
   olvida no tiene gate. Aquí el executor lo aplica en el único punto por el que
   pasa toda entrega, guiado por la política del nodo. Un grafo puede pedir *más*
   supervisión de la que la política exige, nunca menos.
+- **Un skill no es el operador.** `aura token issue --capability motor.erp.write`
+  acuña una credencial que puede conectarse, registrarse como *esa* capability y
+  gastar los recibos que reciba — y no puede registrar un grafo, leer el ledger
+  ni inscribir un aprobador. Antes, cada proceso skill tenía el token del
+  operador, lo que hacía del checkpoint una valla y no una frontera: un skill
+  podía registrar un grafo que waiveara su propio gate y acuñar el recibo que
+  compra una credencial. Una sola tabla ordenada decide qué alcanza cada scope,
+  denegando por defecto, y el registro queda atado a la capability emitida.
 - **La entry nombra al humano que lo aprobó, y él lo firmó.** No "un humano
   aprobó" — *cuál* humano, y demostrable. El operador firma una declaración
   atada a esa entrega concreta con una clave que el nodo nunca ha tenido, así
@@ -147,7 +189,13 @@ Nada de esto vive en tu grafo:
 - **Cada efecto se atestigua, no se registra.** Se sella en un registro
   encadenado por hash, comprometido en una cabeza Merkle RFC 6962 que el nodo
   firma y un tercero puede contrafirmar. `aura verify` recalcula cadena, árbol y
-  firmas desde el archivo de base de datos solo, sin kernel corriendo.
+  firmas desde el archivo de base de datos solo, sin kernel corriendo. Sellar
+  escribe a un disco, y los discos se llenan: por defecto un efecto que el nodo
+  no pudo sellar se entrega igual y el hueco se registra a gritos, para que un
+  disco lleno no sea una caída. Un nodo donde el ledger tiene que estar completo
+  pone `on_seal_failure: refuse` y el efecto se detiene en su lugar. No hay una
+  tercera opción, así que la elección es del operador y el banner de arranque
+  dice cuál está en vigor.
 - **Y ese tercero también rinde cuentas.** Un witness publica su propio log
   append-only, firma su cabeza, y firma su respuesta a *hasta dónde has
   respaldado a este nodo* — así que decirle una cosa a uno y otra a otro deja de
@@ -204,12 +252,21 @@ skill es una herramienta para Claude Code o Cursor, y `tools/call` hace
 streaming), una tarjeta de descubrimiento A2A, y exportación OpenTelemetry del
 árbol causal.
 
-Los nueve skills en [`skills/`](skills/) son **ejemplos de referencia, no un
-catálogo** — por eso llevan el org `example/`. Un skill es cualquier proceso que
-hable el protocolo de canal y declare un manifiesto: Python, TypeScript, Go,
-Rust, Wasm, o un envoltorio sobre software que ya operas. Copia
-[`skills/echo/`](skills/echo/), unas 100 líneas. El SDK es Apache-2.0, así que un
-skill que escribas y vendas no carga obligación de copyleft, nunca.
+**Los nueve skills en [`skills/`](skills/) son demos.** Existen para mostrar la
+forma de un skill y para darle a un nodo frío algo que correr — no para ser un
+catálogo, y no para que dependas de ellos en producción; por eso llevan el org
+`example/` en todos sus manifiestos. Léelos como la implementación de referencia
+del manifiesto C1 y el protocolo de canal, copia el más cercano a lo que
+necesitas, y reemplázalo. `postgres-cdc` es un lector CDC que funciona y aun así
+es una demo: no tiene política de reintentos, ni rotación de credenciales, ni
+manejo de cambios de esquema, porque esas son decisiones que toma tu despliegue y
+un ejemplo no puede tomarlas por ti.
+
+Un skill es cualquier proceso que hable el protocolo de canal y declare un
+manifiesto: Python, TypeScript, Go, Rust, Wasm, o un envoltorio sobre software
+que ya operas. Empieza por [`skills/echo/`](skills/echo/), unas 100 líneas. El
+SDK es Apache-2.0, así que un skill que escribas y vendas no carga obligación de
+copyleft, nunca.
 
 ---
 
@@ -217,11 +274,11 @@ skill que escribas y vendas no carga obligación de copyleft, nunca.
 
 | | |
 |---|---|
-| **Con pruebas** | Envelopes en streaming con QoS por arista sobre WebSocket y QUIC · el ledger y la verificación sin conexión · el gate como invariante del kernel · la cancelación · reanudación de sesión · replay determinista · puertos tipados con gramáticas de decodificación compiladas · la frontera MCP en ambos sentidos · `aura guard` · skills Wasm en un sandbox real · CDC de Postgres |
+| **Con pruebas** | Envelopes en streaming con QoS por arista sobre WebSocket y QUIC · el ledger y la verificación sin conexión · el gate como invariante del kernel · **identidad firmada del aprobador sellada en la entry** · **el broker de credenciales (un secreto solo contra un recibo válido, y nunca contra el waiver de un grafo)** · **el log propio del witness, y un monitor que atrapa a uno reescribiéndolo** · la cancelación · reanudación de sesión · replay determinista · **regresión a nivel de efectos entre sesiones** · puertos tipados con gramáticas de decodificación compiladas · la frontera MCP en ambos sentidos · `aura guard` · skills Wasm en un sandbox real · CDC de Postgres · **rotación, retención y recuperación de un segmento corrupto del log de eventos** |
 | **Verificado a mano** | Voz con barge-in · el planner (`aura do`) · `aura why` · exportación OpenTelemetry · ML-BOM |
 | **Todavía no** | Sin vista multidispositivo de una misma sesión viva · sin failover si el nodo muere · **sin aislamiento de procesos para skills `format: source`** — un skill corre con los privilegios de quien lo arrancó |
 
-`internal/` está en 72% de cobertura, `cmd/aura` en 9.5%, la UI no tiene. Una
+`internal/` está en ~72% de cobertura, `cmd/aura` en 7.5%, la UI no tiene. Una
 suite de conformidad de 59 verificaciones ejercita el kernel sobre el cable, y un
 job de CI aparte demuestra que el ledger detecta manipulación editando una base
 de datos real a espaldas de un binario real. Lee [Modelo de

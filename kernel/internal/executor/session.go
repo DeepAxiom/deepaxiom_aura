@@ -24,6 +24,12 @@ type dest struct {
 	port  string // ingress port on the destination
 	gate  string // "" or "human-approval"
 	skill *registry.Live
+	// waived records that policy wanted a gate on this edge and the graph is
+	// the reason there is not one. It rides into every entry this edge seals
+	// (ledger.Entry.Waived) so an auditor — and the credential broker — can tell
+	// "the node decided this needs no supervision" from "whoever registered this
+	// graph decided that". See executor.Authorization.
+	waived bool
 	// schema declared by the destination ingress port ("" = untyped/client)
 	schema string
 	// qos is the edge's declared delivery class (C3 rule 4): whether a slow
@@ -181,11 +187,12 @@ func applyPolicy(d *dest, pol *Policy, mode string, from, to string) error {
 		graphGate = ""
 	}
 
-	gate, err := pol.Authorize(d.skill.Manifest.Capability, graphGate)
+	auth, err := pol.Authorize(d.skill.Manifest.Capability, graphGate)
 	if err != nil {
 		return fmt.Errorf("edge %s -> %s: %w", from, to, err)
 	}
-	d.gate = gate
+	d.gate = auth.Gate
+	d.waived = auth.Waived
 	return nil
 }
 
@@ -594,7 +601,23 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 	// `root` is passed in rather than re-derived because the seal must cite
 	// the inferences of *this* chain (C5), and the chain is what the root
 	// names.
-	s.sealEffect(&out, d, root)
+	//
+	// A failure here is an operational one — a full disk, a broken store — and
+	// which of the two bad outcomes it produces is the operator's call, not
+	// this function's. Under the default the effect goes through and the gap is
+	// logged loudly; under `on_seal_failure: refuse` the effect is stopped so
+	// that nothing acts on the world this node cannot prove it authorized.
+	if err := s.sealEffect(&out, d, root); err != nil {
+		s.log.Error("effect sealing failed", "session", s.ID,
+			"capability", d.skill.Manifest.Capability,
+			"refused", s.policy.SealFailureRefuses(), "err", err)
+		if s.policy.SealFailureRefuses() {
+			s.emitError(src.ID, fmt.Sprintf(
+				"refusing to deliver an effect this node could not seal (%v); "+
+					"policy on_seal_failure is `refuse`", err))
+			return
+		}
+	}
 
 	// C3 v1.6: a delivery whose deadline has already passed is dropped rather
 	// than sent. The receiver would compute an answer nobody is waiting for,
@@ -838,23 +861,22 @@ func (s *Session) recordAttestation(root string, env channel.Envelope) {
 	s.attests.add(root, hash)
 }
 
-// sealEffect: el paso de attest del Effect Checkpoint (C4). Ojo, no todo se
-// sella — solo un envelope `data` que aterriza en un skill `motor.*` cuenta
-// como efecto. Tokens de un cognitive, un status, un done: eso no es un
-// efecto, es tráfico normal. Si sellara todo, el ledger dejaría de ser
-// evidencia de efectos y pasaría a ser una copia barata del causal log que
-// C3 rule 7 ya te da gratis.
+// sealEffect is the attest step of the Effect Checkpoint (C4).
 //
-// Sobre el error path: si Seal() falla (disco lleno, store roto), se loguea
-// y la entrega sigue de todos modos — mismo trade-off que AppendEvent unas
-// líneas arriba. La razón es simple: un fallo operacional al persistir no
-// debería convertirse en un DoS contra cada efecto del nodo. Sí, eso deja un
-// hueco documentado en el ledger en vez de tumbar el nodo — pero para algo
-// que promete "seguir vivo" como premisa central, tumbar el nodo es el peor
-// de los dos males.
-func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) {
+// Not everything is sealed — only a `data` envelope landing in a `motor.*`
+// skill counts as an effect. A cognitive skill's tokens, a status, a done: that
+// is ordinary traffic, not an act on the world. Sealing all of it would stop the
+// ledger being evidence of effects and turn it into a second, worse copy of the
+// causal event log that C3 rule 7 already guarantees.
+//
+// A nil error means the effect is attested and `out` carries its receipt. A
+// non-nil error means it is not, and the caller — not this function — decides
+// what that costs, because the answer is the operator's (policy
+// `on_seal_failure`) and not the executor's. See SealFailure for why there is no
+// option where both the node stays up and the ledger stays complete.
+func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) error {
 	if s.ldg == nil || d.skill == nil || d.skill.Manifest.Type != TypeMotor || out.Kind != channel.KindData {
-		return
+		return nil
 	}
 	decision := spec.DecisionAllow
 	if d.gate == GateHumanApproval {
@@ -878,6 +900,7 @@ func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) {
 		Policy:       s.policy.Hash(),
 		Payload:      out.Payload,
 		Compensation: compensationOf(d.skill.Manifest),
+		Waived:       d.waived,
 		Compensates:  s.undoOf,
 		Inference:    inference,
 		// Keyed on CauseID because that *is* the held envelope's id: forward
@@ -887,10 +910,10 @@ func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) {
 	}
 	receipt, err := s.ldg.Seal(req)
 	if err != nil {
-		s.log.Error("effect sealing failed", "session", s.ID, "capability", req.Capability, "err", err)
-		return
+		return fmt.Errorf("sealing %s: %w", req.Capability, err)
 	}
 	out.Receipt = receipt
+	return nil
 }
 
 // sealDenial attests a gated effect a human refused. Unlike a delivered

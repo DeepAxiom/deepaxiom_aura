@@ -37,7 +37,7 @@ func wtNode(t *testing.T, g *Gateway) string {
 		Log:     g.Log,
 		Routes: map[string]wtsrv.Handler{
 			"/ws/skill": func(_ context.Context, sess *wtsrv.Session, _ *http.Request) {
-				g.ServeSkill(sess)
+				g.ServeSkill(sess, Principal{Scope: ScopeOperator})
 			},
 		},
 	}

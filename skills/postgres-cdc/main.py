@@ -1,6 +1,6 @@
 """
 postgres-cdc — sensorial.postgres.cdc (Postgres logical replication -> causal
-events, Phase 3, ROADMAP.md).
+events).
 
 One `watch_in` message starts the stream; the handler keeps running and
 emitting `change_out` envelopes — one per row change, not batched per

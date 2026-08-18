@@ -10,7 +10,7 @@ ni base de datos externa. Los grafos se escriben a mano o los genera un planner
 a partir de un objetivo en lenguaje natural, y cada sesión guarda un log de
 eventos causal append-only que puedes explicar o reproducir después.
 
-Tres decisiones de diseño lo separan de las herramientas de workflows (n8n,
+Cuatro decisiones de diseño lo separan de las herramientas de workflows (n8n,
 Zapier, Make) y de los frameworks de agentes:
 
 - **La unidad de trabajo es la conexión, no la ejecución.** Los mensajes son
@@ -41,17 +41,18 @@ Zapier, Make) y de los frameworks de agentes:
   prueba de qué se ejecutó; ver
   [Modelo de seguridad](#modelo-de-seguridad), que lo explica en detalle.
 
-**Lo que todavía no es.** No hay vista multidispositivo de una sesión viva,
-ni failover si muere el nodo propietario — el estado de una sesión sobrevive
-a un socket caído (ver [Estado de los hitos](#estado-de-los-hitos)), pero no
-a que desaparezca el proceso del nodo. Un nodo se autentica — loopback por defecto, token bearer,
-comprobación de origen del WebSocket, TLS opcional — pero el aislamiento de
-procesos para skills sigue sin existir, así que un skill corre con los
-privilegios de quien lo arrancó. Lee [Modelo de
-seguridad](#modelo-de-seguridad) antes de exponer un puerto.
-[Estado de los hitos](#estado-de-los-hitos) lo detalla todo, y
-[ROADMAP.md](ROADMAP.md) dice qué está construido y qué no. Léelos antes de
-decidir si esto encaja con tu problema.
+**Lo que todavía no es.** No hay vista multidispositivo de una sesión viva, ni
+failover si muere el nodo propietario — el estado de una sesión sobrevive a un
+socket caído, pero no a que desaparezca el proceso del nodo. Un nodo se autentica
+— loopback por defecto, token bearer, comprobación de origen del WebSocket, TLS
+opcional — pero todos los llamadores comparten un solo token de nodo, así que un
+skill comprometido tiene la misma credencial que el operador. Y un skill
+`format: source` no está contenido: `--sandbox process` limpia su entorno y
+encierra su directorio de trabajo, `format: wasm` sí está genuinamente aislado,
+pero ninguno de los dos contiene código hostil. Lee [Modelo de
+seguridad](#modelo-de-seguridad) antes de exponer un puerto; [Estado de los
+hitos](#estado-de-los-hitos) y [Diseñado, aún no construido](#diseñado-aún-no-construido)
+lo detallan todo.
 
 Para agregar una capacidad, escribe un skill y regístralo — no hay cola de
 revisión, porque el registry lo alojas tú. Mira [`skills/`](skills/) para
@@ -115,35 +116,25 @@ Ese modelo encaja bien con una sincronización nocturna y con un webhook. Encaja
 mal con una conversación de voz o una sesión multiagente larga, porque ahí el
 estado que importa vive *entre* mensajes, no dentro de una ejecución.
 
-Deep Axiom hace de la conexión la unidad de trabajo. No es una idea nueva — la
+Hacer de la conexión la unidad de trabajo no es una idea nueva — la
 infraestructura de chat y videojuegos lleva años funcionando así, y Temporal y
 los frameworks de voz en tiempo real resuelven cada uno una parte. Lo poco
 habitual aquí es aplicarlo a trabajo de IA *conectado a legacy*: un runtime que
 instalas junto a los sistemas existentes y que les habla por el mismo protocolo
-de streaming que usa para modelos y clientes.
+de streaming que usa para modelos y clientes. De ahí salen tres consecuencias, y
+de ellas trata buena parte de esta guía:
 
-De esa decisión se derivan cuatro cosas:
-
-- **Streams, no ejecuciones.** La unidad de comunicación es un stream de
-  envelopes tipado, causal y con contrapresión sobre una conexión pensada para
-  quedarse abierta. El texto fluye token a token, y cada sesión mantiene un log
-  causal duradero en vez de descartar su estado al terminar.
 - **Legacy primero.** El primer comando útil es *conecta lo que ya tienes*, no
-  "crea un proyecto". Apúntalo a una especificación OpenAPI y sus operaciones
-  se convierten en skills — de solo lectura por defecto, con aprobación humana
-  obligatoria antes de cualquier escritura.
+  "crea un proyecto". Apúntalo a una especificación OpenAPI y sus operaciones se
+  convierten en skills — de solo lectura por defecto, con aprobación humana
+  obligatoria antes de cualquier escritura. Ver [Conectar software
+  existente](#conectar-software-existente).
 - **Una sola interfaz para cada modelo.** LLMs, ASR, TTS — y cualquier modelo
   que un skill envuelva — todos tras el mismo contrato de skill, en local o
   remoto. Mover un skill a otra máquina cambia la colocación, no el grafo.
 - **Distribución federable.** La especificación, el kernel y los SDKs son
-  abiertos; el registry es federable, así que el catálogo del que instalas
-  puedes alojarlo tú.
-
-Esto es **pre-1.0**, y la historia de persistencia está a medias. Lo que se
-sostiene hoy: el log de eventos duradero, el protocolo de envelopes en
-streaming, la liveness de conexión, el forzado de QoS por arista y el resume
-de conexión. Lo que no: sesiones multidispositivo y failover de nodo.
-[Estado de los hitos](#estado-de-los-hitos) traza esa línea con precisión.
+  abiertos y el registry es federable, así que el catálogo del que instalas
+  puedes alojarlo tú. Ver [El marketplace](#el-marketplace).
 
 ---
 
@@ -189,114 +180,36 @@ demuestra que cumple.
 
 ## Funcionalidades destacadas
 
-**Runtime y modelos**
-- Un único binario autocontenido — kernel, UI del plano de control, almacén de
-  estado y bus de mensajes en un solo archivo. Sin cuenta, sin nube, sin Docker,
-  sin base de datos externa.
-- Streams como primitiva universal: canales tipados, ordenados, causales,
-  idempotentes, con back-pressure y medibles que transportan por igual texto,
-  audio, documentos y eventos.
-- Un solo formato de grafo para todo — la misma representación intermedia tanto
-  si el grafo lo escribió un humano como si lo generó un planner, de modo que un
-  solo depurador, un solo modelo de permisos y una sola vía de replay cubren
-  ambos casos.
-- Cualquier modelo tras una misma interfaz: LLMs (llama.cpp), ASR
-  (faster-whisper), TTS (piper / voces nativas) — locales o vía API,
-  intercambiables sin tocar el grafo. Un skill que envuelva cualquier otro
-  runtime habla el mismo contrato.
-- Admisión de recursos: un presupuesto de memoria que el nodo hace cumplir,
-  rechazando lo que no cabe con una explicación en lugar de un crash.
-- Configuración de skills en tiempo de ejecución: cualquier skill puede
-  declarar parámetros ajustables (temperatura, un timeout, una ruta de
-  almacenamiento, ...) en su manifiesto; los valores efectivos se resuelven
-  desde el default declarado → un archivo `--config` opcional → un override
-  en vivo puesto desde la UI del plano de control o la API HTTP, aplicado en
-  caliente sobre la propia conexión del skill.
-- Memoria persistente y consciente del presupuesto:
-  `skills/memory-context` — un skill tipo `memory` que sobrevive reinicios y
-  recorta a un presupuesto de tokens configurable, a diferencia del
-  historial en proceso y sin límite de llm-chat.
+Un mapa, no un resumen — cada línea nombra la sección que explica bien la cosa,
+porque una lista de funcionalidades que reformula treinta secciones es una
+segunda copia de la guía que se desincroniza de la primera.
 
-**Integración e interoperabilidad**
-- Proyecciones legacy-first: convierte una especificación OpenAPI en skills
-  usables por agentes en minutos, de solo lectura por defecto, con dry-run y
-  promoción por operación.
-- Fronteras estándar: un servidor MCP (cada skill es una tool para Claude Code,
-  Cursor, etc.) que **hace streaming** de la salida de `tools/call` a medida que
-  se produce, una tarjeta de descubrimiento A2A y exportación de trazas
-  OpenTelemetry — todo integrado.
-- **`aura guard`** — pone por delante los servidores MCP que un agente ya usa,
-  para que sus tool calls pasen por la policy, el gate de aprobación humana y el
-  ledger de efectos de este nodo, sin reescribir el agente ni adoptar el
-  runtime. Apúntalo al `mcpServers` que ya tienes; una tool queda gateada salvo
-  que su servidor demuestre que solo lee, y tú hayas decidido creerle. Ver
-  [Proteger las tools de un agente](#proteger-las-tools-de-un-agente), incluido
-  lo que *no* protege.
-- Skills con inversión de control que llaman *hacia fuera* al kernel, de modo
-  que funcionan tras NAT y firewalls corporativos sin puertos de entrada.
+| | |
+|---|---|
+| **Un solo binario** — kernel, UI, almacén de estado y bus de mensajes, sin servicios externos | [Arquitectura](#arquitectura) |
+| **Streams como primitiva** — canales tipados, ordenados, causales, idempotentes y con contrapresión que transportan por igual texto, audio, documentos y eventos | [Conceptos fundamentales](#conceptos-fundamentales) |
+| **Un solo formato de grafo** para lo escrito a mano y lo generado por el planner — un depurador, un modelo de permisos, una vía de replay | [Operación en lenguaje natural](#operación-en-lenguaje-natural) |
+| **Cualquier modelo tras una interfaz** — LLM, ASR, TTS, local o remoto, intercambiable sin tocar el grafo; más un presupuesto de memoria contra el que el nodo admite | [Drivers de modelos y admisión de recursos](#drivers-de-modelos-y-admisión-de-recursos) |
+| **Skills ajustables en caliente** — defaults del manifiesto, un archivo `--config`, overrides en vivo aplicados sobre la propia conexión del skill | [Config de skills en runtime](#configuración-de-skills-en-tiempo-de-ejecución) |
+| **Legacy primero** — una especificación OpenAPI se vuelve skills, de solo lectura por defecto, con dry-run y promoción por operación | [Conectar software existente](#conectar-software-existente) |
+| **Fronteras estándar** — un servidor MCP cuyo `tools/call` hace streaming, una tarjeta A2A, exportación OpenTelemetry | [Estándares en las fronteras](#estándares-en-las-fronteras) |
+| **`aura guard`** — los servidores MCP que tu agente ya usa, puestos tras la policy, el gate y el ledger de este nodo, sin reescribir nada | [Proteger las herramientas de un agente](#proteger-las-tools-de-un-agente) |
+| **El gate como invariante del kernel** — lo aplica el executor, así que un grafo que se olvide de él igual lo tiene | [Modelo de seguridad](#modelo-de-seguridad) |
+| **Un skill no es el operador** — una credencial acotada a una capability, que no puede registrar un grafo ni leer el ledger | [Credenciales con alcance](#credenciales-con-alcance) |
+| **Quién aprobó, firmado** — la firma de un operador inscrito sellada en la entry, hecha con una clave que el nodo nunca tuvo | [Aprobación firmada](#aprobación-firmada--quién-lo-permitió) |
+| **Una credencial solo contra un recibo** — el secreto vive en el kernel y se libera contra un efecto sellado, así que saltarse el gate da un 401 | [El broker de credenciales](#el-broker-de-credenciales) |
+| **El ledger de efectos** — encadenado por hash, comprometido en Merkle, firmado, verificable sin conexión desde el archivo de base de datos y sin kernel corriendo | [Modelo de seguridad](#modelo-de-seguridad) |
+| **Recibos portables y audit bundles** — la evidencia de un efecto o de una sesión, verificable por cualquiera, sin revelar nada más | [Audit bundles](#audit-bundles) |
+| **Terceros que rinden cuentas** — ancla en un witness que publica su propio log y firma hasta dónde ha respaldado | [Witnessing abierto](#witnessing-abierto) |
+| **Regresión a nivel de efectos** — reproduce sesiones grabadas contra un modelo nuevo y diffea los actos, no las transcripciones | [Tests de regresión](#regresión-contra-el-ledger) |
+| **Explicar y reproducir** — `aura why` narra un fallo desde el log causal | [Explicabilidad y replay](#explicabilidad-y-replay) |
+| **Marketplace firmado y federable, y federación de nodos** | [El marketplace](#el-marketplace), [Federar nodos](#federar-nodos) |
 
-**Autonomía y seguridad**
-- Operación en lenguaje natural: un objetivo se convierte en un plan, un grafo y
-  una ejecución con puertas de aprobación, donde el LLM elige y el código
-  compila.
-- Humano en el bucle por invariante del kernel: toda arista hacia un skill de
-  acción (`motor.*`) lleva una puerta de aprobación humana, aplicada por el
-  propio ejecutor — así que vale igual para grafos escritos a mano, para la
-  salida del planner y para cualquier editor de grafos futuro. La regla de
-  seguridad vive en el kernel, no en un prompt ni en cada herramienta que
-  genere un grafo.
-- Seguridad progresiva, en parte: la firma de paquetes es real y siempre está
-  activa — cada publicación se firma (Ed25519) y cada instalación verifica hash
-  y firma. La autenticación es real: loopback por defecto, token bearer,
-  allowlist de origen y TLS opcional. La autorización también: una política de
-  nodo decide qué puede actuar sobre el mundo, y un grafo no puede eximirse.
-  Lo que sigue faltando es el resto de la escalera — el modo `site` hoy no
-  cambia nada, y el aislamiento de procesos para skills no existe: un skill
-  corre con los privilegios de quien lo arrancó, y `permissions` es una
-  declaración que el registry enseña al instalar, no un sandbox que el kernel
-  fuerce en tiempo de ejecución. [Modelo de
-  seguridad](#modelo-de-seguridad) traza la línea con precisión.
-- El ledger de efectos (C4): cada efecto autorizado se sella en un registro
-  encadenado por hash, comprometido a una cabeza Merkle RFC 6962 que el nodo
-  firma periódicamente con su clave Ed25519. `aura verify` recalcula cadena y
-  árbol y comprueba cada firma desde el archivo SQLite, sin kernel corriendo.
-- Anclaje externo: `aura witness <peer>` hace que un tercero verifique una
-  prueba de consistencia y contrafirme la cabeza — lo único que la autofirma
-  no puede hacer, porque es lo que descarta que quien tiene la clave reescriba
-  la historia. Cada nodo es un witness, así que no hay servicio que desplegar.
-- Recibos portátiles: `aura receipt <efecto>` exporta la evidencia de un efecto
-  —entrada, prueba de inclusión, cabeza firmada, contrafirmas, atestaciones
-  citadas— como documento que cualquiera verifica sin conexión, sin revelar
-  nada del resto del ledger.
-- Atestación de inferencia (C5): un skill declara motor, modelo, revisión de
-  Hugging Face, cuantización, parámetros de muestreo y semilla detrás de una
-  salida, y el kernel lo liga a cada efecto que esa salida causó. Las
-  revisiones de HF se fijan antes de descargar; los formatos de pesos con
-  pickle se rechazan, no se advierten; la energía se reporta con su fuente para
-  que una estimación no pueda pasar por una medición.
-- `aura bom`: un ML-BOM CycloneDX 1.6 de los modelos y skills que realmente
-  corrieron, construido desde el ledger y no desde la configuración.
-
-**Distribución y operación**
-- Un marketplace federable y firmado: publica con un comando, instala por nombre
-  o por capacidad, con versiones inmutables y trust-on-first-use.
-- Federación de nodos: un comando amplía un nodo para resolver capacidades que
-  viven físicamente en otra máquina, con las respuestas fluyendo de vuelta con
-  la causalidad intacta.
-- Explicar y reproducir: `aura why` narra la causa raíz de un fallo a partir del
-  log causal; `aura replay` convierte tráfico real grabado en una suite de
-  evaluación.
-- UI del plano de control internacionalizada (inglés + español; más idiomas
-  añadiendo un archivo), embebida en el binario.
-
-> Todo lo de esta lista existe y funciona. La cobertura es despareja, no
-> inexistente: el marketplace (`hub` 81%), la federación (`fed` 87%), el
-> servidor MCP (`mcpsrv` 63%) y el host de proyecciones OpenAPI (`projection`
-> 61%) tienen tests automatizados, mientras que los drivers de modelos, el
-> planner y la exportación OTel solo están verificados a mano. Ver
-> [cobertura de tests](#cobertura-parcial) y
-> [estado de los hitos](#estado-de-los-hitos) para saber qué partes
-> detectarían una regresión.
+Todo lo anterior existe y funciona. Lo que **no** está — aislamiento de procesos
+para skills `format: source`, el modo `site`, sesiones multidispositivo, failover
+de nodo — aparece con la misma claridad en [Modelo de
+seguridad](#modelo-de-seguridad) y [Estado de los hitos](#estado-de-los-hitos),
+junto con qué partes detectaría realmente una regresión.
 
 ---
 
@@ -2126,7 +2039,33 @@ distancia importa más que la intención.
 > **Lo que sigue sin aplicarse:** el aislamiento de procesos. Un skill corre con
 > los privilegios de quien lo arrancó, y `permissions` es una declaración, no un
 > sandbox. Hacerlo real necesita el executor Wasm, que es trabajo posterior a la
-> beta en [`ROADMAP.md`](ROADMAP.md).
+> beta en [Diseñado, aún no construido](#diseñado-aún-no-construido).
+
+**Un waiver se registra como tal.** Donde una policy sí concede esa autoridad a
+los grafos, la entry sellada para el efecto lleva `waived: true` — porque
+`decision: allow` por sí solo no distingue "la policy del operador autorizó esto"
+de "quien registró este grafo lo autorizó", y un grafo es un JSON que puede
+publicar cualquiera con acceso a la superficie de control. El broker de
+credenciales se niega a gastar un recibo que lo lleve, así que un waiver sigue
+siendo una forma de bajar fricción y no se convierte en una forma de acuñar la
+autorización que compra un secreto. Ver [C4](spec/c4-ledger.md) y [El broker de
+credenciales](#el-broker-de-credenciales).
+
+**Cuando el ledger no se puede escribir.** Sellar escribe a un disco, y los
+discos se llenan. `on_seal_failure` decide cuál de dos malos resultados prefiere
+este nodo:
+
+```yaml
+on_seal_failure: deliver   # por defecto: el efecto pasa, el hueco se registra
+on_seal_failure: refuse    # el efecto se detiene en vez de quedar sin atestiguar
+```
+
+No hay una tercera opción donde el nodo siga arriba y el ledger quede completo,
+así que la decisión es del operador y no del kernel. `deliver` es el default
+porque un runtime cuya premisa es que nunca se detiene no debería convertir un
+disco lleno en una caída; un nodo que sella pagos quiere `refuse`. El banner de
+arranque imprime cuál está en vigor, y un efecto que no se pudo sellar no lleva
+recibo — así que nada río abajo puede confundirlo con atestiguado.
 
 | Modo | Pensado para | Qué cambia hoy |
 |---|---|---|
@@ -2139,6 +2078,61 @@ del modo: `aura publish` firma siempre (Ed25519) y `aura add` verifica siempre
 el hash del artefacto y la firma antes de instalar, corra el nodo en el modo
 que corra. Esa parte del modelo de confianza es real — ver
 [el marketplace](#el-marketplace).
+
+### Credenciales con alcance
+
+Un nodo tenía exactamente una credencial. La CLI, la UI del navegador, un bridge
+de federación y cada proceso skill presentaban el mismo bearer token, así que
+"puede alcanzar este nodo" y "es el operador de este nodo" eran la misma
+afirmación.
+
+Eso hacía que la garantía del broker de credenciales fuera más débil de lo que se
+lee. Su argumento es que saltarse el Effect Checkpoint te da un 401 — cierto
+contra un proceso fuera del nodo, y falso contra un skill, que tenía el token del
+operador y por tanto podía registrar un grafo que waiveara su propio gate, sellar
+un efecto y canjear el recibo que acababa de acuñar.
+
+```powershell
+.\kernel\aura.exe token issue --capability motor.erp.write --label "erp writer"
+#  tok-2sNkcJvt  scoped to motor.erp.write
+#
+#  mGN2mnCbyz6_fkh-Jd9bXcqBib2NSuHPll0swrQqtPE
+#
+#  Es la unica vez que se muestra: solo se guarda su hash.
+```
+
+Una credencial `skill` puede hacer tres cosas: conectarse a `/ws/skill`,
+registrarse como la capability para la que fue emitida, y gastar un recibo por
+las credenciales que ese efecto autorizó. No puede registrar un grafo, leer el
+ledger, guardar un secreto, inscribir un aprobador ni hospedar un módulo Wasm.
+
+Dos propiedades son las que lo hacen real y no nominal:
+
+- **El registro queda atado a la capability emitida**, exacta y nunca por
+  prefijo. Registrarse es cómo un proceso declara qué *es* ante el executor, y de
+  ahí cuelga todo — qué regla de policy aplica, si una arista hacia él es un
+  efecto, qué recibos puede gastar. Un token estrecho libre de registrarse como
+  cualquier cosa sería uno completo con un nombre más pequeño.
+- **Una sola tabla ordenada decide qué alcanza cada scope**, denegando por
+  defecto, en `internal/gateway/scope.go`. El mismo argumento que hace el motor
+  de policy sobre las reglas: un modelo de autorización repartido en cuarenta
+  handlers existe solo como la suma de cuarenta decisiones, y una ruta añadida el
+  año que viene toma por defecto lo que su autor recordara. Aquí una ruta nueva
+  está cerrada a los skills hasta que alguien ensanche la tabla en un diff que un
+  revisor puede ver.
+
+`aura token ls` lista lo emitido; `aura token revoke <id>` detiene una en su
+siguiente request. La revocación se registra en vez de borrarse, por la misma
+razón que la de un operador: un efecto sellado mientras el token era válido sigue
+siendo explicable después.
+
+El token del propio operador no cambia — sigue siendo `node.token` en el
+directorio de datos, y un nodo que no emite ninguno se comporta igual que antes.
+
+**Lo que esto no hace.** No contiene a un skill al que ya se le entregó una
+credencial que pidió legítimamente, ni aísla el proceso — ver [Aislamiento de
+skills](#aislamiento-de-skills). Lo que quita es la autoridad de operador
+permanente que cada skill cargaba solo por haber sido arrancado.
 
 ### Atestación — el ledger de efectos ([C4](spec/c4-ledger.md))
 
@@ -2196,27 +2190,18 @@ anteriores de este documento describían el ledger como evidencia que "un
 auditor puede comprobar sin confiar en el proceso que la produjo", lo cual lo
 sobrevendía — el auditor todavía tenía que confiar en quien tuviera la clave.
 
-Un **witness** cierra eso, con el mecanismo de Certificate Transparency:
+Un **witness** cierra eso con el mecanismo de Certificate Transparency: antes de
+contrafirmar, verifica una *prueba de consistencia* RFC 6962 — las entradas que
+ya avalé siguen siendo, sin cambios y en el mismo orden, un prefijo de estas. Un
+nodo que reescribió la entrada 3 no puede producir una; no hay nada que forjar,
+o la prueba existe porque la historia realmente es una extensión, o no existe. La
+propiedad resultante es que **un nodo todavía puede mentir, pero no de forma
+consistente a dos partes a lo largo del tiempo.**
 
-```powershell
-.\kernel\aura.exe witness http://peer.internal:9080
-#  el witness http://peer.internal:9080 vio por última vez 412 entradas;
-#  presentando 587 con una prueba de consistencia de 9 hashes
-#
-#  ATESTIGUADO — el peer avaló 587 entradas en sha256:4b8c1e…
-```
-
-El witness verifica la firma propia del nodo, y después verifica una **prueba
-de consistencia** RFC 6962: *las entradas que ya avalé siguen siendo, sin
-cambios y en el mismo orden, un prefijo de estas*. Un nodo que reescribió la
-entrada 3 no puede producir esa prueba — no hay nada que forjar, o existe
-porque la historia realmente es una extensión, o no. Solo entonces el witness
-contrafirma, y registra lo que firmó.
-
-La propiedad resultante: **un nodo todavía puede mentir, pero no de forma
-consistente a dos partes a lo largo del tiempo.** Cada nodo es un witness (no
-hay servicio aparte que desplegar), así que un despliegue de dos nodos ya
-tiene dónde anclar.
+[Witnessing abierto](#witnessing-abierto) cubre el mecanismo, el ancla pública y
+`--open-witness`, incluido qué mantiene honesto al witness mismo. Lo que
+corresponde aquí es la parte que trata
+sobre la confiabilidad de este nodo.
 
 Un nodo cuya propia clave se usó para reescribir la historia sigue pasando sus
 *auto*comprobaciones —cadena intacta, checkpoint válido— y `aura verify` ahora
@@ -2233,21 +2218,11 @@ reporta esa combinación por lo que es:
      holder of this node's own key looks like. Ask the witness directly.
 ```
 
-Dos límites honestos, ya que esta sección existe para declararlos:
-
-- **Las contrafirmas que guarda un nodo las guarda ese nodo**, que puede
-  descartar las incómodas. "0 witnesses" no prueba que no se emitiera ninguna
-  — la copia autoritativa es el registro del propio witness. La herramienta
-  dice "sin atestiguar", nunca "sin atestiguar, por lo tanto bien".
-- **Todavía no hay witness público anónimo.** `/v1/ledger/witness` está tras el
-  token del nodo como toda ruta `/v1`, así que el witnessing funciona entre
-  partes que pueden intercambiar uno — dos nodos de una organización, o dos
-  organizaciones que acordaron anclarse mutuamente
-  (`aura witness <url> --token …`). Abrirlo a cualquiera sería una línea y
-  deliberadamente no es esa línea: una superficie de escritura sin autenticar
-  necesita antes política de retención y rate limits, porque cualquiera puede
-  generar un keypair y presentar un node id nuevo. Hasta que existan, enviarlo
-  cambiaría una garantía real por una denegación de servicio.
+Y el límite que sobrevive a todo lo demás: **las contrafirmas que guarda un nodo
+las guarda ese nodo**, que puede descartar las incómodas. "0 witnesses" no prueba
+que no se emitiera ninguna — la copia autoritativa es el log publicado del propio
+witness. La herramienta dice "sin atestiguar", nunca "sin atestiguar, por lo
+tanto bien".
 
 ### Recibos portátiles
 
@@ -2424,7 +2399,6 @@ README.md           La puerta de entrada corta, en inglés.
 GUIDE.md            La referencia completa, en inglés.
 README-ES.md        La puerta de entrada corta, en español.
 GUIDE-ES.md         Este documento — la referencia completa.
-ROADMAP.md          Qué se construye a continuación, y por qué.
 CONTRIBUTING.md     Cómo contribuir al kernel, SDK y spec (en inglés) —
                     para agregar un skill, copia skills/echo/ (el ejemplo
                     mínimo trabajado) o cualquier otro bajo skills/.
@@ -2492,7 +2466,7 @@ python spec\conformance\runner.py --port 9080
 
 ## Estado de los hitos
 
-**Esto es pre-1.0.** Ver [`ROADMAP.md`](ROADMAP.md) para qué está construido y
+**Esto es pre-1.0.** Ver [Estado de los hitos](#estado-de-los-hitos) para qué está construido y
 qué no — los cimientos, la conectividad, la voz multicanal en streaming, la
 seguridad del nodo y el ledger de efectos están todos, cliente de navegador
 incluido. Los dieciocho hitos de abajo corren de extremo a extremo; la suite de
@@ -2590,16 +2564,19 @@ cae la línea:
 
   | Paquete | Cobertura | | Paquete | Cobertura |
   |---|---|---|---|---|
-  | `approvals` | 100,0% | | `signing` | 90,4% |
-  | `config` | 100,0% | | `sandbox` | 89,7% |
-  | `channel` | 97,5% | | `mcpcli` | 89,6% |
-  | `fed` | 86,4% | | `wasmrt` | 85,6% |
-  | `mcpsrv` | 83,2% | | `executor` | 81,3% |
-  | `hub` | 81,2% | | `guard` | 80,9% |
-  | `identity` | 78,3% | | `registry` | 77,4% |
-  | `ledger` | 71,0% | | `store` | 69,7% |
-  | `projection` | 61,0% | | `gateway` | 58,7% |
-  | `grammar` | 52,3% | | `cmd/aura` | **9,5%** |
+  | `approvals` | 100,0% | | `guard` | 80,9% |
+  | `config` | 100,0% | | `wtsrv` | 79,7% |
+  | `channel` | 97,5% | | `registry` | 78,8% |
+  | `signing` | 90,4% | | `identity` | 78,3% |
+  | `approver` | 90,0% | | `mcpsrv` | 75,6% |
+  | `sandbox` | 89,7% | | `ledger` | 73,7% |
+  | `mcpcli` | 89,6% | | `projection` | 58,6% |
+  | `fed` | 86,4% | | `gateway` | 56,4% |
+  | `broker` | 86,2% | | `store` | 56,0% |
+  | `wasmrt` | 85,6% | | `grammar` | 52,3% |
+  | `executor` | 83,7% | | `cmd/aura` | **7,5%** |
+  | `seglog` | 83,7% | | | |
+  | `hub` | 81,2% | | | |
 
   **Ningún paquete está en cero.** `internal/` está en **72,3%**; el agregado
   del módulo entero (`go test ./...`, todos los paquetes) es **54,9%**, y la
@@ -2634,7 +2611,7 @@ implementadas. El sandboxing de skills es la que impide que esto sea seguro
 fuera de una red de confianza:
 
 - ~~**Autenticación del nodo y loopback por defecto**~~ — hecho en la Fase 0
-  (ver [ROADMAP.md](ROADMAP.md)). El texto anterior decía: hoy `aura up` escucha en
+  (ver [Estado de los hitos](#estado-de-los-hitos)). El texto anterior decía: hoy `aura up` escucha en
   todas las interfaces sin token, sin TLS y sin comprobación de origen ([Modelo
   de seguridad](#modelo-de-seguridad)). Atar loopback por defecto con una
   renuncia explícita, restringir la comprobación de origen del WebSocket y un

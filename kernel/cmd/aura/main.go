@@ -18,22 +18,16 @@ import (
 	"strings"
 	"time"
 
-	"aura/kernel/internal/approvals"
-	"aura/kernel/internal/approver"
-	"aura/kernel/internal/broker"
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/config"
 	"aura/kernel/internal/executor"
 	"aura/kernel/internal/gateway"
-	"aura/kernel/internal/grammar"
 	"aura/kernel/internal/identity"
 	"aura/kernel/internal/ledger"
-	"aura/kernel/internal/mcpsrv"
-	"aura/kernel/internal/projection"
 	"aura/kernel/internal/registry"
+	"aura/kernel/internal/seglog"
 	"aura/kernel/internal/spec"
 	"aura/kernel/internal/store"
-	"aura/kernel/internal/wasmrt"
 	"aura/kernel/internal/wtsrv"
 )
 
@@ -73,6 +67,8 @@ func main() {
 		cmdOperator(os.Args[2:])
 	case "secret":
 		cmdSecret(os.Args[2:])
+	case "token":
+		cmdToken(os.Args[2:])
 	case "trace":
 		cmdTrace(os.Args[2:])
 	case "federate":
@@ -119,7 +115,8 @@ func usage() {
 
 Usage:
   aura up [--port 9080] [--data <dir>] [--mode local|site|published]
-          [--memory-budget 8Gi] [--config <file>] [--open-witness]
+          [--memory-budget 8Gi] [--event-log-max 20Gi] [--config <file>]
+          [--open-witness]
   aura chat ["message"] [--graph chat] [--port 9080]
   aura do "natural-language goal" [--yes] [--port 9080]
   aura connect --openapi <url|file> [--name x] [--base-url y] [--header "K: V"]
@@ -148,6 +145,7 @@ Usage:
   aura approve <id> [--as <operator>] [--deny] [--port 9080]
   aura operator enroll|add|list|revoke|whoami <id> [--pubkey <b64>] [--port 9080]
   aura secret set|ls|rm <name> [value] [--port 9080]
+  aura token issue --capability <cap> [--label <l>] | ls | revoke <id>
   aura version`)
 }
 
@@ -211,6 +209,9 @@ func cmdUp(args []string) {
 	data := fs.String("data", defaultDataDir(), "data directory")
 	mode := fs.String("mode", "local", "security mode: local|site|published")
 	memBudget := fs.String("memory-budget", "", "R15 admission budget, e.g. 8Gi (empty = unlimited)")
+	eventLogMax := fs.String("event-log-max", "",
+		"cap the causal event log on disk, e.g. 20Gi (empty = keep everything; "+
+			"reclaimed oldest-first, and `aura why`/`aura replay` stop answering about reclaimed sessions)")
 	configPath := fs.String("config", "", "optional skill-config file (skill defaults, git-friendly) — see README.md")
 	policyPath := fs.String("policy", "", "authorization policy file (default: built-in permissive policy)")
 	maxSessions := fs.Int("max-sessions", 1000, "cap on concurrent live sessions (0 = unlimited)")
@@ -234,6 +235,13 @@ func cmdUp(args []string) {
 		fatal(fmt.Errorf("--memory-budget: %w", err))
 	}
 
+	// Same parser as --memory-budget: two size flags that accepted two different
+	// spellings of "8Gi" would be a papercut nobody should have to discover.
+	eventLogMaxBytes, err := gateway.ParseMemory(*eventLogMax)
+	if err != nil {
+		fatal(fmt.Errorf("--event-log-max: %w", err))
+	}
+
 	configFile, err := config.Load(*configPath)
 	if err != nil {
 		fatal(fmt.Errorf("--config: %w", err))
@@ -254,111 +262,23 @@ func cmdUp(args []string) {
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	node, err := identity.Load(*data, identity.Mode(*mode))
+	// One construction, shared with `aura guard --standalone`. See node.go.
+	n, err := buildNode(nodeOptions{
+		DataDir: *data, Port: *port, Mode: *mode, PolicyPath: *policyPath,
+		NoAuth: *noAuth, OpenWitness: *openWitness, TLS: *tlsCert != "",
+		AllowedOrigins: allowOrigins, TrustedProxy: *tlsCert == "" && public,
+		MemoryBudget: budgetBytes, EventLogMaxBytes: eventLogMaxBytes,
+		MaxSessions: *maxSessions, SkillConfig: configFile.Skills, Log: log,
+	})
 	if err != nil {
 		fatal(err)
 	}
-	st, err := store.Open(*data)
-	if err != nil {
-		fatal(err)
-	}
-	defer st.Close()
+	defer n.Close()
 
-	// The ledger is not optional. An attestation issued by a node that failed
-	// to open its own ledger would be worse than no ledger — it would be
-	// silently absent while everything else ran normally — so a failure here
-	// stops the node the same way a failed store.Open does.
-	ldg, err := ledger.Open(st, node.ID, node.Keys)
-	if err != nil {
-		fatal(fmt.Errorf("open effect ledger: %w", err))
-	}
-
-	// The wasm sandbox (Phase 3). Unlike the ledger this is allowed to fail
-	// soft: a node that cannot link WASI preview1 (should never happen on a
-	// supported platform, but the failure mode matters) still runs every
-	// other primitive fine — format:wasm skills simply cannot register,
-	// exactly like a node with --no-auth still runs without a token.
-	wasmRT, err := wasmrt.New(context.Background())
-	if err != nil {
-		log.Warn("wasm runtime unavailable — format:wasm skills cannot be hosted", "err", err)
-	}
-
-	// The token is minted before anything is served, so there is no window in
-	// which the node is reachable without one.
-	var auth *gateway.Auth
-	var token string
-	var tokenCreated bool
-	if !*noAuth {
-		token, tokenCreated, err = gateway.LoadOrCreateToken(*data)
-		if err != nil {
-			fatal(err)
-		}
-		auth = &gateway.Auth{
-			Token:          token,
-			AllowedOrigins: allowOrigins,
-			TrustedProxy:   *tlsCert == "" && public,
-			OpenWitness:    *openWitness,
-		}
-	}
-
-	scheme := "http"
-	wsScheme := "ws"
-	if *tlsCert != "" {
-		scheme, wsScheme = "https", "wss"
-	}
-
-	// The operator roster (C4 v1.3) and the credential broker. Both are read
-	// from the store the node already opened, so neither adds a service, a file
-	// or a flag to a default node — they are simply empty until used.
-	roster, err := approver.Load(st)
-	if err != nil {
-		fatal(fmt.Errorf("load operator roster: %w", err))
-	}
-	brk, err := broker.Open(st, node.Keys)
-	if err != nil {
-		fatal(fmt.Errorf("open credential broker: %w", err))
-	}
-
-	// Refused at startup rather than at the first gated effect. A node that
-	// requires signed approval with nobody enrolled can answer no gate at all,
-	// so it would come up healthy and then deny its first write minutes later,
-	// with the cause several layers away from the symptom.
-	if policy.SignedApprovalRequired() && roster.Empty() {
-		fatal(fmt.Errorf("policy %s sets require_signed_approval but no operator is enrolled — "+
-			"nobody could answer a gate, so every gated effect would be denied; "+
-			"enrol someone with `aura operator enroll <id>`", policy.Source()))
-	}
-
-	reg := registry.New()
-	mgr := executor.NewManager(reg, st, string(node.Mode), policy, ldg, log)
-	mgr.SetMaxSessions(*maxSessions)
-	mgr.SetApprovers(roster)
-	proj := projection.NewManager(
-		fmt.Sprintf("%s://localhost:%d/ws/skill", wsScheme, *port), log)
-	proj.Token = token
-	proj.Secrets = brk
-	adm := gateway.NewAdmission(budgetBytes)
-	// One approval queue, shared: the MCP server parks gates in it and the
-	// /v1/approvals routes answer them. Without a shared instance a gate raised
-	// over MCP would be invisible to the surface meant to resolve it.
-	appr := approvals.New()
-	mcp := &mcpsrv.Server{
-		BaseURL: fmt.Sprintf("%s://localhost:%d", scheme, *port),
-		Version: version, Token: token, Log: log, Approvals: appr,
-		NodeID: node.ID,
-	}
-	gw := &gateway.Gateway{Node: node, Reg: reg, St: st, Mgr: mgr, Proj: proj,
-		Adm: adm, Ldg: ldg, Wasm: wasmRT, MCP: mcp.Handler(), Log: log, Auth: auth,
-		Approvals: appr, Broker: brk,
-		// Every node with an identity can witness for others (C4 v1.2). It
-		// costs nothing when unused and means a two-node deployment already
-		// has somewhere to anchor, rather than needing a service nobody has
-		// stood up yet — which is how external anchoring usually dies.
-		Wit: witnessService(st, node, *openWitness, log),
-		// Typed ports made enforceable: a grammar per port schema, so a skill
-		// that generates cannot emit a shape the port would reject.
-		Grammars:   grammar.NewRegistry(),
-		ConfigFile: configFile.Skills}
+	node, st, ldg, policy := n.Identity, n.Store, n.Ledger, n.Policy
+	token, tokenCreated := n.Token, n.Created
+	scheme, wsScheme := n.scheme, n.wsScheme
+	gw := n.Gateway
 
 	// WebTransport, beside the TCP listener rather than instead of it.
 	//
@@ -377,8 +297,12 @@ func cmdUp(args []string) {
 		DataDir: *data,
 		Log:     log,
 		Routes: map[string]wtsrv.Handler{
-			"/ws/skill": func(_ context.Context, s *wtsrv.Session, _ *http.Request) {
-				gw.ServeSkill(s)
+			// Authenticated through the gateway, not served straight: this
+			// listener never passes through the HTTP middleware, so without
+			// it a skill reaching the node over QUIC would register with no
+			// credential on a node whose TCP path demands one.
+			"/ws/skill": func(_ context.Context, s *wtsrv.Session, r *http.Request) {
+				gw.ServeSkillOver(s, r)
 			},
 		},
 	}
@@ -427,7 +351,8 @@ func cmdUp(args []string) {
 		scheme: scheme, wsScheme: wsScheme, data: *data,
 		budget: budgetBytes, policy: policy, ldg: ldg, token: token,
 		tokenCreated: tokenCreated, public: public, tls: *tlsCert != "",
-		quic: quicEndpoint(wt),
+		quic:  quicEndpoint(wt),
+		evlog: st.EventLogStats(), eventLogMax: eventLogMaxBytes,
 	})
 
 	srv := &http.Server{
@@ -457,6 +382,8 @@ type bannerInfo struct {
 	budget       int64
 	policy       *executor.Policy
 	ldg          *ledger.Ledger
+	evlog        seglog.Stats
+	eventLogMax  int64
 	token        string
 	tokenCreated bool
 	public       bool
@@ -488,6 +415,32 @@ func printBanner(b bannerInfo) {
 		if sum, err := b.ldg.Summarize(); err == nil {
 			fmt.Printf("  ledger    %d effect(s) sealed · %d checkpoint(s) · key %s\n",
 				sum.Entries, sum.Checkpoints, ledger.Fingerprint(sum.NodePubkey))
+		}
+		// Which of the two bad outcomes this node prefers when it cannot seal.
+		// Printed rather than left in the policy file because the weaker stance
+		// is the default: an operator who has never thought about it should at
+		// least have been told, once, that their ledger's completeness is
+		// best-effort.
+		if b.policy.SealFailureRefuses() {
+			fmt.Printf("            unsealable effects are REFUSED (on_seal_failure: refuse)\n")
+		} else {
+			fmt.Printf("            unsealable effects are delivered and logged " +
+				"(on_seal_failure: deliver)\n")
+		}
+	}
+
+	// How large the replayable history has grown, and whether it is bounded.
+	// An operator cannot decide about --event-log-max without this number, and
+	// a node that never mentions it is one whose disk fills up silently.
+	if b.evlog.Segments > 0 {
+		bounded := "unbounded (--event-log-max to cap)"
+		if b.eventLogMax > 0 {
+			bounded = "cap " + gateway.FormatBytes(b.eventLogMax)
+		}
+		fmt.Printf("  events    %s across %d segment(s) · %s\n",
+			gateway.FormatBytes(b.evlog.Bytes), b.evlog.Segments, bounded)
+		for _, d := range b.evlog.Damage {
+			fmt.Printf("            !! %s\n", d)
 		}
 	}
 

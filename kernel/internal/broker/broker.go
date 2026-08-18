@@ -227,6 +227,25 @@ func (b *Broker) Resolve(receipt, capability string, names []string) (*Grant, er
 		return nil, fmt.Errorf("effect %d was %s, not delivered — a refused effect buys nothing",
 			e.Seq, e.Outcome)
 	}
+	// A waived effect is one the *graph* excused from the gate, not one the node
+	// decided needed no supervision. Both seal a `delivered` entry, and without
+	// this check the difference would not matter: anyone able to register a
+	// graph could set `"gate": "none"` on an edge into a capability, take the
+	// receipt that comes back, and spend it here. The credential would then be
+	// released against an authorization its own holder wrote.
+	//
+	// Refusing it is what keeps a waiver worth exactly what it claims to be —
+	// less friction on a path an operator already decided is routine — rather
+	// than a way to mint authorization. A skill that genuinely needs a
+	// credential asks for a policy that says `allow` for its capability, which
+	// is a decision recorded in a document an auditor can read, or it accepts
+	// the gate.
+	if e.Waived {
+		return nil, fmt.Errorf("effect %d was excused from its gate by the graph, not by policy — "+
+			"a credential is released against the node's authorization, never against a graph's "+
+			"own waiver (give %q an explicit allow rule if it should act unattended)",
+			e.Seq, e.Capability)
+	}
 	// Bind the credential to the capability the ledger says acted. Without
 	// this, any skill that ever produced one sealed effect could redeem it for
 	// the payment credential.

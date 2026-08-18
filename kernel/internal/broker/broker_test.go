@@ -272,3 +272,67 @@ func TestMissingSecretIsNamedNotGuessed(t *testing.T) {
 		t.Errorf("a missing secret should be named in the error, got: %v", err)
 	}
 }
+
+// A graph is a JSON document anyone able to reach /v1/graphs can register, so
+// `"gate": "none"` on a motor edge is an authorization written by whoever wrote
+// the graph. Under the built-in default policy that waiver is honoured — which
+// is right, a laptop node should be able to run its own seeded voice graph — and
+// it seals a perfectly valid `delivered` entry.
+//
+// That entry must not buy a credential. Otherwise the broker's whole argument
+// inverts: instead of "skipping the gate gets you a 401", registering a graph
+// that skips the gate would get you the secret, and the strength claimed to come
+// from the ledger would come from nothing.
+func TestAWaivedEffectBuysNothing(t *testing.T) {
+	b, _, ldg := testBroker(t)
+	if err := b.Set("erp_token", "s3cr3t"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	receipt, err := ldg.Seal(ledger.SealRequest{
+		Session: "sess-waived", Envelope: "env-1", Cause: "cause-1",
+		Actor: "acme/motor/erp@1.0.0", Capability: "motor.erp.write",
+		// Everything a genuine, spendable receipt has...
+		Decision: spec.DecisionAllow, Outcome: spec.OutcomeDelivered,
+		Policy: "sha256:policy", Payload: []byte(`{"amount":1}`),
+		// ...except that the graph, not the node, is why there was no gate.
+		Waived: true,
+	})
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+
+	grant, err := b.Resolve(receipt, "motor.erp.write", []string{"erp_token"})
+	if err == nil {
+		t.Fatalf("a graph waived its own gate and was handed %v", grant.Values)
+	}
+	if !strings.Contains(err.Error(), "graph") {
+		t.Errorf("the refusal should say a graph waiver is what was refused; got: %v", err)
+	}
+}
+
+// The other half of the same rule: an effect the *policy* allowed is spendable.
+// If this failed, the fix above would have closed the hole by breaking the
+// feature, which is not closing it.
+func TestAPolicyAllowedEffectStillBuysTheSecret(t *testing.T) {
+	b, _, ldg := testBroker(t)
+	if err := b.Set("erp_token", "s3cr3t"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	receipt, err := ldg.Seal(ledger.SealRequest{
+		Session: "sess-allowed", Envelope: "env-1", Cause: "cause-1",
+		Actor: "acme/motor/erp@1.0.0", Capability: "motor.erp.write",
+		Decision: spec.DecisionAllow, Outcome: spec.OutcomeDelivered,
+		Policy: "sha256:policy", Payload: []byte(`{"amount":1}`),
+	})
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	grant, err := b.Resolve(receipt, "motor.erp.write", []string{"erp_token"})
+	if err != nil {
+		t.Fatalf("a policy-allowed effect was refused its credential: %v", err)
+	}
+	if grant.Values["erp_token"] != "s3cr3t" {
+		t.Errorf("got %q, want the stored secret", grant.Values["erp_token"])
+	}
+}
