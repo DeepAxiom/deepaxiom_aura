@@ -494,6 +494,14 @@ jobs:
       - name: generated constants match spec/
         run: python scripts/gen_ssot.py --check
 
+      # The control plane documents every command, contract, schema and enum.
+      # None of it is typed by hand, and this is what keeps that true: the
+      # generator also fails when the binary offers a command GUIDE.md never
+      # documents, so "the reference is complete" is a checked claim rather
+      # than an intention.
+      - name: the UI reference matches GUIDE.md and spec/
+        run: python scripts/gen_ui_reference.py --check
+
   cross-compile:
     name: binary (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest

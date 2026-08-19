@@ -1,4 +1,12 @@
-import type { Envelope, GraphIR, Health, Projection, SkillConfig, SkillManifest } from "./types";
+import type {
+  Envelope,
+  GraphIR,
+  Health,
+  Projection,
+  SessionMeta,
+  SkillConfig,
+  SkillManifest,
+} from "./types";
 
 /** REST client for the kernel API (same origin — the UI ships in the binary). */
 
@@ -87,6 +95,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(ir),
     }).then((r) => json<{ graph_id: string }>(r)),
+
+  sessions: () =>
+    call("/v1/sessions")
+      .then((r) => json<{ sessions: SessionMeta[] | null }>(r))
+      .then((s) => s.sessions ?? []),
 
   sessionEvents: (id: string) =>
     call(`/v1/sessions/${encodeURIComponent(id)}/events`)

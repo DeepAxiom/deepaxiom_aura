@@ -433,6 +433,8 @@ Everything here is about proving, afterwards, what a node did — see
 | `aura bundle <session> [--out <file>] [--data <dir>]` | Assemble one session's audit bundle: trajectory, a verifiable receipt per sealed effect, and the model configurations behind them. |
 | `aura bundle --verify <file>` | Check a bundle with no database, no node and no network. |
 | `aura bom [session] [--out <file>] [--data <dir>]` | CycloneDX 1.6 ML-BOM of the models and skills that actually ran, built from the ledger rather than from configuration. |
+| `aura audit [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out <file>] [--data <dir>]` | The report an auditor asks for, over the period they ask about: what acted, who authorized it, under which policy — with counts, a breakdown per capability and per signing operator, and a portable receipt per gated effect. See [Period audit reports](#audit-bundles). |
+| `aura audit --verify <file>` | Check a period report with no database, no node and no network. |
 
 ### Talking to graphs
 
@@ -503,6 +505,9 @@ Flags must precede the positional message — `aura chat --graph echo "test"`, n
 | `aura secret set <name> [value] [--port 9080]` | Store a credential in the kernel, encrypted with the node identity key. Reads stdin when the value is omitted, keeping it out of shell history and the process table. |
 | `aura secret ls [--port 9080]` | List configured secret **names**. There is no command, and no route, that returns a value. |
 | `aura secret rm <name> [--port 9080]` | Forget one. |
+| `aura token issue --capability <cap> [--label <l>] [--port 9080]` | Mint a scoped credential that may connect, register as *that* capability and spend the receipts it is handed — and cannot register a graph, read the ledger or enrol an approver. See [The credential broker](#the-credential-broker). |
+| `aura token ls [--port 9080]` | List issued tokens by id, capability and label. Never the token itself: it is shown once, at issue. |
+| `aura token revoke <id> [--port 9080]` | Revoke one. Effects it already sealed stay valid — revocation stops future use, it does not rewrite history. |
 
 Reference a stored secret as `${secret:<name>}` in a projection header or
 connector spec; it is resolved at call time against the receipt of the effect

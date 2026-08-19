@@ -7,7 +7,8 @@
     "graphs": "Grafos",
     "sessions": "Sesiones",
     "voice": "Voz",
-    "canvas": "Lienzo"
+    "canvas": "Lienzo",
+    "reference": "Referencia"
   },
   "topbar": {
     "connected": "nodo {{node}} · modo {{mode}} · protocolo {{protocol}}",
@@ -182,6 +183,30 @@
       "priority": "Prioridad",
       "priorityHelp": "El más alto gana cuando dos cadenas compiten por el mismo skill.",
       "delete": "Eliminar"
+    },
+    "live": {
+      "title": "Corriendo ahora",
+      "following": "Siguiendo",
+      "paused": "En pausa",
+      "followHelp": "Mientras sigue, el lienzo consulta al nodo y abre un grafo que aparezca sin que esta UI lo haya registrado — un grafo del planner con `aura do`, o uno que trajo un peer federado.",
+      "empty": "Todavía no hay ningún grafo registrado en este nodo.",
+      "neverRan": "nunca ejecutado",
+      "n": "{{count}} en vivo",
+      "meta": "{{events}} eventos · hace {{when}}"
+    }
+  },
+  "reference": {
+    "search": "Buscar en todo…",
+    "noMatch": "Nada coincide con esa búsqueda.",
+    "onThisPage": "En esta página",
+    "default": "por defecto",
+    "undocumented": "El binario ofrece comandos que la guía no documenta: {{list}}. Ejecuta scripts/gen_ui_reference.py después de documentarlos.",
+    "enumsLead": "Las enumeraciones de los contratos, desde spec/enums.yaml — el mismo archivo del que se generan las constantes Go del kernel, las tuplas de Python y las uniones TypeScript del SDK. Lo que aparece aquí es lo que el kernel acepta.",
+    "tab": {
+      "commands": "Comandos",
+      "contracts": "Contratos",
+      "schemas": "Esquemas",
+      "enums": "Enumeraciones"
     }
   }
 }

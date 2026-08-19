@@ -202,3 +202,62 @@
 }
 .ir-drawer__head span:first-child { flex: 1; color: var(--text-dim); }
 .ir-drawer__text { flex: 1; border: none; border-radius: 0; resize: none; }
+
+/* ── live rail ───────────────────────────────────────────────────── */
+.rail {
+  width: 216px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); background: var(--bg-raised); min-height: 0;
+}
+.rail__head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.rail__title {
+  flex: 1; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--text-faint);
+}
+.rail__follow {
+  display: flex; align-items: center; gap: 6px; font-size: 10.5px;
+  color: var(--text-faint); padding: 3px 7px; border-radius: 10px;
+  border: 1px solid var(--border); transition: color 0.12s, border-color 0.12s;
+}
+.rail__follow--on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.rail__pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
+.rail__follow--on .rail__pulse { background: var(--ok); }
+.rail__pulse--beating { animation: rail-pulse 1.6s ease-in-out infinite; }
+@keyframes rail-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.72); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail__pulse--beating { animation: none; }
+}
+.rail__list { flex: 1; overflow-y: auto; padding: 6px; }
+.rail__empty, .rail__error { font-size: 11.5px; padding: 12px; line-height: 1.5; }
+.rail__empty { color: var(--text-faint); }
+.rail__error { color: var(--err); }
+.rail__row {
+  display: grid; grid-template-columns: 8px 1fr auto; gap: 3px 7px;
+  width: 100%; text-align: left; padding: 7px 9px; border-radius: var(--radius-sm);
+  transition: background 0.12s;
+}
+.rail__row:hover { background: var(--bg-hover); }
+.rail__row--open { background: var(--accent-soft); }
+.rail__dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong);
+  grid-row: span 2; align-self: start; margin-top: 4px;
+}
+.rail__dot--live { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.rail__id {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rail__badge {
+  font-size: 9.5px; color: var(--ok); background: var(--ok-soft);
+  border-radius: 8px; padding: 0 6px; align-self: center;
+}
+.rail__meta { grid-column: 2; font-size: 10px; color: var(--text-faint); }
+.rail__errors {
+  grid-column: 3; grid-row: 2; font-size: 9.5px; color: var(--err);
+  background: var(--err-soft); border-radius: 8px; padding: 0 5px;
+}

@@ -1,15 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Envelope } from "../api/types";
-
-interface SessionMeta {
-  session_id: string;
-  graph_id: string;
-  started: number;
-  ended?: number;
-  events: number;
-  errors: number;
-}
+import { api } from "../api/client";
+import type { Envelope, SessionMeta } from "../api/types";
 
 export function SessionsView() {
   const { t } = useTranslation();
@@ -19,9 +11,9 @@ export function SessionsView() {
   const [error, setError] = useState("");
 
   const load = useCallback(() => {
-    fetch("/v1/sessions")
-      .then((r) => r.json())
-      .then((j) => setSessions(j.sessions ?? []))
+    api
+      .sessions()
+      .then(setSessions)
       .catch((e) => setError((e as Error).message));
   }, []);
 
@@ -36,9 +28,8 @@ export function SessionsView() {
     setSelected(id);
     setEvents(null);
     try {
-      const r = await fetch(`/v1/sessions/${encodeURIComponent(id)}/events`);
-      const j = await r.json();
-      setEvents(j.events ?? []);
+      const { events } = await api.sessionEvents(id);
+      setEvents(events ?? []);
     } catch (e) {
       setError((e as Error).message);
     }

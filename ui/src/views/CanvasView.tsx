@@ -25,6 +25,8 @@ import { api } from "../api/client";
 import type { GraphIR, SkillManifest } from "../api/types";
 import { GraphNode } from "../components/canvas/GraphNode";
 import { Inspector } from "../components/canvas/Inspector";
+import { LiveRail } from "../components/canvas/LiveRail";
+import { useLiveGraphs } from "../hooks/useLiveGraphs";
 import {
   type CanvasEdge,
   type CanvasGraph,
@@ -69,8 +71,8 @@ export function CanvasView() {
   const surfaceRef = useRef<HTMLDivElement>(null);
 
   const [skills, setSkills] = useState<SkillManifest[]>([]);
-  const [graphIds, setGraphIds] = useState<string[]>([]);
   const [mode, setMode] = useState("local");
+  const [following, setFollowing] = useState(true);
   const [graph, setGraph] = useState<CanvasGraph>(EMPTY_GRAPH);
   const [view, setView] = useState<Viewport>({ x: 0, y: 0, k: 1 });
   const [sel, setSel] = useState<Selection>(null);
@@ -89,11 +91,23 @@ export function CanvasView() {
     | null
   >(null);
 
+  // What the node is running, whether or not this UI put it there.
+  const live = useLiveGraphs(following);
+
   useEffect(() => {
     api.skills().then(setSkills).catch(() => setSkills([]));
-    api.graphs().then(setGraphIds).catch(() => setGraphIds([]));
     api.health().then((h) => setMode(h.mode)).catch(() => undefined);
   }, []);
+
+  // The catalogue gains skills as they connect, so the palette has to keep
+  // looking rather than reading once at mount.
+  useEffect(() => {
+    if (!following) return;
+    const timer = setInterval(() => {
+      api.skills().then(setSkills).catch(() => undefined);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [following]);
 
   /* ── coordinates ───────────────────────────────────────────────── */
 
@@ -315,7 +329,7 @@ export function CanvasView() {
 
   /* ── load / save ───────────────────────────────────────────────── */
 
-  const load = async (id: string) => {
+  const load = useCallback(async (id: string) => {
     try {
       const ir = await api.graph(id);
       setGraph(fromIR(ir));
@@ -324,7 +338,21 @@ export function CanvasView() {
     } catch (e) {
       setStatus({ kind: "err", text: (e as Error).message });
     }
-  };
+  }, []);
+
+  // A graph can appear without anyone drawing it: `aura do` compiles one from a
+  // sentence, a federated peer brings its own, a webhook route instantiates one
+  // on first request. While following, the canvas shows it rather than leaving
+  // the operator to notice a new row and click it.
+  //
+  // Guarded on a clean slate: following must never discard work in progress, so
+  // a graph that appears while the author has an unregistered drawing open is
+  // listed in the rail and waits to be clicked.
+  const drawing = graph.edges.length > 0 || graph.nodes.some((n) => !n.isClient);
+  useEffect(() => {
+    if (!following || !live.appeared.length || drawing) return;
+    void load(live.appeared[live.appeared.length - 1]);
+  }, [following, live.appeared, drawing, load]);
 
   const register = async () => {
     const blocking = findings.filter((f) => f.severity === "error");
@@ -336,7 +364,7 @@ export function CanvasView() {
       const res = await api.registerGraph(toIR(graph));
       savePositions(graph.graphId, graph.nodes);
       setStatus({ kind: "ok", text: t("canvas.status.registered", { id: res.graph_id }) });
-      api.graphs().then(setGraphIds).catch(() => undefined);
+      live.refresh();
     } catch (e) {
       setStatus({ kind: "err", text: (e as Error).message });
     }
@@ -384,7 +412,7 @@ export function CanvasView() {
         />
         <select className="select canvas-bar__open" value="" onChange={(e) => e.target.value && load(e.target.value)}>
           <option value="">{t("canvas.open")}</option>
-          {graphIds.map((id) => (
+          {live.graphs.map((id) => (
             <option key={id} value={id}>
               {id}
             </option>
@@ -443,6 +471,15 @@ export function CanvasView() {
             ))}
           </div>
         </aside>
+
+        <LiveRail
+          activity={live.activity}
+          openId={graph.graphId}
+          following={following}
+          error={live.error}
+          onToggleFollow={() => setFollowing((f) => !f)}
+          onOpen={load}
+        />
 
         <div
           className="canvas-surface"

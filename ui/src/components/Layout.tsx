@@ -3,7 +3,18 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import type { Health } from "../api/types";
 import { LANGUAGES, setLanguage } from "../i18n";
-import { IconBolt, IconCanvas, IconChat, IconGraph, IconMic, IconGrid, IconList, IconLogo, IconPlug } from "./Icons";
+import {
+  IconBolt,
+  IconBook,
+  IconCanvas,
+  IconChat,
+  IconGraph,
+  IconGrid,
+  IconList,
+  IconLogo,
+  IconMic,
+  IconPlug,
+} from "./Icons";
 
 export type ViewId =
   | "chat"
@@ -13,7 +24,8 @@ export type ViewId =
   | "skills"
   | "projections"
   | "graphs"
-  | "sessions";
+  | "sessions"
+  | "reference";
 
 const NAV: { id: ViewId; icon: (p: { size?: number }) => React.ReactNode }[] = [
   { id: "chat", icon: IconChat },
@@ -24,6 +36,7 @@ const NAV: { id: ViewId; icon: (p: { size?: number }) => React.ReactNode }[] = [
   { id: "projections", icon: IconPlug },
   { id: "graphs", icon: IconGraph },
   { id: "sessions", icon: IconList },
+  { id: "reference", icon: IconBook },
 ];
 
 export function Sidebar({ view, onNavigate }: { view: ViewId; onNavigate: (v: ViewId) => void }) {

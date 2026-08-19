@@ -62,6 +62,13 @@ export const IconCanvas = (p: P) => (
   </S>
 );
 
+/** An open book — the reference. */
+export const IconBook = (p: P) => (
+  <S {...p}>
+    <path d="M12 6.5V21M12 6.5C12 6.5 10 4 6 4H3v14h3c4 0 6 2.5 6 2.5M12 6.5C12 6.5 14 4 18 4h3v14h-3c-4 0-6 2.5-6 2.5" />
+  </S>
+);
+
 export const IconList = (p: P) => (
   <S {...p}>
     <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />

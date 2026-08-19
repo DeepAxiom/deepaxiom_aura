@@ -5,6 +5,7 @@ import { ChatView } from "./views/ChatView";
 import { GraphsView } from "./views/GraphsView";
 import { OperateView } from "./views/OperateView";
 import { ProjectionsView } from "./views/ProjectionsView";
+import { ReferenceView } from "./views/ReferenceView";
 import { SessionsView } from "./views/SessionsView";
 import { SkillsView } from "./views/SkillsView";
 import { VoiceView } from "./views/VoiceView";
@@ -18,6 +19,7 @@ const VIEWS: Record<ViewId, () => React.ReactNode> = {
   projections: ProjectionsView,
   graphs: GraphsView,
   sessions: SessionsView,
+  reference: ReferenceView,
 };
 
 export default function App() {

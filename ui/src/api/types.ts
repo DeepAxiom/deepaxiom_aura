@@ -102,6 +102,22 @@ export interface Projection {
   ops: ProjectionOp[];
 }
 
+/**
+ * GET /v1/sessions — one row per session, newest first.
+ *
+ * `ended` is 0 (omitted) while the session is still running, which is what
+ * makes this list the answer to "what is live right now" as well as "what has
+ * run": a graph with an unended session is a graph currently connected.
+ */
+export interface SessionMeta {
+  session_id: string;
+  graph_id: string;
+  started: number;
+  ended?: number;
+  events: number;
+  errors: number;
+}
+
 export interface Health {
   ok: boolean;
   node: string;

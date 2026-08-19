@@ -7,7 +7,8 @@
     "graphs": "Graphs",
     "sessions": "Sessions",
     "voice": "Voice",
-    "canvas": "Canvas"
+    "canvas": "Canvas",
+    "reference": "Reference"
   },
   "topbar": {
     "connected": "node {{node}} · {{mode}} mode · protocol {{protocol}}",
@@ -182,6 +183,30 @@
       "priority": "Priority",
       "priorityHelp": "Higher wins when two chains contend for the same skill.",
       "delete": "Delete"
+    },
+    "live": {
+      "title": "Running now",
+      "following": "Following",
+      "paused": "Paused",
+      "followHelp": "While following, the canvas polls the node and opens a graph that appears without this UI registering it — a planner graph from `aura do`, or one a federated peer brought.",
+      "empty": "No graph registered on this node yet.",
+      "neverRan": "never run",
+      "n": "{{count}} live",
+      "meta": "{{events}} events · {{when}} ago"
+    }
+  },
+  "reference": {
+    "search": "Search everything…",
+    "noMatch": "Nothing matches that search.",
+    "onThisPage": "On this page",
+    "default": "default",
+    "undocumented": "The binary offers commands the guide does not document: {{list}}. Run scripts/gen_ui_reference.py after documenting them.",
+    "enumsLead": "The contract enumerations, from spec/enums.yaml — the same file the kernel's Go constants, the Python tuples and the SDK's TypeScript unions are generated from. What is listed here is what the kernel accepts.",
+    "tab": {
+      "commands": "Commands",
+      "contracts": "Contracts",
+      "schemas": "Schemas",
+      "enums": "Enumerations"
     }
   }
 }
