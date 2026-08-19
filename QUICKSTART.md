@@ -41,6 +41,12 @@ this terminal running.
 skills are separate processes that connect *to* it. Nothing will run until one
 does.
 
+It does ship four graphs — `echo`, `chat`, `plan` and `voice` — so there is
+something to point a skill at on the first run. That is why the Canvas view has
+rows in its rail before you have drawn anything, and why the command in step 3
+names `echo` without registering it first. Graphs are seeded; the catalogue of
+skills is not.
+
 ```bash
 cd skills/echo
 PYTHONPATH=../../sdk/python/src python main.py
@@ -63,8 +69,19 @@ Leave this terminal running too.
 ```
 
 ```
+{"ir":"1","ledger":{"entries":0,"checkpoints":0,"node_pubkey":"WbdYKmKq..."},
+ "mode":"local","node":"node-7756537dd0bc60ef","ok":true,"protocol":"1"}
 skills connected: 1
   · example/logical/echo                     logical    logical.echo
+```
+
+The JSON line is `/healthz` verbatim; the list under it needs your token, which
+is why `status` prints one and then the other. For "is it up" alone — a probe, a
+CI step, a shell loop — use `aura ready`, which needs no credential and answers
+with an exit code:
+
+```bash
+./kernel/aura ready        # exit 0 once the store, ledger and registry are usable
 ```
 
 ```bash

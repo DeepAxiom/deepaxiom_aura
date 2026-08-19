@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import type { Health } from "../api/types";
 import { LANGUAGES, setLanguage } from "../i18n";
+import { SPEC_VERSION } from "../reference/generated";
 import {
   IconBolt,
   IconBook,
@@ -93,7 +94,15 @@ export function TopBar() {
         ? t("topbar.connected", { node: health.node, mode: health.mode, protocol: health.protocol })
         : t("topbar.disconnected")}
       <span className="topbar__spacer" />
-      <code>v0.1.0-h1</code>
+      {/*
+        From spec/VERSION, via the generated reference — not a literal.
+        It was hand-written as `v0.1.0-h1` and never updated, so it sat in the
+        corner of every screen claiming a version the node had long since left
+        behind: `aura version` and the Reference tab both said 0.3.0. Two places
+        on one screen disagreed, which is what a hand-written version string
+        eventually always does.
+      */}
+      <code>v{SPEC_VERSION}</code>
     </header>
   );
 }

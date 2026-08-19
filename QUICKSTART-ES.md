@@ -41,6 +41,12 @@ terminal corriendo.
 ningún skill: los skills son procesos aparte que se conectan *a* él. No va a
 correr nada hasta que uno lo haga.
 
+Sí trae cuatro grafos — `echo`, `chat`, `plan` y `voice` — para que haya algo a
+lo que apuntar un skill en el primer arranque. Por eso la vista Lienzo tiene
+filas en su rail antes de que hayas dibujado nada, y por eso el comando del paso
+3 nombra `echo` sin registrarlo antes. Los grafos vienen sembrados; el catálogo
+de skills no.
+
 ```bash
 cd skills/echo
 PYTHONPATH=../../sdk/python/src python main.py
@@ -64,8 +70,19 @@ Deja esta terminal corriendo también.
 ```
 
 ```
+{"ir":"1","ledger":{"entries":0,"checkpoints":0,"node_pubkey":"WbdYKmKq..."},
+ "mode":"local","node":"node-7756537dd0bc60ef","ok":true,"protocol":"1"}
 skills connected: 1
   · example/logical/echo                     logical    logical.echo
+```
+
+La línea JSON es `/healthz` tal cual; la lista de abajo necesita tu token, por eso
+`status` imprime primero una y luego la otra. Para saber solo si está arriba — una
+sonda, un paso de CI, un bucle de shell — usa `aura ready`, que no necesita
+credencial y responde con un código de salida:
+
+```bash
+./kernel/aura ready        # sale 0 cuando el store, el ledger y el registro son usables
 ```
 
 ```bash

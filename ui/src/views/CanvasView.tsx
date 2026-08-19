@@ -10,7 +10,7 @@
  * Deliberately built without a graph library. react-flow and its peers are
  * 100–200 kB of dependency for pan, zoom, drag and bezier edges; this UI is
  * compiled into the kernel binary by `go:embed`, so every kilobyte here is a
- * kilobyte in a 26 MB executable that ships as one file. The interactions
+ * kilobyte in an 18.6 MB executable that ships as one file. The interactions
  * below are a few hundred lines of pointer maths, and they owe nobody a
  * major-version migration.
  *

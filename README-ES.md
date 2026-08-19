@@ -409,10 +409,12 @@ go build -o aura ./cmd/aura     # Go 1.25+, sin CGO, sin servicios externos
 ./aura up                       # kernel, UI, store de estado, ledger, cliente de witness
 ```
 
-Un binario, 23 MB. Sin cuenta, sin nube, sin Postgres, sin broker, sin clúster.
-`aura up` es el runtime completo y ningún skill: los skills son procesos aparte
-que se conectan *a* él, así que un nodo recién arrancado es un kernel funcionando
-con el catálogo vacío.
+Un binario, 18,6 MB — la compilación Linux stripped que viaja en el contenedor;
+un `go build` local sin stripping ronda los 26. Sin cuenta, sin nube, sin
+Postgres, sin broker, sin clúster. `aura up` es el runtime completo y ningún
+skill: los skills son procesos aparte que se conectan *a* él, así que un nodo
+recién arrancado es un kernel funcionando con el catálogo vacío y cuatro grafos
+sembrados — `echo`, `chat`, `plan` y `voice` — a los que apuntar uno.
 
 ```bash
 pip install -r skills/llm-chat/requirements.txt
