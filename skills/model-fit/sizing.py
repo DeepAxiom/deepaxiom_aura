@@ -31,10 +31,21 @@ BITS_PER_WEIGHT = {
 # itself. Scales with context, so it is computed rather than fixed.
 BASE_OVERHEAD_BYTES = 400 * 1024 * 1024
 
-# KV cache bytes per token, per billion parameters, at f16. A rough but stable
-# proxy: real cost depends on layer count and head dimensions, which the
-# catalogue does not carry and which do not vary enough to change a verdict.
-KV_BYTES_PER_TOKEN_PER_B = 128 * 1024
+# KV cache bytes per token, per billion parameters, at f16.
+#
+# A proxy, because the real cost depends on layer count, head dimensions and
+# how many KV heads are shared — none of which the catalogue carries. Every
+# model in it uses grouped-query attention, which is what makes a single
+# per-billion figure defensible at all: GQA shrinks the cache by the ratio of
+# query heads to KV heads, and the ratio is similar across the current
+# generation. It would be badly wrong for a pre-GQA model.
+#
+# Sanity check the constant against something known: a 7B at 8k context lands
+# near 1.4 GB, which is the region llama.cpp actually reports. An earlier
+# version of this file divided by a further 1000 and put that same figure at
+# 7.5 MB — three orders of magnitude low, which made the KV cache invisible and
+# every long-context verdict wrong in the optimistic direction.
+KV_BYTES_PER_TOKEN_PER_B = 24 * 1024
 
 # Memory bandwidth, GB/s, used to estimate tokens/sec. Generation is
 # bandwidth-bound, not compute-bound: every token reads the whole model.
@@ -84,9 +95,14 @@ def weights_bytes(params_b: float, quant: str) -> int:
     return int(params_b * 1e9 * bits / 8)
 
 
+def kv_bytes(params_b: float, context: int) -> int:
+    """The KV cache at this context length. Its own function so it is testable
+    against a figure a reader can check, rather than buried in a sum."""
+    return int(KV_BYTES_PER_TOKEN_PER_B * params_b * context)
+
+
 def required_bytes(params_b: float, quant: str, context: int) -> int:
-    kv = int(KV_BYTES_PER_TOKEN_PER_B * params_b * context / 1000)
-    return weights_bytes(params_b, quant) + kv + BASE_OVERHEAD_BYTES
+    return weights_bytes(params_b, quant) + kv_bytes(params_b, context) + BASE_OVERHEAD_BYTES
 
 
 def score(model_id: str, hw: dict, context: int = 8192) -> dict | None:

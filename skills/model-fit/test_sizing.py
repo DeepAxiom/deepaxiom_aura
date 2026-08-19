@@ -55,6 +55,25 @@ class Sizing(unittest.TestCase):
         long = sizing.required_bytes(7.0, "q4_k_m", 32768)
         self.assertGreater(long, short)
 
+    def test_kv_cache_is_the_right_order_of_magnitude(self):
+        """The check that would have caught a factor of a thousand.
+
+        A 7B at 8k context reports around 1.4 GB in llama.cpp. An earlier
+        version of sizing.py divided by an extra 1000 and produced 7.5 MB,
+        which made the KV cache invisible: every long-context verdict came out
+        optimistic and nothing failed.
+        """
+        kv = sizing.kv_bytes(7.0, 8192)
+        self.assertGreater(kv, 0.7e9, "a KV cache measured in megabytes is a bug, not an estimate")
+        self.assertLess(kv, 3.0e9)
+
+    def test_a_long_context_can_change_the_verdict(self):
+        """The point of sizing at all: the same model, two context lengths."""
+        hw = {"ram_bytes": 32 * sizing.GIB, "vram_bytes": 4 * sizing.GIB,
+              "gpus": [{"name": "GTX 1650", "vendor": "nvidia", "vram_bytes": 4 * sizing.GIB}]}
+        self.assertEqual(sizing.score("gemma-3-4b-it", hw, 8192)["verdict"], "fits")
+        self.assertEqual(sizing.score("gemma-3-4b-it", hw, 131072)["verdict"], "fits-on-cpu")
+
     def test_a_gpu_that_fits_is_placed_on_the_gpu(self):
         hw = {"ram_bytes": 32 * sizing.GIB, "vram_bytes": 24 * sizing.GIB,
               "gpus": [{"vendor": "nvidia", "vram_bytes": 24 * sizing.GIB}]}
