@@ -680,3 +680,133 @@ jobs:
       - name: always
         if: always()
         run: docker compose --profile demo down -v
+
+  authenticated:
+    name: the default node, with its auth on
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: kernel/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # This job exists because three separate credential bugs shipped and
+      # every lane stayed green: the Python SDK had no token support at all, so
+      # no skill could connect to a default node; the control plane's Sessions
+      # view called fetch() with no header and answered 401; and the planner's
+      # catalog fetch did the same, which broke `aura do` entirely.
+      #
+      # None of them could be caught here before, because every other
+      # integration job starts its node with --no-auth. That flag is the right
+      # default *for a test* — it removes a variable — and it also removed the
+      # only lane that exercises what an actual first-run node does. So this
+      # one starts a node the way `aura up` starts one, and drives the paths a
+      # person drives.
+      - name: build
+        working-directory: kernel
+        run: go build -o aura ./cmd/aura
+
+      - run: pip install --quiet pyyaml websockets
+
+      - name: start a node with its default auth
+        run: |
+          # No --no-auth, and no --data: the default directory is the one the
+          # CLI and both SDKs resolve a token from, and that agreement is half
+          # of what this job checks.
+          ./kernel/aura up --port 9080 > /tmp/node.log 2>&1 &
+          for i in $(seq 1 40); do
+            ./kernel/aura ready --port 9080 --quiet && break
+            sleep 1
+          done
+          ./kernel/aura ready --port 9080 || { echo "FAIL: never became ready"; cat /tmp/node.log; exit 1; }
+          test -f ~/.aura/node.token || { echo "FAIL: no token was written"; exit 1; }
+
+      - name: the control surface refuses an anonymous request
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9080/v1/skills)
+          [ "$code" = "401" ] || { echo "FAIL: /v1/skills answered $code with no token, want 401"; exit 1; }
+
+      # The bug that made the documented first run impossible: a skill started
+      # with no environment at all has to find the node's token by itself.
+      - name: a skill connects with no configuration whatsoever
+        run: |
+          ( cd skills/echo && PYTHONPATH=../../sdk/python/src python main.py > /tmp/echo.log 2>&1 & )
+          for i in $(seq 1 30); do
+            ./kernel/aura status --port 9080 2>/dev/null | grep -q logical.echo && break
+            sleep 1
+          done
+          ./kernel/aura status --port 9080 | grep -q logical.echo \
+            || { echo "FAIL: the skill never registered"; cat /tmp/echo.log; exit 1; }
+
+      - name: a session runs end to end
+        run: |
+          out=$(./kernel/aura chat --port 9080 --graph echo "authenticated hello")
+          echo "$out" | grep -q "authenticated hello" \
+            || { echo "FAIL: no reply came back, got: $out"; exit 1; }
+
+      # `aura do` is the natural-language path, and the planner behind it reads
+      # the catalogue over HTTP — which is exactly where its credential was
+      # missing.
+      - name: the planner can read the catalogue
+        run: |
+          ( cd skills/planner && PYTHONPATH=../../sdk/python/src python main.py > /tmp/planner.log 2>&1 & )
+          ( cd skills/model-fit && PYTHONPATH=../../sdk/python/src python main.py > /tmp/fit.log 2>&1 & )
+          for i in $(seq 1 30); do
+            ./kernel/aura status --port 9080 2>/dev/null | grep -q cognitive.planner && break
+            sleep 1
+          done
+          out=$(./kernel/aura do "rank which models fit on this machine" --yes --port 9080 2>&1)
+          # `if grep; then fail; fi` rather than `grep && { fail; }`: the second
+          # form returns grep's exit code, so on the *healthy* path — where the
+          # pattern is absent and grep returns 1 — the step itself fails under
+          # the shell's -e. A guard that goes red when nothing is wrong.
+          if echo "$out" | grep -qi "401\|could not reach kernel catalog"; then
+            echo "FAIL: the planner could not authenticate"
+            echo "$out"
+            exit 1
+          fi
+          echo "$out" | grep -q "runnable\|verdict" \
+            || { echo "FAIL: no ranking came back"; echo "$out"; cat /tmp/planner.log; exit 1; }
+
+      # Every route the control plane calls on load. A 401 here is the Sessions
+      # view bug, which shipped because nothing ever asked these questions of a
+      # node that wanted a token.
+      - name: every route the UI loads answers with the token
+        run: |
+          token=$(cat ~/.aura/node.token)
+          for path in /v1/skills /v1/graphs /v1/sessions /v1/projections /v1/approvals; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://localhost:9080$path")
+            [ "$code" = "200" ] || { echo "FAIL: $path answered $code with a valid token"; exit 1; }
+          done
+
+      - name: readiness is open, metrics are not
+        run: |
+          curl -fsS http://localhost:9080/readyz >/dev/null \
+            || { echo "FAIL: /readyz needs no credential and must answer"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9080/metrics)
+          [ "$code" = "401" ] || { echo "FAIL: /metrics answered $code without a token, want 401"; exit 1; }
+
+      - name: a skill reachable as an MCP tool, with auth
+        run: |
+          token=$(cat ~/.aura/node.token)
+          body=$(curl -s -X POST http://localhost:9080/mcp \
+            -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"sensorial_hardware_modelfit","arguments":{"action":"probe"}}}')
+          # No quotes in the pattern: MCP returns the skill's payload as a JSON
+          # string inside an SSE frame, so every quote in it arrives escaped.
+          # Asserting on '"cpu_cores"' fails against a response that contains
+          # it — which is what this assertion did until it was run.
+          echo "$body" | grep -q 'cpu_cores' \
+            || { echo "FAIL: the MCP call did not return a hardware probe"; echo "$body"; exit 1; }
+
+      - name: always
+        if: always()
+        run: |
+          pkill -f 'aura up' || true
+          pkill -f 'python main.py' || true
