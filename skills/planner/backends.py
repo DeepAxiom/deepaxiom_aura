@@ -21,6 +21,7 @@ import unicodedata
 import urllib.request
 from pathlib import Path
 
+from aura.models import active_model_path, active_record, models_dir
 from catalog import catalog_lines
 
 log = logging.getLogger("planner")
@@ -29,6 +30,51 @@ MODELS_DIR = Path.home() / ".aura" / "models"
 DEFAULT_FILE = os.getenv("AURA_MODEL_FILE", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
 
 _llm = None
+
+
+def resolve_model(config_model: str = "") -> str:
+    """Which GGUF the local backend loads, and why.
+
+    The same order `skills/llm-chat/models.py` uses, so the two skills are
+    configured the same way and a person only has to learn it once:
+
+    1. ``AURA_MODEL_PATH`` — an explicit override, honoured verbatim.
+    2. this skill's ``model`` config key — *this* skill's own choice, which is
+       what makes it possible to plan with one model and chat with another.
+    3. ``active.json`` — whatever `model-manager` marked active, the node-wide
+       default. Leaving the config key empty is how you say "follow the node".
+    4. the built-in default.
+
+    Each step falls through rather than failing when what it names is absent,
+    so a config pointing at a deleted model degrades instead of leaving
+    `aura do` with no local backend at all.
+    """
+    explicit = os.getenv("AURA_MODEL_PATH", "").strip()
+    if explicit:
+        log.info("model: %s (via AURA_MODEL_PATH)", explicit)
+        return explicit
+
+    directory = models_dir()
+
+    chosen = (config_model or "").strip()
+    if chosen:
+        candidate = directory / chosen
+        if candidate.is_file():
+            log.info("model: %s (via this skill's `model` config)", candidate)
+            return str(candidate)
+        log.warning("config names %r but it is not in %s — falling through", chosen, directory)
+
+    active = active_model_path(directory)
+    if active:
+        log.info("model: %s (via model-manager active.json)", active)
+        return str(active)
+    if active_record(directory):
+        log.warning("active.json names a model that is gone — falling through")
+
+    fallback = MODELS_DIR / DEFAULT_FILE
+    log.info("model: %s (built-in default)", fallback)
+    return str(fallback)
+
 
 
 def _words(text: str) -> set[str]:
@@ -91,7 +137,7 @@ def plan_local(goal: str, catalog: list[dict], config: dict) -> tuple[str, list[
     global _llm
     if _llm is None:
         from llama_cpp import Llama
-        path = os.getenv("AURA_MODEL_PATH") or str(MODELS_DIR / DEFAULT_FILE)
+        path = resolve_model(config.get("model", ""))
         log.info("loading local model %s ...", path)
         # n_ctx/n_gpu_layers are restart_required (see skill.yaml): read once
         # here, at first load, and baked into this process-lifetime singleton

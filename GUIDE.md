@@ -1416,38 +1416,57 @@ silent out-of-memory kill:
 ---
 
 
-### Choosing a model, end to end
+### Which model each skill uses, and how to change it
 
-Four steps, and the third is the one that used to be missing:
+Two skills load a model: **llm-chat** (the Chat view) and **planner** (the
+Operate view, and `aura do`). They are separate processes, so each answers the
+question separately — and both answer it the same way, in this order:
+
+| | Where it looks | What it means |
+|---|---|---|
+| 1 | `AURA_MODEL_PATH` | An explicit override, honoured verbatim. |
+| 2 | that skill's own `model` config key | **This skill's choice.** Set it to plan with one model and chat with another. |
+| 3 | `~/.aura/models/active.json` | The node-wide default, written by `model-manager set-active`. Leaving the config key empty is how a skill says "follow the node". |
+| 4 | the built-in default | `qwen2.5-1.5b-instruct-q4_k_m.gguf`, fetched on first use. |
+
+Each step falls through rather than failing, so a setting that names a deleted
+file degrades to the next answer instead of leaving the node without a chat
+skill.
+
+**To make both use the same model** — the common case — download one and mark
+it active, leaving both config keys empty:
 
 ```bash
-# 1 · what will run here at all
-aura do "rank which models fit on this machine" --yes
-
-# 2 · fetch one, through the gated motor skill
-#     {"action": "download", "model_id": "gemma-3-4b-it"}
-
-# 3 · name it as the one to use
-#     {"action": "set-active", "model": "gemma-3-4B-it-Q4_K_M.gguf"}
-
-# 4 · restart llm-chat; it now loads that file
+aura do "rank which models fit on this machine" --yes   # what will run here
+#   {"action": "download",   "model_id": "gemma-3-4b-it"}
+#   {"action": "set-active", "model": "gemma-3-4B-it-Q4_K_M.gguf"}
 ```
 
-`set-active` writes `~/.aura/models/active.json`, and `llm-chat` resolves its
-model in this order: `AURA_MODEL_PATH`, then its own `model` config key, then
-that file, then the built-in default. Each step is skipped rather than fatal
-when what it names is absent, so a pointer to a deleted model degrades to the
-next answer instead of leaving the node without a chat skill. Deleting the
-active model clears the pointer.
+**To give them different models**, set the `model` key on one of them — from
+the control plane's **Skills** view, or:
 
-**The record does not reach the planner yet.** `skills/planner`'s local backend
-still reads `AURA_MODEL_FILE` with its own default, so marking a model active
-changes what `llm-chat` loads and not what `aura do` reasons with. Worth knowing
-before you conclude the switch did nothing: it did, for half the system.
+```bash
+curl -X PUT "http://localhost:9080/v1/skills/config?id=example/cognitive/planner"   -H "Authorization: Bearer $(cat ~/.aura/node.token)"   -H 'Content-Type: application/json'   -d '{"model": "gemma-3-4B-it-Q4_K_M.gguf"}'
+```
 
-**And both load their own copy.** They are separate processes, so a 4B model
-marked active is roughly 2.4 GB resident twice. `model-fit` sizes one model
-against the whole machine; it does not know how many skills intend to load one.
+**To see what each one actually loaded**, read its startup line — both log the
+file and which of the four rules chose it:
+
+```
+model: /home/you/.aura/models/gemma-3-4B-it-Q4_K_M.gguf (via model-manager active.json)
+```
+
+`model` is `restart_required` on both: loading a different GGUF means unloading
+the one in memory, and doing that mid-generation is not a live update.
+
+**They load their own copies.** Two processes, two llama.cpp instances — on one
+machine here, 1.9 GB resident each for a 1.1 GB model. Both also default to
+offloading every layer (`n_gpu_layers: -1`), so on a small card the second one
+to start quietly ends up on the CPU. `model-fit` sizes *one* model against the
+whole machine; it does not know how many skills intend to load one. Sharing a
+single loaded instance would mean the planner reasoning through
+`cognitive.llm.chat` over the graph rather than importing llama.cpp itself —
+see [the roadmap](ROADMAP.md).
 
 ## Audit bundles
 

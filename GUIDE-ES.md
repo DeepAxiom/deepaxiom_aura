@@ -1395,40 +1395,57 @@ de una muerte silenciosa por falta de memoria:
 ---
 
 
-### Elegir un modelo, de punta a punta
+### Qué modelo usa cada skill, y cómo cambiarlo
 
-Cuatro pasos, y el tercero es el que faltaba:
+Dos skills cargan un modelo: **llm-chat** (la vista Chat) y **planner** (la
+vista Operate, y `aura do`). Son procesos separados, así que cada uno responde
+la pregunta por su cuenta — y ambos la responden igual, en este orden:
+
+| | Dónde mira | Qué significa |
+|---|---|---|
+| 1 | `AURA_MODEL_PATH` | Un override explícito, se honra tal cual. |
+| 2 | la clave de config `model` de ese skill | **La elección de ese skill.** Pónla para planificar con un modelo y chatear con otro. |
+| 3 | `~/.aura/models/active.json` | El default de todo el nodo, escrito por `model-manager set-active`. Dejar la clave vacía es la forma de decir "sigue al nodo". |
+| 4 | el default incorporado | `qwen2.5-1.5b-instruct-q4_k_m.gguf`, descargado en el primer uso. |
+
+Cada paso se salta en vez de fallar, así que un ajuste que nombra un archivo
+borrado degrada al siguiente en lugar de dejar al nodo sin skill de chat.
+
+**Para que ambos usen el mismo modelo** — el caso común — descarga uno y
+márcalo como activo, dejando ambas claves vacías:
 
 ```bash
-# 1 · qué corre aquí siquiera
-aura do "rank which models fit on this machine" --yes
-
-# 2 · descárgalo, por el skill motor gateado
-#     {"action": "download", "model_id": "gemma-3-4b-it"}
-
-# 3 · nómbralo como el que se usa
-#     {"action": "set-active", "model": "gemma-3-4B-it-Q4_K_M.gguf"}
-
-# 4 · reinicia llm-chat; ahora carga ese archivo
+aura do "rank which models fit on this machine" --yes   # qué corre aquí
+#   {"action": "download",   "model_id": "gemma-3-4b-it"}
+#   {"action": "set-active", "model": "gemma-3-4B-it-Q4_K_M.gguf"}
 ```
 
-`set-active` escribe `~/.aura/models/active.json`, y `llm-chat` resuelve su
-modelo en este orden: `AURA_MODEL_PATH`, luego su propia clave de config
-`model`, luego ese archivo, y por último el default incorporado. Cada paso se
-salta en vez de fallar cuando lo que nombra no está, así que un puntero a un
-modelo borrado degrada al siguiente en lugar de dejar al nodo sin skill de chat.
-Borrar el modelo activo limpia el puntero.
+**Para darles modelos distintos**, pon la clave `model` en uno de ellos — desde
+la vista **Skills** del plano de control, o:
 
-**El registro todavía no llega al planner.** El backend local de
-`skills/planner` sigue leyendo `AURA_MODEL_FILE` con su propio default, así que
-marcar un modelo como activo cambia lo que carga `llm-chat` y no lo que razona
-`aura do`. Conviene saberlo antes de concluir que el cambio no hizo nada: sí lo
-hizo, para la mitad del sistema.
+```bash
+curl -X PUT "http://localhost:9080/v1/skills/config?id=example/cognitive/planner"   -H "Authorization: Bearer $(cat ~/.aura/node.token)"   -H 'Content-Type: application/json'   -d '{"model": "gemma-3-4B-it-Q4_K_M.gguf"}'
+```
 
-**Y cada uno carga su propia copia.** Son procesos separados, así que un modelo
-de 4B marcado activo ocupa unos 2,4 GB residentes dos veces. `model-fit`
-dimensiona *un* modelo contra la máquina entera; no sabe cuántos skills piensan
-cargar uno.
+**Para ver qué cargó cada uno**, lee su línea de arranque — ambos registran el
+archivo y cuál de las cuatro reglas lo eligió:
+
+```
+model: /home/tu/.aura/models/gemma-3-4B-it-Q4_K_M.gguf (via model-manager active.json)
+```
+
+`model` es `restart_required` en ambos: cargar otro GGUF significa descargar el
+que está en memoria, y hacerlo a mitad de una generación no es una
+actualización en caliente.
+
+**Cada uno carga su propia copia.** Dos procesos, dos instancias de llama.cpp —
+en una máquina de prueba, 1,9 GB residentes cada uno para un modelo de 1,1 GB.
+Ambos además descargan todas las capas a GPU por defecto (`n_gpu_layers: -1`),
+así que en una tarjeta pequeña el segundo en arrancar acaba en CPU sin avisar.
+`model-fit` dimensiona *un* modelo contra la máquina entera; no sabe cuántos
+skills piensan cargar uno. Compartir una sola instancia cargada significaría que
+el planner razone a través de `cognitive.llm.chat` por el grafo en vez de
+importar llama.cpp — ver [el roadmap](ROADMAP-ES.md).
 
 ## Audit bundles
 

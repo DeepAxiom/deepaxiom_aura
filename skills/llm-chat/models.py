@@ -23,30 +23,22 @@ the node without a chat skill.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
+
+from aura import models as active_models
 
 log = logging.getLogger("llm-chat")
 
 DEFAULT_REPO = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
 DEFAULT_FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
-ACTIVE_FILENAME = "active.json"
+ACTIVE_FILENAME = active_models.ACTIVE_FILENAME
 
 
 def models_dir() -> Path:
-    return Path(os.path.expanduser(os.getenv("AURA_MODELS_DIR", "~/.aura/models")))
-
-
-def _active_filename(directory: Path) -> str | None:
-    """The filename model-manager last marked active, if any."""
-    try:
-        data = json.loads((directory / ACTIVE_FILENAME).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    name = data.get("model") if isinstance(data, dict) else None
-    return name if isinstance(name, str) and name else None
+    """Re-exported so this module stays the one place llm-chat asks."""
+    return active_models.models_dir()
 
 
 def resolve(config_model: str = "") -> dict:
@@ -68,12 +60,13 @@ def resolve(config_model: str = "") -> dict:
             return {"path": str(candidate), "source": "skill config `model`"}
         log.warning("config names %r but it is not in %s — falling through", chosen, directory)
 
-    active = _active_filename(directory)
+    # The SDK owns this read: the planner does it too, and a convention two
+    # processes must agree on drifts when each keeps its own copy.
+    active = active_models.active_model_path(directory)
     if active:
-        candidate = directory / active
-        if candidate.is_file():
-            return {"path": str(candidate), "source": "model-manager active.json"}
-        log.warning("active.json names %r but it is gone — falling through", active)
+        return {"path": str(active), "source": "model-manager active.json"}
+    if active_models.active_record(directory):
+        log.warning("active.json names a model that is gone — falling through")
 
     return {
         "repo": os.getenv("AURA_MODEL_REPO", DEFAULT_REPO),

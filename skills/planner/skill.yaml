@@ -32,6 +32,11 @@ permissions:
   channels: declared-only
 
 config:
+  - key: "model"
+    type: string
+    default: ""
+    restart_required: true
+    description: "Filename of a model in ~/.aura/models this skill should plan with, e.g. gemma-3-4B-it-Q4_K_M.gguf. Empty means follow whatever model-manager marked active, so leaving it blank keeps the planner and llm-chat on the same model; setting it lets them differ. Only applies to the local GGUF backend."
   - key: "temperature"
     type: float
     default: 0.1
