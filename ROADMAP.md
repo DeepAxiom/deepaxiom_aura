@@ -29,7 +29,7 @@ the actual problem.
 |---|---|---|
 | **Publish the repository** | The README says `git clone` against a URL that returns 404. Nothing here exists for anyone yet. | Hours. |
 | **Publish the SDKs** | `@deepaxiom/aura` and `aura-sdk` are packaged and unpublished. A full-stack team following [the integration guide](GUIDE.md#when-the-app-is-yours) cannot `npm install` it — they vendor it from the repo. | Hours: npm and PyPI, plus a CI job that publishes on tag. |
-| **Publish binaries and a container image** | CI cross-compiles six targets and uploads them as artifacts with a seven-day retention, so a release is not downloadable. The Dockerfile is written and has never been built by CI. | Hours: a release job, and `docker build` in CI so the image is proven rather than described. |
+| **Publish binaries and a container image** | CI cross-compiles six targets and uploads them as artifacts with a seven-day retention, so a release is not downloadable. The image is now built and exercised on every push — it becomes healthy on a fresh volume, drains on SIGTERM and keeps its identity across a restart — but it is not pushed anywhere. | Hours: a release job, and a registry to push to. |
 | **A public witness** | Anchoring is the network effect. A witness several independent nodes present to is worth more than two nodes anchoring each other, and running one costs almost nothing. | Days: an instance, a URL, and a retention policy someone stands behind. |
 
 ## Narrowing the honest gaps

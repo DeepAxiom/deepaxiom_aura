@@ -85,6 +85,8 @@ func main() {
 		cmdRun(os.Args[2:])
 	case "status":
 		cmdStatus(os.Args[2:])
+	case "ready":
+		cmdReady(os.Args[2:])
 	case "verify":
 		cmdVerify(os.Args[2:])
 	case "audit":
@@ -138,6 +140,7 @@ Usage:
   aura add <org/cat/name>[@version] | --capability <cap> [--registry <url>] [--yes]
   aura run <org/cat/name> [--port 9080]
   aura status [--port 9080]
+  aura ready [--port 9080] [--quiet] [--timeout 3s]
   aura verify [--data <dir>]
   aura audit [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out <f>] | --verify <f>
   aura witness <witness-url> [--token <t>] [--port 9080]

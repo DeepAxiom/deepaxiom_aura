@@ -562,3 +562,112 @@ jobs:
       # this makes that a build failure instead of a reader's problem.
       - name: no broken relative links
         run: python scripts/check_links.py
+
+  container:
+    name: the container actually runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # This job exists because every defect it now catches shipped. The image
+      # was never built here, so nothing noticed that a first `docker compose
+      # up` could not work: the volume was created root-owned under a nonroot
+      # process and the node restarted forever on `permission denied`; --policy
+      # pointed into an empty volume, which the kernel refuses to boot without;
+      # a required variable made compose fail during interpolation; the
+      # healthcheck ran a command that exits 0 when its credential is rejected;
+      # and the CLI's default data directory disagreed with the node's, so a
+      # token minted inside the container went into a database the node never
+      # read. All five were found by running this once.
+      - name: docker compose config resolves with no variables set
+        run: docker compose config >/dev/null
+
+      - name: build the image
+        run: docker compose build aura
+
+      - name: it becomes healthy on a fresh volume
+        run: |
+          docker compose up -d aura
+          for i in $(seq 1 40); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q aura)" 2>/dev/null || true)
+            [ "$status" = "healthy" ] && break
+            [ "$status" = "unhealthy" ] && { echo "FAIL: unhealthy"; docker compose logs aura; exit 1; }
+            sleep 3
+          done
+          [ "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q aura)")" = "healthy" ] \
+            || { echo "FAIL: never became healthy"; docker compose logs aura; exit 1; }
+
+      - name: the policy it was given is the policy in force
+        run: |
+          docker compose logs aura | grep -q "aura.policy.yaml" \
+            || { echo "FAIL: the mounted policy was not loaded"; exit 1; }
+          docker compose logs aura | grep -q "REFUSED (on_seal_failure: refuse)" \
+            || { echo "FAIL: on_seal_failure from the policy is not in force"; exit 1; }
+
+      - name: readiness is open and metrics are not
+        run: |
+          curl -fsS http://localhost:9080/readyz | grep -q '"ready":true' \
+            || { echo "FAIL: /readyz did not report ready"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9080/metrics)
+          [ "$code" = "401" ] || { echo "FAIL: /metrics answered $code, want 401"; exit 1; }
+
+      # The trap that made a minted token useless: `aura token issue` writes to
+      # the CLI's default data directory, and the node has to be reading the
+      # same one.
+      - name: a token minted inside the container is accepted by the node
+        run: |
+          token=$(docker compose exec -T aura aura token issue \
+            --capability motor.api.shop.refund_order 2>&1 \
+            | tr -d '\r' | grep -oE '^[[:space:]]*[A-Za-z0-9_-]{40,}[[:space:]]*$' | tr -d ' ' | head -1)
+          [ -n "$token" ] || { echo "FAIL: no token was printed"; exit 1; }
+          pip install --quiet websockets
+          python3 - "$token" <<'PY'
+          import asyncio, sys, websockets
+          async def main():
+              url = f"ws://localhost:9080/ws/skill?token={sys.argv[1]}"
+              async with websockets.connect(url, open_timeout=10):
+                  print("the node accepted the scoped token")
+          asyncio.run(main())
+          PY
+
+      - name: the example app registers, and write:true became a motor capability
+        run: |
+          token=$(docker compose logs aura | grep -oE '#token=[A-Za-z0-9_-]+' | tail -1 | cut -d= -f2)
+          AURA_SKILL_TOKEN="$token" docker compose --profile demo up -d app
+          for i in $(seq 1 40); do
+            curl -sf -H "Authorization: Bearer $token" http://localhost:9080/v1/skills \
+              | grep -q motor.api.shop.refund_order && break
+            sleep 3
+          done
+          catalog=$(curl -sf -H "Authorization: Bearer $token" http://localhost:9080/v1/skills)
+          echo "$catalog" | grep -q '"type":"motor"' \
+            || { echo "FAIL: write:true did not become a motor capability"; docker compose logs app; exit 1; }
+          echo "$catalog" | grep -q sensorial.api.shop.get_order \
+            || { echo "FAIL: the read was not exposed"; docker compose logs app; exit 1; }
+
+      # STOPSIGNAL plus an exec-form entrypoint is the whole reason the store's
+      # shutdown ordering runs on a deploy. Without it every stop is a SIGKILL.
+      - name: SIGTERM drains rather than kills
+        run: |
+          cid=$(docker compose ps -q aura)
+          docker compose stop aura
+          code=$(docker inspect --format '{{.State.ExitCode}}' "$cid")
+          [ "$code" = "0" ] || { echo "FAIL: exit code $code — 137 means it was killed"; exit 1; }
+          docker logs "$cid" 2>&1 | grep -q "stopped cleanly" \
+            || { echo "FAIL: the node did not drain"; docker logs "$cid" | tail -20; exit 1; }
+
+      - name: the node identity survives a restart
+        run: |
+          before=$(docker compose logs aura | grep -oE 'node-[a-f0-9]+' | tail -1)
+          docker compose up -d aura
+          for i in $(seq 1 40); do
+            [ "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q aura)" 2>/dev/null)" = "healthy" ] && break
+            sleep 3
+          done
+          after=$(docker compose logs aura | grep -oE 'node-[a-f0-9]+' | tail -1)
+          [ "$before" = "$after" ] \
+            || { echo "FAIL: identity changed across a restart ($before -> $after)"; exit 1; }
+
+      - name: always
+        if: always()
+        run: docker compose --profile demo down -v

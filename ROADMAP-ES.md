@@ -30,7 +30,7 @@ problema real.
 |---|---|---|
 | **Publicar el repositorio** | El README dice `git clone` contra una URL que devuelve 404. Nada de esto existe todavía para nadie. | Horas. |
 | **Publicar los SDKs** | `@deepaxiom/aura` y `aura-sdk` están empaquetados y sin publicar. Un equipo full-stack que siga [la guía de integración](GUIDE-ES.md) no puede hacer `npm install` — lo copia desde el repo. | Horas: npm y PyPI, más un job de CI que publique en tag. |
-| **Publicar binarios y una imagen de contenedor** | CI compila para seis targets y los sube como artifacts con retención de siete días, así que una release no es descargable. El Dockerfile está escrito y CI nunca lo ha construido. | Horas: un job de release, y `docker build` en CI para que la imagen esté probada y no solo descrita. |
+| **Publicar binarios y una imagen de contenedor** | CI compila para seis targets y los sube como artifacts con retención de siete días, así que una release no es descargable. La imagen ahora se construye y se ejercita en cada push — llega a healthy sobre un volumen nuevo, drena con SIGTERM y conserva su identidad tras un reinicio — pero no se publica en ningún sitio. | Horas: un job de release, y un registry al que empujar. |
 | **Un witness público** | El anclaje es el efecto de red. Un witness al que acuden varios nodos independientes vale más que dos nodos anclándose mutuamente, y operarlo no cuesta casi nada. | Días: una instancia, una URL, y una política de retención que alguien sostenga. |
 
 ## Estrechar los huecos declarados

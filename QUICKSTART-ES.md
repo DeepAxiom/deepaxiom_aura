@@ -150,9 +150,27 @@ seguridad](GUIDE-ES.md#modelo-de-seguridad).
 docker compose up
 ```
 
+Un kernel, un volumen nombrado persistente y la política estricta de
+[`deploy/aura.policy.yaml`](deploy/aura.policy.yaml) — denegar por defecto todo
+lo que actúe sobre el mundo, sin renuncias a nivel de grafo, y un efecto que el
+ledger no pueda sellar se rechaza en vez de entregarse. `aura up` imprime el hash
+de la política al arrancar, para poder comparar la que está en vigor con la que
+está en git.
+
+La app de ejemplo que expone sus propias funciones está detrás de un perfil,
+porque necesita una credencial acuñada desde un nodo en marcha:
+
+```bash
+docker compose up -d aura
+docker compose logs aura | grep -o '#token=[^ ]*'
+AURA_SKILL_TOKEN=<ese token> docker compose --profile demo up app
+```
+
 El contenedor es distroless, non-root y sin CGO. Dos endpoints que un
 orquestador quiere: `GET /readyz` (abierto, responde solo cuando el store y el
-ledger son usables) y `GET /metrics` (Prometheus, autenticado).
+ledger son usables) y `GET /metrics` (Prometheus, autenticado). El healthcheck de
+la imagen es `aura ready`, que convierte el primero en un código de salida — no
+hay shell ni curl dentro con qué sondear.
 
 **El directorio de datos no es una caché.** Contiene la identidad del nodo, el
 ledger de efectos y los secretos cifrados del broker — y la clave del broker se

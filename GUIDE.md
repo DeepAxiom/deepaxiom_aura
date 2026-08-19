@@ -415,6 +415,7 @@ The `aura` binary is the kernel, the client, the registry, and the fleet tool.
 | ↳ `[--anchor default\|<url>] [--anchor-every 1h]` | Keep this node's ledger anchored at a witness in the background, so the guarantee is a property of running the node rather than of remembering a command. |
 | ↳ `[--policy <file>] [--max-sessions 1000]` | `--policy` loads an authorization document (deny-by-default for `motor.*`); `--max-sessions` caps live sessions, which matters when an ingress route is public. |
 | `aura status [--port 9080]` | Health of a running node plus its connected skills. |
+| `aura ready [--port 9080] [--quiet] [--timeout 3s]` | Readiness as an exit code, for a container healthcheck. Reads `/readyz` — open, so a probe needs no credential — and exits 0 only when the store, ledger and registry are usable. The distroless image has no shell or curl, so its `HEALTHCHECK` is this command. |
 | `aura verify [--data <dir>]` | Recompute the effect ledger's hash chain and Merkle tree, and check every checkpoint signature and witness countersignature — offline, no running kernel required. Exits nonzero if anything fails to verify. See [Security model](#security-model). |
 | `aura version` | Version and the protocol/IR majors this binary speaks. |
 

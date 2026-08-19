@@ -46,6 +46,11 @@ export const COMMANDS: CommandGroup[] = [
         "options": []
       },
       {
+        "syntax": "aura ready [--port 9080] [--quiet] [--timeout 3s]",
+        "purpose": "Readiness as an exit code, for a container healthcheck. Reads /readyz — open, so a probe needs no credential — and exits 0 only when the store, ledger and registry are usable. The distroless image has no shell or curl, so its HEALTHCHECK is this command.",
+        "options": []
+      },
+      {
         "syntax": "aura verify [--data <dir>]",
         "purpose": "Recompute the effect ledger's hash chain and Merkle tree, and check every checkpoint signature and witness countersignature — offline, no running kernel required. Exits nonzero if anything fails to verify. See Security model.",
         "options": []
@@ -337,6 +342,7 @@ export const USAGE: string[] = [
   "aura add <org/cat/name>[@version] | --capability <cap> [--registry <url>] [--yes]",
   "aura run <org/cat/name> [--port 9080]",
   "aura status [--port 9080]",
+  "aura ready [--port 9080] [--quiet] [--timeout 3s]",
   "aura verify [--data <dir>]",
   "aura audit [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out <f>] | --verify <f>",
   "aura witness <witness-url> [--token <t>] [--port 9080]",

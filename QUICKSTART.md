@@ -148,9 +148,26 @@ development and wrong for anything else — see
 docker compose up
 ```
 
+One kernel, a persistent named volume, and the strict policy in
+[`deploy/aura.policy.yaml`](deploy/aura.policy.yaml) — deny-by-default for
+anything acting on the world, no graph-level waivers, and an effect the ledger
+cannot seal is refused rather than delivered. `aura up` prints the policy's hash
+at startup so the one in force can be compared against the one in git.
+
+The example app that exposes its own functions is behind a profile, because it
+needs a credential minted from a running node:
+
+```bash
+docker compose up -d aura
+docker compose logs aura | grep -o '#token=[^ ]*'
+AURA_SKILL_TOKEN=<that token> docker compose --profile demo up app
+```
+
 The container is distroless, non-root and CGO-free. Two endpoints an
 orchestrator wants: `GET /readyz` (open, answers only once the store and ledger
-are usable) and `GET /metrics` (Prometheus, authenticated).
+are usable) and `GET /metrics` (Prometheus, authenticated). The image's
+healthcheck is `aura ready`, which turns the first into an exit code — there is
+no shell or curl inside to probe with.
 
 **The data directory is not a cache.** It holds the node identity, the effect
 ledger and the broker's encrypted secrets — and the broker's key is *derived*

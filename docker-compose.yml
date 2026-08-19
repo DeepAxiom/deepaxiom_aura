@@ -1,21 +1,34 @@
 # The shape a full-stack team actually deploys: the kernel beside the app, with
 # the app's own functions exposed as skills.
 #
-# `docker compose up` gives you a node with a persistent ledger and one skill
-# connected. What it does not give you is failover — a node is one process, and
-# if it dies the live sessions die with it while the event log survives. That is
-# stated in the README and it is the reason this file describes an auxiliary
-# service rather than a critical path.
+#   docker compose up                      # the kernel, alone, ready to use
+#   docker compose --profile demo up       # plus the example app (see below)
+#
+# What this does not give you is failover — a node is one process, and if it
+# dies the live sessions die with it while the event log survives. That is why
+# this file describes an auxiliary service rather than a critical path.
+#
+# It used to describe a deployment nobody could run. `--policy` pointed into an
+# empty named volume, so the kernel refused to boot; the example app declared a
+# required variable, so `docker compose up` failed during interpolation before
+# building anything; and the healthcheck ran a command that exits 0 when its
+# credential is rejected. Nothing caught it because CI never built the image.
+# It does now, and this file is exercised on every push.
 
 services:
   aura:
     build: .
-    # A named volume, not a bind mount, and not nothing. This directory holds the
-    # node identity, the effect ledger and the broker's encrypted secrets — and
-    # the broker's key is derived from the identity, so losing identity/ makes
-    # every stored secret permanently unopenable. Back this up like a database.
     volumes:
+      # A named volume, not a bind mount, and not nothing. This directory holds
+      # the node identity, the effect ledger and the broker's encrypted secrets
+      # — and the broker's key is derived from the identity, so losing
+      # identity/ makes every stored secret permanently unopenable. Back this up
+      # like a database.
       - aura-data:/data
+      # The authorization document, read-only: a node must not be able to
+      # rewrite the policy that authorizes it. `aura up` prints its hash at
+      # startup, so the one in force can be compared against the one in git.
+      - ./deploy/aura.policy.yaml:/etc/aura/aura.policy.yaml:ro
     ports:
       - "9080:9080/tcp"
       - "9080:9080/udp" # QUIC/WebTransport, same port number, different protocol
@@ -28,19 +41,20 @@ services:
       - up
       - --listen=0.0.0.0
       - --port=9080
-      - --data=/data
+      - --data=/data/.aura
       # Bound the replayable history. Set this ABOVE your retention obligation:
       # under the EU AI Act deployers keep logs at least six months, and this
       # flag reclaims the oldest segments first.
       - --event-log-max=20Gi
-      # Refuse an effect the ledger could not seal, rather than delivering it and
-      # logging the gap. The right stance for anything that moves money; drop it
-      # if you would rather a full disk degrade than stop.
-      - --policy=/data/aura.policy.yaml
-    # Compose does not read Dockerfile HEALTHCHECK for dependency ordering, so it
-    # is repeated here — /readyz is the one that means "send it traffic".
+      # Deny-by-default for anything that acts on the world, no graph-level
+      # waivers, and refuse an effect the ledger cannot seal. Read
+      # deploy/aura.policy.yaml — it is the document an auditor asks for.
+      - --policy=/etc/aura/aura.policy.yaml
     healthcheck:
-      test: ["CMD", "/usr/local/bin/aura", "status", "--port", "9080"]
+      # Compose does not read the Dockerfile's HEALTHCHECK for dependency
+      # ordering, so it is repeated here. `aura ready` reads /readyz, which is
+      # the one that means "send it traffic" and needs no credential.
+      test: ["CMD", "/usr/local/bin/aura", "ready", "--port", "9080", "--quiet"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -52,7 +66,29 @@ services:
 
   # Your existing backend, announcing the functions it already has. Six lines of
   # integration; see GUIDE.md, "When the app is yours".
+  #
+  # Behind a profile because it needs a credential that can only be minted from
+  # a running node, and a first `docker compose up` should not fail on a
+  # chicken-and-egg. To run it:
+  #
+  #   docker compose up -d aura
+  #   docker compose logs aura | grep -o '#token=[^ ]*'
+  #   AURA_SKILL_TOKEN=<that token> docker compose --profile demo up app
+  #
+  # Read from the log rather than the file: the image is distroless, so there is
+  # no `cat` to exec. The node prints the token once, at startup.
+  #
+  # The operator token, and not a scoped one, for a reason worth knowing before
+  # you copy this shape into your own deployment: a scoped credential is bound
+  # to *one* capability (Principal.MayRegister is an exact match, by design —
+  # see internal/gateway/scope.go), and this example app exposes two,
+  # `sensorial.api.shop.get_order` and `motor.api.shop.refund_order`. One
+  # process exposing several capabilities therefore cannot be scoped down with
+  # a single token today. A process that exposes one — which is the shape most
+  # skills have — should use `aura token issue --capability <cap>` and hold
+  # nothing more.
   app:
+    profiles: ["demo"]
     build:
       # Repo root as the context: the Dockerfile copies sdk/node from source
       # because the SDK is not published to npm yet.
@@ -65,9 +101,12 @@ services:
       AURA_WS_URL: ws://aura:9080/ws/skill
       # A scoped credential, not the operator token. This process may register
       # its own capability and spend the receipts it is handed — it cannot
-      # register a graph or read the ledger. Mint one with:
-      #   docker compose exec aura aura token issue --capability motor.api.shop.refund_order
-      AURA_TOKEN: ${AURA_SKILL_TOKEN:?set AURA_SKILL_TOKEN — see the comment above}
+      # register a graph, read the ledger or enrol an approver.
+      #
+      # Defaulted to empty rather than required: an unset variable must not stop
+      # the whole file from being read. Empty means "send nothing", and the SDK
+      # reports the resulting 401 with the command that fixes it.
+      AURA_TOKEN: ${AURA_SKILL_TOKEN:-}
     restart: unless-stopped
 
 volumes:

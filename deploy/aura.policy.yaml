@@ -1,0 +1,65 @@
+# The policy `docker compose up` runs with.
+#
+# It exists as a real file because the compose service used to point `--policy`
+# at a path inside an empty named volume, so a first `docker compose up` could
+# not start at all: the kernel refuses to boot rather than silently fall back to
+# a permissive default, which is the right behaviour and left the container
+# unrunnable. Mounted read-only, so the running node cannot rewrite the document
+# that authorizes it.
+#
+# It is deliberately *stricter* than the built-in default, because a container
+# with a published port is not a laptop. Read it before you deploy: this is the
+# document an auditor will ask to see, and `aura up` prints its hash at startup
+# so the one in force can be compared against the one in your repository.
+
+policy: 1
+
+# Anything that acts on the world stops for a human unless a rule below says
+# otherwise. The built-in default is the same, but a node given a policy is a
+# node that means it.
+default_effect: gate
+
+# An edge saying `"gate": "none"` is refused. A graph is a JSON document anyone
+# reaching the control surface can register, so on a node with a published port
+# the graph does not get to waive the node's own supervision. Absent would mean
+# false anyway; it is written out because this is the line that matters most.
+allow_graph_waiver: false
+
+# Refuse an effect the ledger cannot seal, rather than delivering it and logging
+# the gap. The other stance — `deliver` — is right for a node where availability
+# beats completeness; this one is right for a node whose whole job is evidence.
+# A full disk stops writes instead of quietly producing an incomplete record.
+on_seal_failure: refuse
+
+# Speculation runs downstream work on partial output. It is already refused into
+# `motor` skills by C2 rule 6; turning it off wholesale here is a node-wide
+# preference, and it downgrades the edge rather than refusing the graph.
+speculation: deny
+
+rules:
+  # Speech is continuous. A gate per spoken clause is a gate that gets
+  # rubber-stamped, which is worse than no gate at all — see the oversight
+  # capacity argument in the README's references.
+  - match: "motor.tts.speak"
+    decision: allow
+    reason: "speech is continuous; per-clause approval is unusable"
+
+  # The demo app's read. Reads never reach the ledger, but the rule is written
+  # so `aura audit` shows the decision was made rather than defaulted.
+  - match: "sensorial.api.shop.get_order"
+    decision: allow
+    reason: "read-only; no effect to seal"
+
+  # The demo app's write. This is the one the compose example exists to
+  # demonstrate: `write: true` in six lines of TypeScript becomes a motor
+  # capability, gated here, sealed into the ledger with a portable receipt.
+  - match: "motor.api.shop.refund_order"
+    decision: gate
+    limit: { per_minute: 10 }
+    reason: "moves money; a human signs for each one"
+
+  # Payments are refused outright, and a deny cannot be overridden by any graph.
+  # Present as the worked example of the strongest decision available.
+  - match: "motor.payments.*"
+    decision: deny
+    reason: "not authorized on this node"

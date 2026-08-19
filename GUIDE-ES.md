@@ -399,6 +399,7 @@ flota.
 |---|---|
 | `aura up [--port 9080] [--data <dir>] [--mode local\|site\|published] [--memory-budget 8Gi] [--config <archivo>]` | Arranca un nodo. `--memory-budget` activa la admisión de recursos; `--config` fija valores por defecto de skills (ver [Configuración de skills en tiempo de ejecución](#configuración-de-skills-en-tiempo-de-ejecución)). |
 | `aura status [--port 9080]` | Salud de un nodo en ejecución más sus skills conectados. |
+| `aura ready [--port 9080] [--quiet] [--timeout 3s]` | Readiness como código de salida, para un healthcheck de contenedor. Lee `/readyz` — abierto, para que una sonda no necesite credencial — y sale 0 solo cuando el store, el ledger y el registro son usables. La imagen distroless no tiene shell ni curl, así que su `HEALTHCHECK` es este comando. |
 | `aura verify [--data <dir>]` | Recalcula la cadena de hashes y el árbol Merkle del ledger de efectos, y comprueba cada firma de checkpoint y cada contrafirma de witness — sin conexión, sin necesitar un kernel corriendo. Sale con código distinto de cero si algo no verifica. Ver [Modelo de seguridad](#modelo-de-seguridad). |
 | `aura version` | Versión y los majors de protocolo/IR que habla este binario. |
 
