@@ -60,6 +60,14 @@ export interface NodeOptions {
   app: string;
   /** Kernel skill endpoint. Defaults to $AURA_WS_URL or localhost:9080. */
   url?: string;
+  /**
+   * The node's bearer token.
+   *
+   * Omit it and the SDK looks where the CLI looks: `$AURA_TOKEN`, then
+   * `~/.aura/node.token`. Pass `""` to send nothing, which is what a node
+   * started with `--no-auth` expects.
+   */
+  token?: string;
   /** Called on connection state changes; defaults to console. */
   log?: (message: string, detail?: unknown) => void;
 }
@@ -85,6 +93,9 @@ export class AuraNode {
   private readonly exposed: Exposed[] = [];
   private running = false;
   private serving: Promise<void>[] = [];
+  /** Resolved in start(), because reading the token file is async. */
+  private token = "";
+  private readonly explicitToken?: string;
 
   constructor(options: NodeOptions) {
     this.options = {
@@ -96,7 +107,40 @@ export class AuraNode {
           ?.AURA_WS_URL ??
         "ws://localhost:9080/ws/skill",
     };
+    this.explicitToken = options.token;
     this.log = options.log ?? ((m, d) => console.log(`[aura] ${m}`, d ?? ""));
+  }
+
+  /**
+   * The bearer token for a local node, from the two places the CLI reads.
+   *
+   * A node binds loopback and mints a token by default, so `/ws/skill` needs
+   * the credential like every other route. Mirrors `nodeToken` in
+   * `kernel/cmd/aura/nodeclient.go`, and `resolve_token` in the Python SDK.
+   *
+   * Returns "" when there is nothing to send, which is correct rather than an
+   * error: a `--no-auth` node has no token file and asks for no credential.
+   */
+  private async resolveToken(): Promise<string> {
+    const explicit = this.explicitToken;
+    if (explicit !== undefined) return explicit;
+
+    const env = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+      .process?.env?.AURA_TOKEN?.trim();
+    if (env) return env;
+
+    // Guarded: this package is also usable where there is no filesystem, and a
+    // missing token is a normal state rather than a failure.
+    try {
+      const [{ readFile }, { homedir }, { join }] = await Promise.all([
+        import("node:fs/promises"),
+        import("node:os"),
+        import("node:path"),
+      ]);
+      return (await readFile(join(homedir(), ".aura", "node.token"), "utf8")).trim();
+    } catch {
+      return "";
+    }
   }
 
   /** Register one function as a skill. Call before `start()`. */
@@ -165,6 +209,7 @@ export class AuraNode {
   async start(): Promise<void> {
     if (!this.exposed.length) throw new Error("nothing exposed — call expose() first");
     this.running = true;
+    this.token = await this.resolveToken();
     this.log(
       `connecting ${this.exposed.length} skill(s) to ${this.options.url}`,
       this.exposed.map((e) => e.manifest.capability),
@@ -233,9 +278,24 @@ export class AuraNode {
     }
   }
 
+  /**
+   * The skill endpoint with the credential attached.
+   *
+   * As a query parameter, not a header: the WHATWG `WebSocket` constructor
+   * takes no headers, and the kernel accepts `?token=` on `/ws/skill` and
+   * `/v1/stream` for exactly that reason. A URL that already carries one is
+   * left alone, so an explicitly built endpoint still wins.
+   */
+  private authorizedUrl(): string {
+    if (!this.token) return this.options.url;
+    if (this.options.url.includes("token=")) return this.options.url;
+    const sep = this.options.url.includes("?") ? "&" : "?";
+    return `${this.options.url}${sep}token=${encodeURIComponent(this.token)}`;
+  }
+
   private session(skill: Exposed): Promise<void> {
     return new Promise((resolve, reject) => {
-      const socket = new WebSocket(this.options.url);
+      const socket = new WebSocket(this.authorizedUrl());
       skill.socket = socket;
 
       socket.addEventListener("open", () => {

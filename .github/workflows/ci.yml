@@ -120,9 +120,12 @@ jobs:
       - name: test
         working-directory: sdk/node
         run: npm test
-        # 15 tests: 6 on framing, 9 on createNode() — the path a full-stack app
-        # uses, which had none. Two API bugs came out of writing them: start()
-        # never resolved, and duplicate names were accepted.
+        # 23 tests: 6 on framing, 9 on createNode() — the path a full-stack app
+        # uses, which had none — and 8 on credential resolution, which did not
+        # exist and left the documented six-line integration unable to reach a
+        # node with its default auth. Two API bugs came out of writing the
+        # createNode ones: start() never resolved, and duplicate names were
+        # accepted.
 
   skills:
     name: first-party skills
@@ -140,6 +143,12 @@ jobs:
       # backends/, parser.py) import them lazily inside a function, never at
       # module level, precisely so their pure logic stays testable here.
       - run: pip install pyyaml websockets
+
+      # The SDK's own credential resolution. It shipped unimplemented, so a
+      # skill could not connect to a node running with its default auth at all.
+      - name: python SDK
+        working-directory: sdk/python
+        run: PYTHONPATH=src python -m unittest test_token -v
 
       # No model is loaded: these cover the streaming buffer, whose failures
       # are silent — a mis-ordered chunk yields a worse transcript, never an

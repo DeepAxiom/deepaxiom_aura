@@ -748,9 +748,21 @@ if __name__ == "__main__":
     skill.run()                    # se conecta al kernel, reconecta para siempre
 ```
 
-Ejecútalo contra un nodo con
-`AURA_WS_URL=ws://localhost:9080/ws/skill python main.py`, o instálalo y
-ejecútalo desde el registro con `aura run acme/logical/uppercase`.
+Ejecútalo desde su propio directorio — el SDK lee `skill.yaml` del directorio de
+trabajo — con `python main.py`. Apúntalo a otro sitio con
+`AURA_WS_URL=ws://host:9080/ws/skill`, o instálalo y ejecútalo desde el registro
+con `aura run acme/logical/uppercase`.
+
+**La credencial se encuentra, no se configura.** Un nodo ata loopback y genera un
+token bearer por defecto, y `/ws/skill` está detrás de él como cualquier otra
+ruta. Ambos SDKs lo resuelven exactamente donde lo hace el CLI — `AURA_TOKEN`, y
+luego `~/.aura/node.token` — así que un skill arrancado por el mismo usuario en la
+misma máquina no necesita nada. Pásalo explícitamente con `Skill(token=...)` en
+Python o `createNode({ token })` en TypeScript cuando el nodo guarde sus datos en
+otro sitio; un nodo arrancado con `--no-auth` no tiene archivo de token y no pide
+credencial, y una cadena vacía significa "no envíes nada". Un skill rechazado por
+falta de credencial registra el 401 y qué hacer al respecto, en vez de reintentar
+en silencio.
 
 **Puntos clave de diseño.** Los skills se conectan *hacia fuera* al kernel
 (inversión de control), así que atraviesan NAT y firewalls corporativos sin

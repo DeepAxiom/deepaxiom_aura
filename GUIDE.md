@@ -788,8 +788,20 @@ if __name__ == "__main__":
     skill.run()                    # connects to the kernel, reconnects forever
 ```
 
-Run it against a node with `AURA_WS_URL=ws://localhost:9080/ws/skill python main.py`,
-or install and run it from the registry with `aura run acme/logical/uppercase`.
+Run it from its own directory — the SDK reads `skill.yaml` from the working
+directory — with `python main.py`. Point it elsewhere with
+`AURA_WS_URL=ws://host:9080/ws/skill`, or install and run it from the registry
+with `aura run acme/logical/uppercase`.
+
+**The credential is found, not configured.** A node binds loopback and mints a
+bearer token by default, and `/ws/skill` sits behind it like every other route.
+Both SDKs resolve it exactly where the CLI does — `AURA_TOKEN`, then
+`~/.aura/node.token` — so a skill started by the same user on the same machine
+needs nothing. Pass one explicitly with `Skill(token=...)` in Python or
+`createNode({ token })` in TypeScript when the node keeps its data elsewhere; a
+node started with `--no-auth` has no token file and asks for no credential, and
+an empty string means "send nothing". A skill refused for want of one logs the
+401 and what to do about it rather than retrying in silence.
 
 **Key design points.** Skills connect *out* to the kernel (inversion of control),
 so they traverse NAT and corporate firewalls without inbound ports. The `Context`

@@ -2,7 +2,7 @@
 
 ### Deploy assistants and automations that run live — and can prove what they did.
 
-[Full guide](GUIDE.md) · [Versión en español](README-ES.md) ·
+[Quick start](QUICKSTART.md) · [Full guide](GUIDE.md) · [Versión en español](README-ES.md) ·
 [Milestone status](GUIDE.md#milestone-status) · [Roadmap](ROADMAP.md) ·
 **v0.3.0 — pre-1.0, pre-production**
 

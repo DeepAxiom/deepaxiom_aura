@@ -2,7 +2,7 @@
 
 ### Despliega asistentes y automatizaciones que corren en vivo — y puede demostrar qué hicieron.
 
-[Guía completa](GUIDE-ES.md) · [English](README.md) ·
+[Inicio rápido](QUICKSTART-ES.md) · [Guía completa](GUIDE-ES.md) · [English](README.md) ·
 [Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos) · [Roadmap](ROADMAP-ES.md) ·
 **v0.3.0 — pre-1.0, pre-producción**
 

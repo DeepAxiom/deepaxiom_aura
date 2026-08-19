@@ -28,6 +28,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -35,6 +36,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import websockets
@@ -56,6 +58,75 @@ from .manifest import load_manifest, validate_manifest
 
 _logger = logging.getLogger("aura.skill")
 _BACKOFF = [1, 2, 5, 10, 30, 60]
+
+# Default data directory, matching the kernel's own: `~/.aura`, falling back to
+# a relative `.aura` where there is no home directory to read.
+def _default_data_dir() -> Path:
+    try:
+        return Path.home() / ".aura"
+    except (RuntimeError, OSError):
+        return Path(".aura")
+
+
+def resolve_token() -> str:
+    """The bearer token for a local node, from the two places the CLI looks.
+
+    A node binds loopback and mints a token by default, and `/ws/skill` is
+    behind it like every other route — so a skill needs the credential just as
+    much as `aura status` does. This mirrors `nodeToken` in
+    `kernel/cmd/aura/nodeclient.go` deliberately: one answer to "where does the
+    token come from", not one per language.
+
+    1. ``AURA_TOKEN`` — for containers, CI, and any node whose data directory
+       this process cannot read.
+    2. ``<data-dir>/node.token`` — the ordinary case, where the skill and the
+       node run as the same user on the same machine and neither the operator
+       nor a script should have to pass anything.
+
+    Returns ``""`` when there is nothing to send, which is correct rather than
+    an error: a node started with ``--no-auth`` has no token file and asks for
+    no credential.
+    """
+    env = os.getenv("AURA_TOKEN", "").strip()
+    if env:
+        return env
+    try:
+        return (_default_data_dir() / "node.token").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _status_of(exc: BaseException) -> int | None:
+    """HTTP status behind a failed WebSocket handshake, if there was one.
+
+    websockets 14 replaced ``InvalidStatusCode.status_code`` with
+    ``InvalidStatus.response.status_code``; both are in the declared range, so
+    read whichever the object actually carries instead of importing a class
+    name that may not exist.
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def _header_kwarg() -> str:
+    """The name `websockets.connect` gives its extra-headers argument.
+
+    Renamed from ``extra_headers`` to ``additional_headers`` in websockets 14.
+    The SDK declares ``websockets>=12.0``, so both are in range and the name is
+    resolved from the signature rather than from a version comparison — the
+    library re-exports `connect` from different modules across those versions
+    and the attribute is the honest thing to ask.
+    """
+    try:
+        params = inspect.signature(websockets.connect).parameters
+        if "additional_headers" in params:
+            return "additional_headers"
+    except (TypeError, ValueError):  # pragma: no cover — exotic build
+        pass
+    return "extra_headers"
 
 # race condition medio rara: un cancel puede llegar ANTES que el envelope
 # que cancela. El kernel lo reenvia apenas el cliente lo pide, y el data
@@ -198,7 +269,8 @@ class Skill:
     """
 
     def __init__(self, manifest_path: str = "skill.yaml", *,
-                 manifest: dict[str, Any] | None = None) -> None:
+                 manifest: dict[str, Any] | None = None,
+                 token: str | None = None) -> None:
         if manifest is not None:
             validate_manifest(manifest)
             self.manifest: dict[str, Any] = manifest
@@ -206,6 +278,12 @@ class Skill:
             self.manifest = load_manifest(manifest_path)
         self._handlers: dict[str, Callable[[Context], Awaitable[None]]] = {}
         self._ws_url: str = os.getenv("AURA_WS_URL", "ws://localhost:9080/ws/skill")
+        # The node's bearer token. `token=` wins so a caller pointing at a node
+        # with a non-default data directory has a way in that does not depend
+        # on the environment; otherwise it comes from the same two places the
+        # CLI reads. Empty means "send nothing", which is what a --no-auth node
+        # expects.
+        self._token: str = token if token is not None else resolve_token()
         self._ws: Any = None
         self._send_lock = asyncio.Lock()
         # ojo con esto: el key de dedup es (session, idem), no solo idem —
@@ -363,12 +441,22 @@ class Skill:
     async def _serve(self) -> None:
         skill_id = self.manifest["id"]
         attempt = 0
-        _logger.info("skill %s starting (kernel: %s)", skill_id, self._ws_url)
+        _logger.info(
+            "skill %s starting (kernel: %s, credential: %s)",
+            skill_id,
+            self._ws_url,
+            "yes" if self._token else "none",
+        )
+        # The token rides in the Authorization header, like the CLI sends it and
+        # unlike the browser client, which cannot set headers on a WebSocket and
+        # has to use `?token=`. A header keeps the credential out of URLs, and
+        # therefore out of anything that logs one.
+        opts: dict[str, Any] = {"ping_interval": 20, "ping_timeout": 10, "open_timeout": 10}
+        if self._token:
+            opts[_header_kwarg()] = {"Authorization": f"Bearer {self._token}"}
         while True:
             try:
-                async with websockets.connect(
-                    self._ws_url, ping_interval=20, ping_timeout=10, open_timeout=10
-                ) as ws:
+                async with websockets.connect(self._ws_url, **opts) as ws:
                     self._ws = ws
                     attempt = 0
                     reg = Envelope(kind=KIND_REGISTER, payload=self.manifest)
@@ -389,7 +477,21 @@ class Skill:
                 self._ws = None
                 delay = _BACKOFF[min(attempt, len(_BACKOFF) - 1)]
                 attempt += 1
-                _logger.warning("disconnected (%s); retry in %ss", exc, delay)
+                if _status_of(exc) == 401:
+                    # Worth its own message. The retry loop is right — the
+                    # operator may be about to start the node — but a bare
+                    # "disconnected" here reads as "the kernel is down" and
+                    # sends people to check the port, when what is missing is a
+                    # credential the SDK knows exactly how to find.
+                    _logger.warning(
+                        "the node refused this skill: no credential (401). "
+                        "Set AURA_TOKEN, or run as the user that owns "
+                        "%s. Retrying in %ss",
+                        _default_data_dir() / "node.token",
+                        delay,
+                    )
+                else:
+                    _logger.warning("disconnected (%s); retry in %ss", exc, delay)
                 await asyncio.sleep(delay)
 
     async def _dispatch(self, wire: dict) -> None:
