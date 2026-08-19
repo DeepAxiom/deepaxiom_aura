@@ -149,7 +149,7 @@ maturity, more integrations, or both. An honest map of where it sits:
 
 | If you need | Use | Deep Axiom's position |
 |---|---|---|
-| Hundreds of ready SaaS integrations | **n8n, Zapier, Make** | Not competitive *on catalogue*. Theirs is the product; the nine skills here are [worked examples](skills/), not an inventory — the integration story is `aura connect` (any OpenAPI spec becomes skills) and `aura guard` (any MCP server), not a shelf we stock. |
+| Hundreds of ready SaaS integrations | **n8n, Zapier, Make** | Not competitive *on catalogue*. Theirs is the product; the ten skills here are [worked examples](skills/), not an inventory — the integration story is `aura connect` (any OpenAPI spec becomes skills) and `aura guard` (any MCP server), not a shelf we stock. |
 | Durable, replayable long-running workflows | **Temporal** | Not competitive on durability. A dropped session *does* resume — the dedup window, causal indexes, pending gates and per-hop counters rebuild from the event log whether the client or the kernel was what died — but there is still no failover to a second node, which is Temporal's whole point. What this adds instead is a signed, hash-chained attestation of every effect, verifiable offline. |
 | Production real-time voice agents | **LiveKit Agents, Pipecat, OpenAI Realtime** | Far less mature. First sound of a reply lands at ~0.41s on one developer machine with a local model — never benchmarked against these side by side, so read it as "usable", not "competitive". Choose those unless you need voice on the *same* runtime as the rest. |
 | An agent library inside your own app | **LangGraph, CrewAI, AutoGen** | Different shape. Those are libraries you build with; this is a process you install beside existing systems, and the interrupt they'd have you code by hand is a kernel invariant here. |
@@ -1390,7 +1390,8 @@ runtime, each with a declared degradation chain:
 | [`skills/asr`](skills/asr/) | `sensorial.asr.transcribe` | faster-whisper (CPU int8). Takes a whole WAV on `audio_in`, or a live PCM stream on `audio_chunk_in` with partial transcripts while the person is still speaking. Ends an utterance on the client's signal, on trailing silence, or on a hard cap. |
 | [`skills/tts`](skills/tts/) | `motor.tts.speak` | piper (opt-in) → OS voices (SAPI/espeak). Emits PCM in ~200ms chunks for a live listener whatever the backend is, plus the whole clause as a WAV. |
 | [`skills/sentence-chunker`](skills/sentence-chunker/) | `logical.text.sentence_chunk` | Groups a token stream into clauses. Put it between a streaming LLM and anything that works in utterances, or the synthesiser fires once per token. |
-| [`skills/model-manager`](skills/model-manager/) | `motor.models.manage` | list / catalog / HF search / download / delete |
+| [`skills/model-manager`](skills/model-manager/) | `motor.models.manage` | list / catalog / HF search / download / delete / set-active |
+| [`skills/model-fit`](skills/model-fit/) | `sensorial.hardware.modelfit` | Reads RAM, CPU and GPU/VRAM and ranks the catalogue by what will actually run here, with an estimated tokens/sec and the assumptions behind it. Standard library only, so it answers before anything is installed. |
 | [`skills/memory-context`](skills/memory-context/) | `memory.context.window` | SQLite (embedded, local file) — persists per-session turns across restarts, `recall` hands back a window trimmed to a configurable token budget (drop-oldest, or summarize via `aura.llm.ChatBackend`). llm-chat's own history is in-process and unbounded (see its `main.py`); this is the durable, budget-aware alternative — wire it into a graph explicitly, it is not auto-connected. |
 | [`skills/postgres-cdc`](skills/postgres-cdc/) | `sensorial.postgres.cdc` | Turns Postgres's own logical replication stream (`test_decoding`, nothing to install) into `std/db-change@1` events, one per row change. |
 
@@ -1413,6 +1414,40 @@ silent out-of-memory kill:
 ```
 
 ---
+
+
+### Choosing a model, end to end
+
+Four steps, and the third is the one that used to be missing:
+
+```bash
+# 1 · what will run here at all
+aura do "rank which models fit on this machine" --yes
+
+# 2 · fetch one, through the gated motor skill
+#     {"action": "download", "model_id": "gemma-3-4b-it"}
+
+# 3 · name it as the one to use
+#     {"action": "set-active", "model": "gemma-3-4B-it-Q4_K_M.gguf"}
+
+# 4 · restart llm-chat; it now loads that file
+```
+
+`set-active` writes `~/.aura/models/active.json`, and `llm-chat` resolves its
+model in this order: `AURA_MODEL_PATH`, then its own `model` config key, then
+that file, then the built-in default. Each step is skipped rather than fatal
+when what it names is absent, so a pointer to a deleted model degrades to the
+next answer instead of leaving the node without a chat skill. Deleting the
+active model clears the pointer.
+
+**The record does not reach the planner yet.** `skills/planner`'s local backend
+still reads `AURA_MODEL_FILE` with its own default, so marking a model active
+changes what `llm-chat` loads and not what `aura do` reasons with. Worth knowing
+before you conclude the switch did nothing: it did, for half the system.
+
+**And both load their own copy.** They are separate processes, so a 4B model
+marked active is roughly 2.4 GB resident twice. `model-fit` sizes one model
+against the whole machine; it does not know how many skills intend to load one.
 
 ## Audit bundles
 
@@ -2784,7 +2819,7 @@ sdk/node/           @deepaxiom/aura — expose an app's functions as skills, or
 skills/             Reference skills — worked examples carrying the `example/`
                     org, not a catalogue. One per shape: echo (the minimal
                     one), llm-chat, asr, tts, sentence-chunker, planner,
-                    model-manager, memory-context, postgres-cdc. See
+                    model-manager, model-fit, memory-context, postgres-cdc. See
                     skills/README.md.
 scripts/            release.ps1 (distributable zip), gen_ssot.py (spec/ → generated
                     constants), gen_ui_reference.py (GUIDE.md + spec/ + the
@@ -2953,10 +2988,24 @@ falls:
   The UI's tests cover the two layers where a mistake reaches the kernel or
   misreads a contract — the canvas's graph model, checked against the same C2
   conformance vectors the kernel uses, and the Markdown parser that renders the
-  specs. Its components and audio paths have none. The conformance suite exercises the kernel
-  end to end over the wire; the effect ledger's tamper-detection guarantee is
-  exercised separately, against a real binary, by a dedicated adversarial CI
-  job. Treat this as pre-production.
+  specs. Its components and audio paths have none. Both SDKs now cover
+  credential resolution, which is the thing in them that had none and shipped
+  broken.
+
+  The conformance suite exercises the kernel end to end over the wire, and four
+  jobs drive a real binary rather than a package: the ledger's tamper-detection
+  guarantee against a database edited behind its back, the adversarial job that
+  checks a default node refuses what it should, the container coming up healthy
+  on an empty volume and draining on SIGTERM, and a node started **with its auth
+  on**.
+
+  That last one is worth its own sentence. Every other integration lane starts
+  its node with `--no-auth` — the right call for a test, since it removes a
+  variable, and also the reason three credential bugs shipped: the Python SDK
+  had no token support at all, the Sessions view called `fetch()` with no
+  header, and the planner's catalogue read did the same, which broke `aura do`
+  against any correctly configured node. The authenticated path was the one path
+  nothing took. Treat this as pre-production.
 
 ---
 

@@ -145,7 +145,7 @@ madurez, más integraciones, o ambas. Un mapa honesto de dónde encaja:
 
 | Si necesitas | Usa | Posición de Deep Axiom |
 |---|---|---|
-| Cientos de integraciones SaaS listas | **n8n, Zapier, Make** | No compite *en catálogo*. El suyo *es* el producto; los nueve skills de aquí son [ejemplos de referencia](skills/), no un inventario — la historia de integración es `aura connect` (cualquier spec OpenAPI se vuelve skills) y `aura guard` (cualquier servidor MCP), no un estante que surtimos. |
+| Cientos de integraciones SaaS listas | **n8n, Zapier, Make** | No compite *en catálogo*. El suyo *es* el producto; los diez skills de aquí son [ejemplos de referencia](skills/), no un inventario — la historia de integración es `aura connect` (cualquier spec OpenAPI se vuelve skills) y `aura guard` (cualquier servidor MCP), no un estante que surtimos. |
 | Workflows largos, duraderos y reproducibles | **Temporal** | No compite en durabilidad. Temporal sobrevive a la muerte del proceso a mitad de workflow; esto todavía no resume una sesión caída. |
 | Agentes de voz en tiempo real en producción | **LiveKit Agents, Pipecat, OpenAI Realtime** | Mucha menos madurez. El primer sonido de una respuesta llega a ~0,41 s en una máquina de desarrollo con modelo local — nunca medido contra estos lado a lado, así que léelo como "usable", no como "competitivo". Elige esos salvo que necesites la voz sobre el *mismo* runtime que el resto. |
 | Una librería de agentes dentro de tu app | **LangGraph, CrewAI, AutoGen** | Forma distinta. Esas son librerías con las que construyes; esto es un proceso que instalas al lado de sistemas existentes. |
@@ -1369,7 +1369,8 @@ sobre un runtime nativo, cada uno con una cadena de degradación declarada:
 | [`skills/asr`](skills/asr/) | `sensorial.asr.transcribe` | faster-whisper (CPU int8). Acepta un WAV completo en `audio_in`, o un stream PCM en vivo en `audio_chunk_in` con transcripciones parciales mientras la persona todavía habla. Termina una utterance por señal del cliente, por silencio final, o por un tope duro. |
 | [`skills/tts`](skills/tts/) | `motor.tts.speak` | piper (opcional) → voces del SO (SAPI/espeak). Emite PCM en trozos de ~200ms para un oyente en vivo, sea cual sea el backend, más la cláusula entera como WAV. |
 | [`skills/sentence-chunker`](skills/sentence-chunker/) | `logical.text.sentence_chunk` | Agrupa un stream de tokens en cláusulas. Ponlo entre un LLM en streaming y cualquier cosa que trabaje con frases, o el sintetizador se dispara una vez por token. |
-| [`skills/model-manager`](skills/model-manager/) | `motor.models.manage` | listar / catálogo / búsqueda en HF / descargar / borrar |
+| [`skills/model-manager`](skills/model-manager/) | `motor.models.manage` | listar / catálogo / búsqueda en HF / descargar / borrar / set-active |
+| [`skills/model-fit`](skills/model-fit/) | `sensorial.hardware.modelfit` | Lee RAM, CPU y GPU/VRAM y ordena el catálogo por lo que realmente corre aquí, con tokens/s estimados y las suposiciones detrás. Solo librería estándar, así que responde antes de instalar nada. |
 | [`skills/memory-context`](skills/memory-context/) | `memory.context.window` | SQLite (embebido, archivo local) — persiste turnos por sesión a través de reinicios, `recall` devuelve una ventana recortada a un presupuesto de tokens configurable (drop-oldest, o resumen vía `aura.llm.ChatBackend`). El historial propio de llm-chat es en proceso y sin límite (ver su `main.py`); este es la alternativa durable y consciente del presupuesto — se cablea a un grafo explícitamente, no se conecta solo. |
 | [`skills/postgres-cdc`](skills/postgres-cdc/) | `sensorial.postgres.cdc` | Convierte el stream de replicación lógica propio de Postgres (`test_decoding`, nada que instalar) en eventos `std/db-change@1`, uno por fila cambiada. |
 
@@ -1392,6 +1393,42 @@ de una muerte silenciosa por falta de memoria:
 ```
 
 ---
+
+
+### Elegir un modelo, de punta a punta
+
+Cuatro pasos, y el tercero es el que faltaba:
+
+```bash
+# 1 · qué corre aquí siquiera
+aura do "rank which models fit on this machine" --yes
+
+# 2 · descárgalo, por el skill motor gateado
+#     {"action": "download", "model_id": "gemma-3-4b-it"}
+
+# 3 · nómbralo como el que se usa
+#     {"action": "set-active", "model": "gemma-3-4B-it-Q4_K_M.gguf"}
+
+# 4 · reinicia llm-chat; ahora carga ese archivo
+```
+
+`set-active` escribe `~/.aura/models/active.json`, y `llm-chat` resuelve su
+modelo en este orden: `AURA_MODEL_PATH`, luego su propia clave de config
+`model`, luego ese archivo, y por último el default incorporado. Cada paso se
+salta en vez de fallar cuando lo que nombra no está, así que un puntero a un
+modelo borrado degrada al siguiente en lugar de dejar al nodo sin skill de chat.
+Borrar el modelo activo limpia el puntero.
+
+**El registro todavía no llega al planner.** El backend local de
+`skills/planner` sigue leyendo `AURA_MODEL_FILE` con su propio default, así que
+marcar un modelo como activo cambia lo que carga `llm-chat` y no lo que razona
+`aura do`. Conviene saberlo antes de concluir que el cambio no hizo nada: sí lo
+hizo, para la mitad del sistema.
+
+**Y cada uno carga su propia copia.** Son procesos separados, así que un modelo
+de 4B marcado activo ocupa unos 2,4 GB residentes dos veces. `model-fit`
+dimensiona *un* modelo contra la máquina entera; no sabe cuántos skills piensan
+cargar uno.
 
 ## Audit bundles
 
@@ -2655,7 +2692,7 @@ sdk/node/           @deepaxiom/aura — expone las funciones de una app como
 skills/             Skills de referencia — ejemplos trabajados que llevan el
                     org `example/`, no un catálogo. Uno por forma: echo (el
                     mínimo), llm-chat, asr, tts, sentence-chunker, planner,
-                    model-manager, memory-context, postgres-cdc. Ver
+                    model-manager, model-fit, memory-context, postgres-cdc. Ver
                     skills/README.md.
 scripts/            release.ps1 — construye un zip distribuible. gen_ssot.py
                     (spec/ → constantes generadas), gen_ui_reference.py

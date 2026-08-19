@@ -1,6 +1,6 @@
 # Reference skills — demos, not a catalogue
 
-Everything in this directory is a **demo**. These nine skills exist to show how a
+Everything in this directory is a **demo**. These ten skills exist to show how a
 skill is written, not to be the set of skills Deep Axiom offers, and not to be
 depended on in production. Their manifests carry the `example/` org for exactly
 that reason: `example/motor/tts` is a demonstration of a `motor` skill, not a

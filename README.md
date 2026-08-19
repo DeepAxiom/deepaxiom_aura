@@ -269,7 +269,11 @@ at its model layer — the canvas's graph model against the kernel's own C2
 conformance vectors — but not its components. A
 59-check conformance suite runs the kernel over the wire, and separate CI jobs
 prove the ledger detects tampering by editing a real database behind a real
-binary's back, and that a scoped token cannot act as the operator. Read
+binary's back, that a scoped token cannot act as the operator, that the
+container comes up healthy on an empty volume and drains on SIGTERM, and that a
+node started **with its default auth** can be driven end to end — that last one
+exists because every other lane starts its node with `--no-auth`, and three
+credential bugs shipped through the gap. Read
 [Security model](GUIDE.md#security-model) before you expose a port, and [the roadmap](ROADMAP.md) for what is left and what it blocks.
 This is pre-production; treat it that way.
 
@@ -300,7 +304,7 @@ and host your own* rather than *install strangers' code* — the distribution,
 signing and discovery are real and tested; the sandbox that would make a public
 catalogue safe is not there yet.
 
-**The nine skills in [`skills/`](skills/) are demos.** They exist to show the
+**The ten skills in [`skills/`](skills/) are demos.** They exist to show the
 shape of a skill and give a cold node something to run — not to be a catalogue,
 and not to be depended on in production; hence the `example/` org in every
 manifest. Copy the closest one and replace it. Start from

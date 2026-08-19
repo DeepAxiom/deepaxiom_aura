@@ -44,6 +44,7 @@ status](GUIDE.md#milestone-status).
 | **TEE chain verification** | Hardware evidence reaches `bound` — the quote is tied to that exact declaration and checkable offline. `verified` requires a vendor chain check, which is declared and refused rather than stubbed, because it has never run against real hardware. |
 | **Short-lived browser credentials** | A web frontend cannot hold the operator token. Today the app's own backend proxies. A session-scoped, short-lived credential would remove that hop. |
 | **Multi-device view of one live session** | One session, one socket. The "many clients watching one conversation" shape does not exist. |
+| **One active model, for the whole node** | `model-manager` marks a model active and `llm-chat` follows it; the planner's local backend still reads `AURA_MODEL_FILE` with its own default, so the switch moves half the system. Both also load their own copy of the weights, which a 4B model makes expensive on a small card. |
 
 ## Standards work
 

@@ -45,6 +45,7 @@ hitos](GUIDE-ES.md#estado-de-los-hitos).
 | **Verificación de cadena TEE** | La evidencia de hardware llega a `bound` — el quote está atado a esa declaración concreta y es comprobable sin conexión. `verified` exige verificar la cadena del fabricante, que está declarada y rechazada en vez de stubbeada, porque nunca ha corrido contra hardware real. |
 | **Credenciales cortas para el navegador** | Un frontend web no puede tener el token del operador. Hoy el backend de la app hace de proxy. Una credencial corta con alcance de sesión quitaría ese salto. |
 | **Vista multidispositivo de una sesión viva** | Una sesión, un socket. La forma "muchos clientes mirando una conversación" no existe. |
+| **Un modelo activo para todo el nodo** | `model-manager` marca un modelo como activo y `llm-chat` lo sigue; el backend local del planner sigue leyendo `AURA_MODEL_FILE` con su propio default, así que el cambio mueve la mitad del sistema. Además cada uno carga su propia copia de los pesos, lo que con un 4B sale caro en una tarjeta pequeña. |
 
 ## Trabajo de estándares
 

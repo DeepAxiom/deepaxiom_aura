@@ -284,8 +284,12 @@ su capa de modelo — el modelo de grafos del lienzo contra los propios vectores
 conformidad C2 del kernel — pero no en sus componentes. Una
 suite de conformidad de 59 verificaciones ejercita el kernel sobre el cable, y
 jobs de CI aparte demuestran que el ledger detecta manipulación editando una base
-de datos real a espaldas de un binario real, y que un token con alcance no puede
-actuar como el operador. Lee [Modelo de
+de datos real a espaldas de un binario real, que un token con alcance no puede
+actuar como el operador, que el contenedor llega a healthy sobre un volumen
+vacío y drena con SIGTERM, y que un nodo arrancado **con su auth por defecto** se
+puede conducir de punta a punta — ese último existe porque todos los demás
+carriles arrancan con `--no-auth`, y por ese hueco se colaron tres bugs de
+credenciales. Lee [Modelo de
 seguridad](GUIDE-ES.md#modelo-de-seguridad) antes de exponer un puerto, y [el roadmap](ROADMAP-ES.md) para lo que falta y a
 quién le bloquea. Esto es pre-producción; trátalo como tal.
 
@@ -317,7 +321,7 @@ honesto de hoy es *publica y aloja los tuyos* y no *instala código de
 desconocidos* — la distribución, la firma y el descubrimiento son reales y están
 probados; el sandbox que haría seguro un catálogo público todavía no está.
 
-**Los nueve skills en [`skills/`](skills/) son demos.** Existen para mostrar la
+**Los diez skills en [`skills/`](skills/) son demos.** Existen para mostrar la
 forma de un skill y darle a un nodo frío algo que correr — no para ser un
 catálogo, y no para que dependas de ellos en producción; por eso llevan el org
 `example/` en todos sus manifiestos. Copia el más cercano y reemplázalo. Empieza
