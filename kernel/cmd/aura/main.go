@@ -225,6 +225,10 @@ func cmdUp(args []string) {
 	maxSessions := fs.Int("max-sessions", 1000, "cap on concurrent live sessions (0 = unlimited)")
 	noAuth := fs.Bool("no-auth", false, "disable the bearer token (single-user loopback nodes only)")
 	pprofAddr := fs.String("pprof", "", "expose Go profiling on this address (e.g. 127.0.0.1:6060); off by default")
+	withExamples := fs.Bool("with-examples", false,
+		"also start the example skills in skills/ (opt-in; a node's skills are normally chosen by an operator)")
+	examplesDir := fs.String("examples-dir", "skills",
+		"where --with-examples looks for skill directories")
 	openWitness := fs.Bool("open-witness", false,
 		"let any node anchor its ledger here without a token (rate- and capacity-bounded)")
 	anchor := fs.String("anchor", "",
@@ -393,6 +397,23 @@ func cmdUp(args []string) {
 		}
 		serveErr <- srv.ListenAndServe()
 	}()
+
+	// The examples come up once the listener exists: they dial straight back
+	// in, and a node that is not serving yet would make every one of them
+	// report a connection failure and start backing off.
+	//
+	// Synchronous on purpose. Doing this in a goroutine meant assigning the
+	// stop function from one goroutine and reading it in a deferred call on
+	// another — a race on the only thing that shuts the children down.
+	if *withExamples {
+		// They carry the node's own token, because these are the operator's own
+		// example processes. A skill someone else runs should hold a scoped
+		// credential instead; see `aura token issue`.
+		wsURL := fmt.Sprintf("%s://localhost:%d/ws/skill", wsScheme, *port)
+		stopExamples, results := startExamples(*examplesDir, wsURL, token)
+		defer stopExamples()
+		reportExamples(results)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

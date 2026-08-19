@@ -33,12 +33,53 @@ class FakeContext:
 class TestList(unittest.IsolatedAsyncioTestCase):
     async def test_delegates_to_storage_and_emits_models(self):
         models = [{"name": "a.gguf", "size_mb": 1.0}]
-        with patch.object(main, "list_models", return_value=models) as mocked:
+        with patch.object(main, "list_models", return_value=models),              patch.object(main, "read_active", return_value=None):
             ctx = FakeContext({"action": "list"})
             await main.handle(ctx)
-        mocked.assert_called_once()
-        self.assertEqual(ctx.emitted, [("result_out", {"action": "list", "models": models})])
+        # `active` travels with the list: "which of these is in use" is the
+        # question that follows it every time.
+        self.assertEqual(
+            ctx.emitted,
+            [("result_out", {"action": "list", "models": models, "active": None})],
+        )
         self.assertEqual(ctx.errors, [])
+
+    async def test_list_reports_the_active_model(self):
+        active = {"model": "a.gguf", "model_id": "gemma-3-4b-it", "set_at": 1}
+        with patch.object(main, "list_models", return_value=[]),              patch.object(main, "read_active", return_value=active):
+            ctx = FakeContext({"action": "list"})
+            await main.handle(ctx)
+        self.assertEqual(ctx.emitted[0][1]["active"], active)
+
+
+class TestSetActive(unittest.IsolatedAsyncioTestCase):
+    async def test_marks_a_downloaded_file_as_active(self):
+        record = {"model": "a.gguf", "set_at": 1}
+        with patch.object(main, "set_active", return_value=record) as mocked:
+            ctx = FakeContext({"action": "set-active", "model": "a.gguf"})
+            await main.handle(ctx)
+        mocked.assert_called_once()
+        self.assertEqual(ctx.emitted, [("result_out", {"action": "set-active", "active": record})])
+        self.assertEqual(ctx.errors, [])
+
+    async def test_requires_a_name(self):
+        ctx = FakeContext({"action": "set-active"})
+        await main.handle(ctx)
+        self.assertEqual(ctx.emitted, [])
+        self.assertEqual(len(ctx.errors), 1)
+
+    async def test_deleting_the_active_model_clears_the_pointer(self):
+        """A pointer to a file that is gone is worse than no pointer."""
+        with patch.object(main, "delete_model"),              patch.object(main, "read_active", return_value={"model": "a.gguf"}),              patch.object(main, "clear_active") as cleared:
+            ctx = FakeContext({"action": "delete", "model_id": "a.gguf"})
+            await main.handle(ctx)
+        cleared.assert_called_once()
+
+    async def test_deleting_a_different_model_leaves_the_pointer(self):
+        with patch.object(main, "delete_model"),              patch.object(main, "read_active", return_value={"model": "other.gguf"}),              patch.object(main, "clear_active") as cleared:
+            ctx = FakeContext({"action": "delete", "model_id": "a.gguf"})
+            await main.handle(ctx)
+        cleared.assert_not_called()
 
 
 class TestCatalog(unittest.IsolatedAsyncioTestCase):

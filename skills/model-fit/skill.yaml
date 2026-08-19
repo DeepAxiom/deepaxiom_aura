@@ -1,0 +1,52 @@
+id: "example/sensorial/model-fit"
+version: "1.0.0"
+protocol: "1"
+
+name: "Model fit"
+description: "Reads this machine's RAM, CPU and GPU/VRAM and ranks which catalogue models will actually run on it, with an estimated tokens/sec and the assumptions behind every number. Answers 'what can I download' before anything is installed. Actions: probe | rank."
+capability: "sensorial.hardware.modelfit"
+type: sensorial
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: command_in
+      schema: "deepaxiom/model-command@1"
+  egress:
+    - name: result_out
+      schema: "deepaxiom/model-result@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "128Mi"
+  accelerator: none
+
+# Reads the machine, changes nothing. No egress: the whole point is that it
+# answers before anything has been downloaded, so it has nothing to ask the
+# network. It shells out to nvidia-smi when that is on PATH, which is why the
+# filesystem permission is read-only rather than absent.
+permissions:
+  egress_http: []
+  filesystem: "read"
+  channels: declared-only
+
+config:
+  - key: "context_window"
+    type: int
+    default: 8192
+    min: 512
+    max: 131072
+    description: "Context length to size the KV cache against. A longer context needs more memory and can turn a model that fits into one that does not, so the ranking is only true for this value."
+  - key: "ram_headroom"
+    type: float
+    default: 0.7
+    min: 0.3
+    max: 0.95
+    description: "Fraction of system RAM a model may plan to use. Below 1.0 on purpose: a machine that starts swapping mid-generation looks like a hang to whoever is waiting."
+
+signature: null

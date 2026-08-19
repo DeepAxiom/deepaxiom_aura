@@ -37,6 +37,10 @@ export const COMMANDS: CommandGroup[] = [
           {
             "syntax": "[--policy <file>] [--max-sessions 1000]",
             "purpose": "--policy loads an authorization document (deny-by-default for motor.*); --max-sessions caps live sessions, which matters when an ingress route is public."
+          },
+          {
+            "syntax": "[--with-examples] [--examples-dir skills]",
+            "purpose": "Also start the example skills in skills/. Opt-in, never the default: a node's skills are normally chosen by an operator, and the kernel is a Go binary that should not depend on a Python toolchain. Each is launched and watched — one that dies reports its own last line of stderr, which for a missing dependency is the pip line you need."
           }
         ]
       },

@@ -189,6 +189,15 @@ jobs:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
+      # Stdlib only, so it runs everywhere. Its first test reads
+      # model-manager's catalogue and fails if this skill recommends a model
+      # that one cannot fetch.
+      - name: model fit
+        working-directory: skills/model-fit
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
       - name: model manager
         working-directory: skills/model-manager
         env:

@@ -32,6 +32,7 @@ does it take to write the one you need". These examples exist to answer that.
 | [`memory-context/`](memory-context/) | A `memory` skill that survives restarts and trims to a token budget. |
 | [`planner/`](planner/) | Reads the live catalogue and compiles a goal into an executable graph. |
 | [`model-manager/`](model-manager/) | A `motor` skill that acts on the world — so every call through it is gated and sealed. |
+| [`model-fit/`](model-fit/) | Reads this machine and ranks which catalogue models will actually run on it. Stdlib only, deliberately — the skill that answers "what can I install" has to work before anything is installed. |
 | [`postgres-cdc/`](postgres-cdc/) | Wrapping an external system: logical replication becomes causal events. |
 
 The five types (`sensorial`, `cognitive`, `motor`, `memory`, `logical`) are the

@@ -35,6 +35,11 @@ permissions:
   channels: declared-only
 
 config:
+  - key: "model"
+    type: string
+    default: ""
+    restart_required: true
+    description: "Filename of a model in ~/.aura/models to load, e.g. gemma-3-4B-it-Q4_K_M.gguf. Empty means follow whatever model-manager marked active, and fall back to the built-in default if nothing is. AURA_MODEL_PATH still overrides both."
   - key: "temperature"
     type: float
     default: 0.7

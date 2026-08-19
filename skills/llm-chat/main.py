@@ -34,20 +34,33 @@ import os
 import threading
 from dataclasses import dataclass, field
 
+import models
 from aura import ChatBackend, Context, Skill, run_all, sha256_text
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("llm-chat")
 
-MODEL_REPO = os.getenv("AURA_MODEL_REPO", "Qwen/Qwen2.5-1.5B-Instruct-GGUF")
-MODEL_FILE = os.getenv("AURA_MODEL_FILE", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
-
 skill = Skill()
-# context_window is restart_required (see skill.yaml): read once, at the
-# declared/file default available before the kernel connection even opens —
+
+# Which model, and from where — see models.py for the order. This used to be two
+# constants, so a model downloaded through `model-manager` changed nothing here.
+_choice = models.resolve(skill.config.get("model", ""))
+log.info("model: %s (via %s)",
+         _choice.get("path") or f"{_choice['repo']}/{_choice['file']}", _choice["source"])
+
+if "path" in _choice:
+    # ChatBackend already reads AURA_MODEL_PATH, so a resolved local file is
+    # handed over the way the SDK already understands rather than by widening
+    # its constructor — the SDK is Apache-2.0 and its surface is a contract.
+    os.environ["AURA_MODEL_PATH"] = _choice["path"]
+
+# context_window and model are restart_required (see skill.yaml): read once, at
+# the declared/file default available before the kernel connection even opens —
 # a value changed live only takes effect after this process restarts.
 backend = ChatBackend(
-    model_repo=MODEL_REPO, model_file=MODEL_FILE, ctx=skill.config["context_window"],
+    model_repo=_choice.get("repo", models.DEFAULT_REPO),
+    model_file=_choice.get("file", models.DEFAULT_FILE),
+    ctx=skill.config["context_window"],
 )
 
 _history: dict[str, list[dict]] = {}
