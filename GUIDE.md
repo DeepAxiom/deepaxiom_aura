@@ -660,22 +660,30 @@ a `motor` skill that acts on the world.
 The frontend ([`ui/`](ui/), React 19 + Vite + TypeScript, internationalized with
 react-i18next — English base, Spanish included) is **built into the binary** via
 `go:embed`. `aura up` serves it at `http://localhost:9080` with no Node process at
-runtime. Ten views, opening on the Studio:
+runtime. Eight views, opening on the Studio:
 
-- **Studio** — the home screen. State a goal; the planner compiles a graph, it appears
-  on a canvas, and the canvas lights up as the graph runs: nodes glow as data
-  reaches them, a gate pulses while it waits for you, a failure stays red where
-  it happened. The plan arrives complete (the planner emits one `std/plan@1`),
-  so the graph is not drawn edge by edge — the execution is what is live. It
-  costs the node nothing: those envelopes already arrive on the session's
-  socket, and activity is batched to one render per animation frame.
+- **Studio** — the home screen, and the only surface for building and running.
+  A palette of live skills, a canvas you drag and wire on, an inspector for
+  every C2 field an edge carries, undo/redo, multi-select and box-select,
+  copy/paste/duplicate, zoom controls, fit, tidy, a minimap, and an IR drawer
+  that round-trips text both ways. State a goal instead and the planner
+  compiles a graph onto the same canvas.
+
+  It replaced two views. Canvas could draw a graph but never showed one
+  working; Operate could run one but showed it as a list beside a result. The
+  graph you edit is the graph that lights up, in the same coordinates.
+
+  Editing is on while nothing runs and goes read-only the moment a session
+  starts — a node that moved must never be ambiguous between "I dragged it"
+  and "something happened". Planning is not live (the planner emits one
+  complete `std/plan@1`, so the graph appears whole); execution is, because
+  every envelope names its node. It costs the node nothing: those envelopes
+  already arrive on the session's socket, and activity is batched to one render
+  per animation frame.
 - **Chat** — pick a graph, stream a conversation, answer human-approval gates
   inline with Approve/Deny buttons.
 - **Voice** — talk to the `voice` graph. Your words appear as you speak them,
   the reply is spoken back as it is written, and speaking over it stops it.
-- **Operate** — the `aura do` flow with a UI: type a goal, watch the planner's
-  reasoning and steps, then the gated execution and result.
-- **Canvas** — author a graph by drawing it. See below.
 - **Skills** — the live capability catalog, color-coded by type, with each
   skill's ports, schemas, and description.
 - **Projections** — connect an OpenAPI spec by pasting it, and flip each

@@ -44,20 +44,20 @@ export function LiveRail({ activity, openId, following, error, onToggleFollow, o
   return (
     <aside className="rail">
       <header className="rail__head">
-        <span className="rail__title">{t("canvas.live.title")}</span>
+        <span className="rail__title">{t("studio.live.title")}</span>
         <button
           className={`rail__follow ${following ? "rail__follow--on" : ""}`}
           onClick={onToggleFollow}
-          title={t("canvas.live.followHelp")}
+          title={t("studio.live.followHelp")}
         >
           <span className={`rail__pulse ${following && liveCount > 0 ? "rail__pulse--beating" : ""}`} />
-          {following ? t("canvas.live.following") : t("canvas.live.paused")}
+          {following ? t("studio.live.following") : t("studio.live.paused")}
         </button>
       </header>
 
       {error && <div className="rail__error">{error}</div>}
 
-      {rows.length === 0 && <div className="rail__empty">{t("canvas.live.empty")}</div>}
+      {rows.length === 0 && <div className="rail__empty">{t("studio.live.empty")}</div>}
 
       <div className="rail__list">
         {rows.map((r) => (
@@ -68,11 +68,11 @@ export function LiveRail({ activity, openId, following, error, onToggleFollow, o
           >
             <span className={`rail__dot ${r.live > 0 ? "rail__dot--live" : ""}`} />
             <span className="rail__id">{r.graphId}</span>
-            {r.live > 0 && <span className="rail__badge">{t("canvas.live.n", { count: r.live })}</span>}
+            {r.live > 0 && <span className="rail__badge">{t("studio.live.n", { count: r.live })}</span>}
             <span className="rail__meta">
               {r.sessions > 0
-                ? t("canvas.live.meta", { events: r.events, when: ago(r.lastStarted, "") })
-                : t("canvas.live.neverRan")}
+                ? t("studio.live.meta", { events: r.events, when: ago(r.lastStarted, "") })
+                : t("studio.live.neverRan")}
             </span>
             {r.errors > 0 && <span className="rail__errors">{r.errors}</span>}
           </button>

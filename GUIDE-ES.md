@@ -615,24 +615,31 @@ un skill `sensorial` que envuelve un sistema externo, y
 El frontend ([`ui/`](ui/), React 19 + Vite + TypeScript, internacionalizado con
 react-i18next — base en inglés, español incluido) está **integrado en el
 binario** vía `go:embed`. `aura up` lo sirve en `http://localhost:9080` sin
-proceso Node en runtime. Diez vistas, abriendo en el Estudio:
+proceso Node en runtime. Ocho vistas, abriendo en el Estudio:
 
-- **Estudio** — la pantalla de inicio. Escribe un objetivo; el planner compila un
-  grafo, este aparece en un lienzo, y el lienzo se enciende mientras el grafo
-  corre: los nodos brillan al llegarles datos, un gate late mientras te espera,
-  un fallo se queda en rojo donde ocurrió. El plan llega completo (el planner
-  emite un solo `std/plan@1`), así que el grafo no se dibuja arista por arista
-  — lo que está en vivo es la ejecución. No le cuesta nada al nodo: esos
+- **Estudio** — la pantalla de inicio, y la única superficie para construir y
+  ejecutar. Una paleta de skills vivos, un lienzo donde arrastras y cableas, un
+  inspector para cada campo C2 de una arista, deshacer/rehacer, selección
+  múltiple y en caja, copiar/pegar/duplicar, controles de zoom, ajustar,
+  ordenar, un minimapa y un cajón de IR que hace round-trip en ambos sentidos.
+  O escribe un objetivo y el planner compila un grafo sobre el mismo lienzo.
+
+  Reemplazó dos vistas. Lienzo podía dibujar un grafo pero nunca mostraba uno
+  funcionando; Operate podía ejecutarlo pero como una lista al lado de un
+  resultado. El grafo que editas es el grafo que se enciende, en las mismas
+  coordenadas.
+
+  La edición está activa mientras nada corre y pasa a solo lectura en cuanto
+  arranca una sesión — un nodo que se movió nunca debe ser ambiguo entre "lo
+  arrastré yo" y "pasó algo". La planificación no está en vivo (el planner
+  emite un solo `std/plan@1`, así que el grafo aparece entero); la ejecución
+  sí, porque cada envelope nombra su nodo. No le cuesta nada al nodo: esos
   envelopes ya llegan por el socket de la sesión, y la actividad se agrupa a un
   render por frame.
 - **Chat** — elige un grafo, transmite una conversación y responde a las puertas
   de aprobación humana en línea con botones Aprobar/Denegar.
 - **Voz** — habla con el grafo `voice`. Tus palabras aparecen mientras las
   dices, la respuesta se habla mientras se escribe, y hablarle encima la para.
-- **Operate** — el flujo de `aura do` con UI: escribe un objetivo, observa el
-  razonamiento y los pasos del planner, y luego la ejecución con puertas y el
-  resultado.
-- **Lienzo** — crea un grafo dibujándolo. Ver más abajo.
 - **Skills** — el catálogo vivo de capacidades, con colores por tipo, con los
   puertos, esquemas y descripción de cada skill.
 - **Projections** — conecta una especificación OpenAPI pegándola, y cambia cada

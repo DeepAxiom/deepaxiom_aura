@@ -1,13 +1,11 @@
 {
   "nav": {
     "chat": "Chat",
-    "operate": "Operar",
     "skills": "Skills",
     "projections": "Proyecciones",
     "graphs": "Grafos",
     "sessions": "Sesiones",
     "voice": "Voz",
-    "canvas": "Lienzo",
     "reference": "Referencia",
     "studio": "Estudio"
   },
@@ -29,20 +27,6 @@
     "deny": "Denegar",
     "approved": "aprobado",
     "denied": "denegado"
-  },
-  "operate": {
-    "title": "Operar",
-    "subtitle": "Un objetivo en lenguaje natural se convierte en plan, grafo y ejecución con aprobaciones.",
-    "placeholder": "p. ej. crea un usuario llamado Grace Hopper en el CRM",
-    "run": "Planificar y ejecutar",
-    "planning": "Planificando…",
-    "reasoning": "Razonamiento",
-    "steps": "Pasos",
-    "executing": "Ejecutando — sesión {{session}}",
-    "result": "Resultado",
-    "completed": "Objetivo completado",
-    "failed": "El plan falló: {{error}}",
-    "needPlanner": "La skill planner debe estar corriendo (skills/planner)."
   },
   "skills": {
     "title": "Skills",
@@ -137,65 +121,6 @@
     "insecureContext": "El micrófono necesita un contexto seguro. localhost vale; una dirección de LAN por http:// plano no — usa https o abre la UI en la propia máquina.",
     "unknownError": "algo falló"
   },
-  "canvas": {
-    "graphIdPlaceholder": "id del grafo",
-    "open": "Abrir grafo…",
-    "new": "Nuevo",
-    "relayout": "Reordenar",
-    "ir": "IR",
-    "irTitle": "IR del grafo C2 — edítalo y aplícalo, o cópialo",
-    "irApply": "Aplicar",
-    "register": "Registrar",
-    "hint": "Elige un skill de la paleta para colocarlo. Arrastra de un puerto de salida a uno de entrada para crear una arista. Rueda para hacer zoom, arrastra el fondo para desplazarte.",
-    "status": {
-      "registered": "Registrado como {{id}}.",
-      "blocked": "Hay {{count}} error(es) que resolver antes de poder registrar este grafo."
-    },
-    "palette": {
-      "search": "Buscar skills…",
-      "empty": "Ningún skill del catálogo coincide. Un nodo recién arrancado tiene el catálogo vacío hasta que los skills se conectan."
-    },
-    "inspector": {
-      "nothing": "Selecciona un nodo o una arista para ver lo que declara.",
-      "node": "Nodo",
-      "edge": "Arista",
-      "ref": "Ref",
-      "refHelp": "El nombre local de este nodo dentro del grafo. Minúsculas, dígitos, guion o guion bajo.",
-      "resolve": "Capacidad (resolve)",
-      "resolveHelp": "Una demanda que el kernel satisface al instanciar. Prefiérelo a un paquete: permite que el nodo degrade a otro proveedor.",
-      "use": "Paquete (use)",
-      "useHelp": "Fija un paquete exacto en vez de una capacidad. Tiene prioridad sobre resolve.",
-      "type": "Tipo",
-      "format": "Formato",
-      "clientNote": "El pseudo-nodo client es la conexión de la aplicación externa. C2 lo deduce de las aristas que lo nombran, así que nunca se escribe en nodes[] y no se puede eliminar.",
-      "gate": "Gate",
-      "gateUnset": "— sin declarar —",
-      "gateHelp": "human-approval retiene el mensaje hasta que una persona confirme. La política del nodo puede añadir uno igualmente; un grafo puede pedir más supervisión, nunca menos.",
-      "gateMotorHelp": "Este destino actúa sobre el mundo. Por la regla 5 de C2 el kernel añade un gate human-approval cuando no se declara ninguno — en modo published rechaza la sesión en su lugar.",
-      "qos": "QoS",
-      "qosUnset": "— por defecto (reliable) —",
-      "qosReliable": "un stream ordenado, FIFO por arista",
-      "qosRealtime": "datagrama; no puede frenar ni ser frenado",
-      "qosBulk": "su propio stream por transferencia",
-      "speculative": "Especulativa",
-      "speculativeHelp": "Entrega sobre salida parcial y descarta el trabajo si la salida final difiere. Se rechaza hacia un skill motor, y junto a un gate human-approval.",
-      "deadline": "Deadline (ms)",
-      "deadlineHelp": "Cuánto vale la pena esperar una entrega aquí. Absoluto una vez en el cable; un salto posterior puede apretarlo, nunca extenderlo.",
-      "priority": "Prioridad",
-      "priorityHelp": "El más alto gana cuando dos cadenas compiten por el mismo skill.",
-      "delete": "Eliminar"
-    },
-    "live": {
-      "title": "Corriendo ahora",
-      "following": "Siguiendo",
-      "paused": "En pausa",
-      "followHelp": "Mientras sigue, el lienzo consulta al nodo y abre un grafo que aparezca sin que esta UI lo haya registrado — un grafo del planner con `aura do`, o uno que trajo un peer federado.",
-      "empty": "Todavía no hay ningún grafo registrado en este nodo.",
-      "neverRan": "nunca ejecutado",
-      "n": "{{count}} en vivo",
-      "meta": "{{events}} eventos · hace {{when}}"
-    }
-  },
   "reference": {
     "search": "Buscar en todo…",
     "noMatch": "Nada coincide con esa búsqueda.",
@@ -215,7 +140,7 @@
     "run": "Ejecutar",
     "running": "Ejecutando…",
     "empty": "Escribe un objetivo arriba. El planner elige los skills, compila un grafo y aparece aquí — y luego se enciende mientras corre.",
-    "hint": "El progreso, los resultados y cualquier gate de aprobación llegan aquí, mientras el grafo de la izquierda muestra dónde están los datos.",
+    "hint": "Elige un skill de la paleta, o escribe un objetivo arriba y deja que el planner lo construya. Arrastra de un puerto de salida a uno de entrada para crear una arista. Shift+arrastrar para seleccionar en caja, rueda para zoom.",
     "planTimeout": "se agotó el tiempo esperando el plan",
     "unreachable": "kernel inalcanzable",
     "needPlanner": "no hay ningún skill planner conectado — arranca skills/planner, o usa `aura up --with-examples`",
@@ -225,6 +150,36 @@
       "executing": "corriendo",
       "done": "listo",
       "failed": "falló"
+    },
+    "graphId": "id del grafo",
+    "open": "Abrir grafo…",
+    "register": "Registrar",
+    "runCanvas": "Ejecutar este grafo",
+    "searchSkills": "Buscar skills…",
+    "noSkills": "Ningún skill coincide. Un nodo nuevo tiene el catálogo vacío hasta que se conecten skills.",
+    "undo": "Deshacer (Ctrl+Z)",
+    "redo": "Rehacer (Ctrl+Shift+Z)",
+    "duplicate": "Duplicar (Ctrl+D)",
+    "delete": "Eliminar (Supr)",
+    "zoomIn": "Acercar",
+    "zoomOut": "Alejar",
+    "fit": "Ajustar",
+    "tidy": "Ordenar",
+    "ir": "IR",
+    "irTitle": "IR del grafo C2 — edítalo y aplícalo, o cópialo",
+    "irApply": "Aplicar",
+    "registered": "Registrado como {{id}}.",
+    "blocked": "Hay {{count}} error(es) que resolver primero.",
+    "sideHint": "Selecciona un nodo o arista para inspeccionarlo. Mientras un grafo corre, el progreso, los resultados y los gates aparecen aquí.",
+    "live": {
+      "title": "Corriendo ahora",
+      "following": "Siguiendo",
+      "paused": "En pausa",
+      "followHelp": "Mientras sigue, el estudio consulta al nodo y lista un grafo que aparezca sin que esta UI lo haya registrado.",
+      "empty": "Todavía no hay ningún grafo registrado en este nodo.",
+      "neverRan": "nunca ejecutado",
+      "n": "{{count}} en vivo",
+      "meta": "{{events}} eventos · hace {{when}}"
     }
   }
 }

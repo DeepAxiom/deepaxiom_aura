@@ -344,3 +344,52 @@
   .livenode--waiting .gnode { animation: none; }
   .livenode--idle .gnode { transition: none; }
 }
+
+/* ── studio: build bar, minimap, box select ───────────────────────── */
+.studio__tools {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 14px; border-bottom: 1px solid var(--border);
+  background: var(--bg-raised); flex-shrink: 0;
+}
+.studio__id { width: 170px; font-family: var(--mono); font-size: 12px; }
+.studio__open { width: 150px; font-size: 12px; }
+.studio__sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.studio__spacer { flex: 1; }
+.studio__zoom {
+  font-family: var(--mono); font-size: 11px; color: var(--text-faint);
+  min-width: 38px; text-align: center;
+}
+.iconbtn {
+  width: 26px; height: 26px; border-radius: var(--radius-sm);
+  color: var(--text-dim); font-size: 13px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+.iconbtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.iconbtn:disabled { opacity: 0.35; cursor: default; }
+
+/* A running graph is read-only: a node that moved must never be ambiguous
+   between "I dragged it" and "something happened". */
+.canvas-surface--running .gnode { cursor: default; }
+.canvas-surface--running .gport__dot { pointer-events: none; }
+
+.selectbox {
+  fill: color-mix(in srgb, var(--accent) 12%, transparent);
+  stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3;
+}
+
+.studio__map { position: absolute; right: 12px; bottom: 12px; opacity: 0.92; }
+.minimap { display: block; cursor: pointer; }
+.minimap__bg { fill: var(--bg-raised); stroke: var(--border); }
+.minimap__node { fill: var(--border-strong); }
+.minimap__node--client { fill: var(--accent); }
+.minimap__view { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent); stroke-width: 1; }
+
+.studio__activity { display: flex; flex-direction: column; gap: 10px; }
+
+/* The rail shares the left column with the palette rather than crowding it
+   out: skills are what you reach for while building, so they keep the space. */
+.palette .rail {
+  width: auto; border-right: none; border-top: 1px solid var(--border);
+  max-height: 38%; flex-shrink: 0;
+}

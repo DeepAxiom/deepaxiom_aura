@@ -1,13 +1,11 @@
 {
   "nav": {
     "chat": "Chat",
-    "operate": "Operate",
     "skills": "Skills",
     "projections": "Projections",
     "graphs": "Graphs",
     "sessions": "Sessions",
     "voice": "Voice",
-    "canvas": "Canvas",
     "reference": "Reference",
     "studio": "Studio"
   },
@@ -29,20 +27,6 @@
     "deny": "Deny",
     "approved": "approved",
     "denied": "denied"
-  },
-  "operate": {
-    "title": "Operate",
-    "subtitle": "A natural-language goal becomes a plan, a graph, and a gated execution.",
-    "placeholder": "e.g. create a user named Grace Hopper in the CRM",
-    "run": "Plan & run",
-    "planning": "Planning…",
-    "reasoning": "Reasoning",
-    "steps": "Steps",
-    "executing": "Executing — session {{session}}",
-    "result": "Result",
-    "completed": "Goal completed",
-    "failed": "Plan failed: {{error}}",
-    "needPlanner": "The planner skill must be running (skills/planner)."
   },
   "skills": {
     "title": "Skills",
@@ -137,65 +121,6 @@
     "insecureContext": "A microphone needs a secure context. localhost works; a LAN address over plain http:// does not — use https or open the UI on the machine itself.",
     "unknownError": "something went wrong"
   },
-  "canvas": {
-    "graphIdPlaceholder": "graph id",
-    "open": "Open graph…",
-    "new": "New",
-    "relayout": "Re-layout",
-    "ir": "IR",
-    "irTitle": "C2 graph IR — edit and apply, or copy out",
-    "irApply": "Apply",
-    "register": "Register",
-    "hint": "Pick a skill from the palette to place it. Drag from an output port to an input port to wire an edge. Scroll to zoom, drag the background to pan.",
-    "status": {
-      "registered": "Registered as {{id}}.",
-      "blocked": "{{count}} error(s) must be resolved before this graph can be registered."
-    },
-    "palette": {
-      "search": "Search skills…",
-      "empty": "No skill in the catalogue matches. A fresh node has an empty catalogue until skills connect to it."
-    },
-    "inspector": {
-      "nothing": "Select a node or an edge to see what it declares.",
-      "node": "Node",
-      "edge": "Edge",
-      "ref": "Ref",
-      "refHelp": "This node's local name inside the graph. Lowercase, digits, dash or underscore.",
-      "resolve": "Capability (resolve)",
-      "resolveHelp": "A demand the kernel satisfies at instantiation. Prefer this over a package: it lets the node degrade to another provider.",
-      "use": "Package (use)",
-      "useHelp": "Pin an exact package instead of a capability. Overrides resolve.",
-      "type": "Type",
-      "format": "Format",
-      "clientNote": "The client pseudo-node is the external application connection. C2 implies it from the edges that name it, so it is never written into nodes[] and cannot be removed.",
-      "gate": "Gate",
-      "gateUnset": "— not declared —",
-      "gateHelp": "human-approval holds the message until a person confirms. Node policy may add one regardless; a graph can ask for more scrutiny, never less.",
-      "gateMotorHelp": "This destination acts on the world. C2 rule 5 means the kernel adds a human-approval gate when none is declared — in published mode it refuses the session instead.",
-      "qos": "QoS",
-      "qosUnset": "— default (reliable) —",
-      "qosReliable": "one ordered stream, FIFO per edge",
-      "qosRealtime": "datagram; cannot stall or be stalled",
-      "qosBulk": "its own stream per transfer",
-      "speculative": "Speculative",
-      "speculativeHelp": "Deliver on partial upstream output and discard the work if the final output differs. Refused into a motor skill, and refused alongside a human-approval gate.",
-      "deadline": "Deadline (ms)",
-      "deadlineHelp": "How long a delivery here is worth waiting for. Absolute once on the wire; a later hop may tighten it, never extend it.",
-      "priority": "Priority",
-      "priorityHelp": "Higher wins when two chains contend for the same skill.",
-      "delete": "Delete"
-    },
-    "live": {
-      "title": "Running now",
-      "following": "Following",
-      "paused": "Paused",
-      "followHelp": "While following, the canvas polls the node and opens a graph that appears without this UI registering it — a planner graph from `aura do`, or one a federated peer brought.",
-      "empty": "No graph registered on this node yet.",
-      "neverRan": "never run",
-      "n": "{{count}} live",
-      "meta": "{{events}} events · {{when}} ago"
-    }
-  },
   "reference": {
     "search": "Search everything…",
     "noMatch": "Nothing matches that search.",
@@ -215,7 +140,7 @@
     "run": "Run",
     "running": "Running…",
     "empty": "State a goal above. The planner picks the skills, compiles a graph, and it appears here — then lights up as it runs.",
-    "hint": "Progress, results and any approval gate land here while the graph on the left shows where the data is.",
+    "hint": "Pick a skill from the palette, or state a goal above and let the planner build one. Drag an output port to an input to wire an edge. Shift-drag to box-select, scroll to zoom.",
     "planTimeout": "timed out waiting for the plan",
     "unreachable": "kernel unreachable",
     "needPlanner": "no planner skill is connected — start skills/planner, or run `aura up --with-examples`",
@@ -225,6 +150,36 @@
       "executing": "running",
       "done": "done",
       "failed": "failed"
+    },
+    "graphId": "graph id",
+    "open": "Open graph…",
+    "register": "Register",
+    "runCanvas": "Run this graph",
+    "searchSkills": "Search skills…",
+    "noSkills": "No skill matches. A fresh node has an empty catalogue until skills connect.",
+    "undo": "Undo (Ctrl+Z)",
+    "redo": "Redo (Ctrl+Shift+Z)",
+    "duplicate": "Duplicate (Ctrl+D)",
+    "delete": "Delete (Del)",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "fit": "Fit",
+    "tidy": "Tidy",
+    "ir": "IR",
+    "irTitle": "C2 graph IR — edit and apply, or copy out",
+    "irApply": "Apply",
+    "registered": "Registered as {{id}}.",
+    "blocked": "{{count}} error(s) must be resolved first.",
+    "sideHint": "Select a node or edge to inspect it. While a graph runs, progress, results and approval gates land here.",
+    "live": {
+      "title": "Running now",
+      "following": "Following",
+      "paused": "Paused",
+      "followHelp": "While following, the studio polls the node and lists a graph that appears without this UI registering it.",
+      "empty": "No graph registered on this node yet.",
+      "neverRan": "never run",
+      "n": "{{count}} live",
+      "meta": "{{events}} events · {{when}} ago"
     }
   }
 }

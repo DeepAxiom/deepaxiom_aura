@@ -5,9 +5,7 @@ import type { Health } from "../api/types";
 import { LANGUAGES, setLanguage } from "../i18n";
 import { SPEC_VERSION } from "../reference/generated";
 import {
-  IconBolt,
   IconBook,
-  IconCanvas,
   IconChat,
   IconGraph,
   IconGrid,
@@ -22,8 +20,6 @@ export type ViewId =
   | "studio"
   | "chat"
   | "voice"
-  | "operate"
-  | "canvas"
   | "skills"
   | "projections"
   | "graphs"
@@ -34,8 +30,6 @@ const NAV: { id: ViewId; icon: (p: { size?: number }) => React.ReactNode }[] = [
   { id: "studio", icon: IconStudio },
   { id: "chat", icon: IconChat },
   { id: "voice", icon: IconMic },
-  { id: "operate", icon: IconBolt },
-  { id: "canvas", icon: IconCanvas },
   { id: "skills", icon: IconGrid },
   { id: "projections", icon: IconPlug },
   { id: "graphs", icon: IconGraph },
