@@ -2177,26 +2177,43 @@ que corra. Esa parte del modelo de confianza es real — ver
 
 ### Qué ya lo exige
 
-El resto de esta sección describe mecanismos. Esta parte dice por qué no son
-opcionales, porque la fecha es concreta y ya pasó la etapa de borrador.
+El resto de esta sección describe mecanismos. Esta parte dice qué los obliga, que
+es algo concreto, superada ya la etapa de borrador y —desde julio de 2026— más
+tardío de lo que era.
 
 **El [Reglamento (UE) 2024/1689](https://artificialintelligenceact.eu/) — el
-Reglamento de IA — aplica a sistemas de alto riesgo desde el 2 de agosto de
-2026.** Dos de sus artículos hablan directamente de lo que un runtime debe
-emitir, no de lo que una organización debe prometer:
+Reglamento de IA — exige esto a los sistemas de alto riesgo desde el 2 de
+diciembre de 2027.** La fecha era el 2 de agosto de 2026 hasta que el
+[Reglamento (UE) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj), el
+Digital Omnibus sobre IA (en vigor el 27 de julio de 2026), aplazó el régimen de
+alto riesgo: los sistemas autónomos del Anexo III al **2 de diciembre de 2027**,
+los sistemas embebidos del Anexo I al **2 de agosto de 2028**. Lo que la enmienda
+movió es la fecha de aplicación. El contenido de los artículos 12 y 14 no cambió,
+y ambos hablan directamente de lo que un runtime debe emitir, no de lo que una
+organización debe prometer:
 
 | | Exigencia | Qué la contesta aquí |
 |---|---|---|
 | **Art. 12** — Conservación de registros | Registro *automático* de eventos durante todo el ciclo de vida, al servicio de la identificación de riesgos (Art. 79), la vigilancia poscomercialización (Art. 72) y la supervisión del responsable del despliegue (Art. 26(5)). Los responsables conservan los logs **al menos seis meses**. | El log causal de eventos (C3 regla 7) y el ledger de efectos (C4). Automático porque los escribe el executor, no el autor del grafo. La retención es decisión del operador: el log guarda todo por defecto y `--event-log-max` lo acota — ponlo por encima de tu obligación de retención, no por debajo. |
 | **Art. 14** — Supervisión humana | El sistema puede ser supervisado de forma efectiva por **personas físicas** mientras está en uso. | El gate de aprobación como invariante del kernel, y el **aprobador firmado** — un log que registra que "un humano aprobó" evidencia la supervisión de nadie en particular. Ver [Aprobación firmada](#aprobación-firmada--quién-lo-permitió). |
 
-Otros dos marcos piden la misma evidencia con otro vocabulario. **ISO/IEC 42001**
-cláusula 9.2 exige auditoría interna contra tus propias políticas de IA con una
-cadena documentada desde el hallazgo hasta la corrección — que es `aura audit`
-más `aura why`. Las **normas armonizadas** que operacionalizarán el Artículo 12 —
-prEN 18229-1, ISO/IEC DIS 24970 — siguen en borrador, lo cual conviene saber por
-dos motivos: todavía nadie puede reclamar conformidad con ellas, y la forma de la
-evidencia exigida se está decidiendo ahora, no está zanjada.
+**Sobre el aplazamiento, sin rodeos:** elimina la urgencia, no el requisito. Quien
+esté decidiendo qué construir este trimestre debería pesar dos cosas que el
+aplazamiento no cambia. Primera: **ISO/IEC 42001** cláusula 9.2 exige auditoría
+interna contra tus propias políticas de IA con una cadena documentada desde el
+hallazgo hasta la corrección — que es `aura audit` más `aura why` — y está en
+vigor hoy, es certificable ya, y aparece cada vez más en cuestionarios de compra
+que no esperan a Bruselas. Segunda: un rastro de auditoría es una propiedad de la
+ruta de ejecución, no un módulo a su lado; un sistema que no fue construido para
+emitir esta evidencia se reconstruye, no se extiende, cuando le toca. Eso es un
+argumento para usar los dieciséis meses extra, no para gastarlos.
+
+Las **normas armonizadas** que operacionalizarán el Artículo 12 — prEN 18229-1,
+ISO/IEC DIS 24970 — siguen en borrador, lo cual conviene saber por dos motivos:
+todavía nadie puede reclamar conformidad con ellas, y la forma de la evidencia
+exigida se está decidiendo *durante* el aplazamiento, no antes de él. Eso corta
+en ambos sentidos — el objetivo todavía puede moverse, y hay una ventana
+inusualmente larga para influir en dónde aterriza.
 
 Una advertencia que corresponde a un modelo de seguridad y no a marketing: **nada
 de lo anterior vuelve conforme a un despliegue.** El Artículo 12 es una
@@ -2421,8 +2438,10 @@ bajo qué política. Un modelo configurado pero nunca invocado no aparece; uno
 intercambiado en tiempo de ejecución sí. La salida es CycloneDX 1.6 con
 componentes `machine-learning-model`, así que encaja en herramientas que ya
 existen — relevante para las obligaciones de registro del Reglamento de IA de
-la UE, en vigor desde el 2 de agosto de 2026. Hereda exactamente el estatus de
-C5: un registro fiel de lo que se *afirmó* y de lo que causó.
+la UE, que aplican a sistemas de alto riesgo desde el 2 de diciembre de 2027
+(ver [Modelo de seguridad](#modelo-de-seguridad) para el aplazamiento del
+Omnibus). Hereda exactamente el estatus de C5: un registro fiel de lo que se
+*afirmó* y de lo que causó.
 
 El payload mismo nunca se guarda — solo `payload_sha256` — así que el ledger
 se mantiene pequeño (~300–400 bytes/entrada) y un payload con datos personales
@@ -2736,20 +2755,28 @@ congelados — ninguna cambia C1, C2, C3, C4 ni C5 — pero aún no están
 implementadas. El sandboxing de skills es la que impide que esto sea seguro
 fuera de una red de confianza:
 
-- ~~**Autenticación del nodo y loopback por defecto**~~ — hecho en la Fase 0
-  (ver [Estado de los hitos](#estado-de-los-hitos)). El texto anterior decía: hoy `aura up` escucha en
-  todas las interfaces sin token, sin TLS y sin comprobación de origen ([Modelo
-  de seguridad](#modelo-de-seguridad)). Atar loopback por defecto con una
-  renuncia explícita, restringir la comprobación de origen del WebSocket y un
-  token bearer para la superficie HTTP y WS son el cambio más pequeño que hace
-  seguro correr un nodo en una red compartida. Esto va primero, antes que todo
-  lo demás.
+- ~~**Autenticación del nodo y loopback por defecto**~~ — **hecho.** Un nodo ata
+  loopback, genera un token bearer, comprueba el origen del WebSocket y puede
+  terminar TLS; una política de nodo decide qué puede actuar sobre el mundo y un
+  grafo no puede renunciar a ella. Ver [Modelo de
+  seguridad](#modelo-de-seguridad) y [Estado de los hitos](#estado-de-los-hitos).
+- **Un sandbox microVM para skills `format: source`** — la mayor brecha de
+  seguridad que queda, hoy estrechada en vez de abierta. `--sandbox process`
+  convierte el entorno en una lista de permitidos en lugar de una herencia y
+  enjaula el directorio de trabajo, lo que cierra la fuga accidental de
+  credenciales; `format: wasm` sí está genuinamente aislado. Ninguno de los dos
+  contiene código hostil. Una frontera real significa una microVM (Firecracker,
+  Cloud Hypervisor, Kata) o gVisor, que necesita Linux con KVM — el backend está
+  declarado y **se rechaza al arranque** en vez de simularse, porque una degradación
+  silenciosa sería peor que una ausencia. Ver [Aislamiento de
+  skills](#aislamiento-de-skills).
 - **Lo que los modos `site` y `published` deberían hacer** — identidad
   automática del nodo, canales cifrados entre nodos y permisos evaluados en
-  tiempo de ejecución. Hoy la cadena del modo cambia exactamente un
-  comportamiento (rechazar una arista `motor.*` sin puerta en `published`); el
-  resto del diseño de seguridad progresiva no está implementado, y la tabla del
-  [Modelo de seguridad](#modelo-de-seguridad) así lo dice.
+  tiempo de ejecución. Hoy la cadena del modo cambia dos comportamientos en
+  `published` — una arista `motor.*` sin gate se rechaza en vez de repararse, y
+  una renuncia a nivel de grafo nunca se honra — mientras que `site` sigue
+  comportándose exactamente como `local`. La tabla del [Modelo de
+  seguridad](#modelo-de-seguridad) así lo dice.
 - **Atestación por hardware (TEE)** — la brecha que mantiene una atestación C5
   como *afirmación* en vez de prueba. Un quote de Intel TDX, AMD SEV-SNP o
   NVIDIA Confidential Computing, ligando una medición del proceso que
@@ -2766,9 +2793,6 @@ fuera de una red de confianza:
   librería enlazable en C/Rust con bindings Kotlin/Swift/JS, para que una app de
   TV/móvil/reloj capture y reproduzca streams y ejecute lógica ligera sin un
   nodo completo. Es un esfuerzo de empaquetado; el protocolo ya es el contrato.
-- **Skills Wasm** — un ejecutor `format: wasm` (wazero) para lógica con sandbox
-  duro corriendo in-process. El manifiesto ya transporta `format`; la paridad
-  source/Wasm es un trade-off asumido.
 - **Protocolo de periféricos** — un puente MQTT/BLE mínimo que proyecta sensores
   y controles (que no ejecutan lógica) como puertos de grafo — estructuralmente
   idéntico al host de proyecciones OpenAPI.
@@ -2861,6 +2885,7 @@ elección y no la única opción.
 - [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) — Ed25519. Todas las firmas de este sistema.
 - [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446), [RFC 9000](https://www.rfc-editor.org/rfc/rfc9000) — TLS 1.3 y QUIC, bajo WebTransport.
 - [Reglamento (UE) 2024/1689](https://artificialintelligenceact.eu/) — el Reglamento de IA. Artículos 12 y 14 en particular; ver [Modelo de seguridad](#modelo-de-seguridad).
+- [Reglamento (UE) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj) — el Digital Omnibus sobre IA (en vigor el 27 de julio de 2026). Aplazó el régimen de alto riesgo al 2 de diciembre de 2027 (Anexo III) y al 2 de agosto de 2028 (Anexo I); el contenido de los artículos 12 y 14 no cambió.
 - [draft-sharif-agent-audit-trail](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/) — un Internet-Draft individual, no respaldado por la IETF, que define un registro JSON de auditoría de agentes. Nuestro [draft de aprobación firmada](spec/proposals/draft-signed-human-approval.md) está diseñado para encajar dentro de su miembro `human_override`.
 - ISO/IEC 42001 (sistemas de gestión de IA, cláusula 9.2 auditoría interna); prEN 18229-1 e ISO/IEC DIS 24970, ambos todavía en borrador.
 

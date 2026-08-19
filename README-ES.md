@@ -124,13 +124,21 @@ historial de replay, un bug en el ledger pierde evidencia.
 
 ---
 
-## 2 · Auditable — porque ya es obligatorio
+## 2 · Auditable — porque ya está especificado
 
-Esto dejó de ser un extra en una fecha concreta.
+La obligación está escrita y fechada. La fecha se movió; el texto no.
 
 **El [Reglamento (UE) 2024/1689](https://artificialintelligenceact.eu/article/12/)
-aplica a sistemas de IA de alto riesgo desde el 2 de agosto de 2026.** Dos
-artículos hablan directamente de lo que un runtime tiene que emitir:
+— el Reglamento de IA — exige esto a los sistemas de IA de alto riesgo desde el
+2 de diciembre de 2027.** Esa fecha era el 2 de agosto de 2026 hasta que el
+[Reglamento (UE) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj), el
+Digital Omnibus sobre IA, la aplazó — los sistemas autónomos del Anexo III al 2
+de diciembre de 2027, los sistemas embebidos del Anexo I al 2 de agosto de 2028.
+En vigor desde el 27 de julio de 2026.
+
+**Lo que el Omnibus movió fue el calendario, no el requisito.** Los artículos 12
+y 14 sobreviven a la enmienda con su contenido intacto, y hablan directamente de
+lo que un runtime tiene que emitir:
 
 - El **Artículo 12** exige el registro *automático* de eventos durante todo el
   ciclo de vida del sistema, al servicio de la identificación de riesgos
@@ -140,10 +148,22 @@ artículos hablan directamente de lo que un runtime tiene que emitir:
 - El **Artículo 14** exige que el sistema pueda ser supervisado de forma efectiva
   por **personas físicas** mientras está en uso.
 
-**ISO/IEC 42001** (cláusula 9.2) pide la misma cadena de evidencia para auditoría
-interna; las normas armonizadas que operacionalizarán el Artículo 12 — prEN
-18229-1, ISO/IEC DIS 24970 — siguen en borrador, lo que significa que la forma de
-la evidencia se está decidiendo ahora, no está zanjada.
+Así que este README no te va a decir que el mundo se acaba en quince días. El
+argumento para construir la vía de evidencia ahora es más estrecho y, creemos,
+mejor: **un sistema que no fue diseñado para emitir esta evidencia no puede
+hacerlo después sin reconstruir cómo ejecuta.** Un rastro de auditoría es una
+propiedad de la ruta de ejecución, no una función atornillada a un costado — que
+es justamente la razón por la que el gate de más abajo es un invariante del
+kernel y no una llamada de librería. Meter eso a posteriori en un producto en
+marcha es la versión cara de este trabajo, y el aplazamiento es la ventana en la
+que la versión barata sigue disponible.
+
+**Y un reloj no se movió.** **ISO/IEC 42001** (cláusula 9.2) pide la misma cadena
+de evidencia para auditoría interna, está en vigor hoy, es certificable ya, y
+cada vez más es una condición de compra antes que una exigencia regulatoria. Las
+normas armonizadas que operacionalizarán el Artículo 12 — prEN 18229-1, ISO/IEC
+DIS 24970 — siguen en borrador, lo que significa que la forma de la evidencia se
+está decidiendo durante el aplazamiento, no antes de él.
 
 Esto es lo que produce, y nada de ello vive en tu grafo:
 
@@ -424,7 +444,10 @@ otra forma — ese es justamente el motivo de listarlos.
 
 Fuera de arXiv, y de carga: [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962)
 (Certificate Transparency), [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)
-(Ed25519), y el [Reglamento (UE) 2024/1689](https://artificialintelligenceact.eu/article/12/).
+(Ed25519), el [Reglamento (UE) 2024/1689](https://artificialintelligenceact.eu/article/12/)
+(el Reglamento de IA) y el [Reglamento (UE) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj)
+(el Digital Omnibus sobre IA, que aplazó las fechas de alto riesgo citadas arriba
+y dejó por lo demás intactos los artículos 12 y 14).
 
 ---
 

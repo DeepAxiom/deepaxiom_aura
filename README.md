@@ -118,13 +118,20 @@ ledger loses evidence.
 
 ---
 
-## 2 · Auditable — because it is already required
+## 2 · Auditable — because it is already specified
 
-This stopped being a nice-to-have on a specific date.
+The obligation is written and dated. The date moved; the text did not.
 
 **[Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/article/12/)
-applies to high-risk AI systems from 2 August 2026.** Two articles are directly
-about what a runtime has to emit:
+— the EU AI Act — requires this of high-risk AI systems from 2 December 2027.**
+That deadline was 2 August 2026 until
+[Regulation (EU) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj), the
+Digital Omnibus on AI, deferred it — Annex III stand-alone systems to 2 December
+2027, Annex I embedded systems to 2 August 2028. In force since 27 July 2026.
+
+**What the Omnibus moved was the calendar, not the requirement.** Articles 12 and
+14 survive the amendment with their substance intact, and they are directly about
+what a runtime has to emit:
 
 - **Article 12** requires *automatic* recording of events over the system's
   lifetime, serving risk identification (Art. 79), post-market monitoring
@@ -133,10 +140,21 @@ about what a runtime has to emit:
 - **Article 14** requires that the system be effectively overseen by **natural
   persons** while in use.
 
-**ISO/IEC 42001** (clause 9.2) wants the same evidence chain for internal audit;
-the harmonised standards that will operationalise Article 12 — prEN 18229-1,
+So this README will not tell you the sky is falling in a fortnight. The argument
+for building the evidence path now is narrower and, we think, better: **a system
+that was not designed to emit this evidence cannot be made to emit it later
+without rebuilding how it executes.** An audit trail is a property of the
+execution path, not a feature bolted to its side — which is the whole reason the
+gate below is a kernel invariant rather than a library call. Retrofitting that
+into a running product is the expensive version of this work, and the deferral is
+the window in which the cheap version is still available.
+
+**And one clock did not move.** **ISO/IEC 42001** (clause 9.2) wants the same
+evidence chain for internal audit and is in force today, certifiable now, and
+increasingly a procurement precondition rather than a regulatory one. The
+harmonised standards that will operationalise Article 12 — prEN 18229-1,
 ISO/IEC DIS 24970 — are still drafts, which means the shape of the evidence is
-being decided now rather than settled.
+being decided during the deferral rather than settled before it.
 
 Here is what that produces, and none of it lives in your graph:
 
@@ -406,7 +424,10 @@ differently — that is the point of listing them.
 
 Non-arXiv, and load-bearing: [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962)
 (Certificate Transparency), [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)
-(Ed25519), and [Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/article/12/).
+(Ed25519), [Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/article/12/)
+(the AI Act), and [Regulation (EU) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj)
+(the Digital Omnibus on AI, which deferred the high-risk dates above and left
+Articles 12 and 14 otherwise intact).
 
 ---
 

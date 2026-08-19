@@ -2224,26 +2224,41 @@ it the code enforces today, because the gap matters more than the intent.
 
 ### What already requires this
 
-The rest of this section describes mechanisms. This part says why they are not
-optional, because the deadline is specific and it has passed the drafting stage.
+The rest of this section describes mechanisms. This part says what obliges them,
+which is specific, past the drafting stage, and — as of July 2026 — later than it
+used to be.
 
 **[Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/) — the EU AI
-Act — applies to high-risk AI systems from 2 August 2026.** Two of its articles
-are directly about what a runtime must emit rather than about what an
-organisation must promise:
+Act — requires this of high-risk AI systems from 2 December 2027.** The date was
+2 August 2026 until [Regulation (EU) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj),
+the Digital Omnibus on AI (in force 27 July 2026), deferred the high-risk regime:
+Annex III stand-alone systems to **2 December 2027**, Annex I embedded systems to
+**2 August 2028**. What the amendment moved is the application date. The
+substance of Articles 12 and 14 is unchanged, and both are directly about what a
+runtime must emit rather than about what an organisation must promise:
 
 | | Requirement | What answers it here |
 |---|---|---|
 | **Art. 12** — Record-keeping | *Automatic* recording of events over the system's lifetime, serving risk identification (Art. 79), post-market monitoring (Art. 72) and deployer oversight (Art. 26(5)). Deployers retain logs **at least six months**. | The causal event log (C3 rule 7) and the effect ledger (C4). Automatic because the executor writes them, not the graph author. Retention is an operator decision: the log keeps everything by default, and `--event-log-max` bounds it — set it above your retention obligation, not below. |
 | **Art. 14** — Human oversight | The system can be effectively overseen by **natural persons** while in use. | The approval gate as a kernel invariant, and the **signed approver** — a log recording that "a human approved" evidences oversight by nobody in particular. See [Signed approval](#signed-approval--who-allowed-it). |
 
-Two more frameworks ask for the same evidence in a different vocabulary.
-**ISO/IEC 42001** clause 9.2 requires internal audit against your own AI policies
-with a documented chain from finding to correction — which is `aura audit` plus
-`aura why`. The **harmonised standards** that will operationalise Article 12 —
-prEN 18229-1, ISO/IEC DIS 24970 — are still drafts, which is worth knowing for
-two reasons: nobody can yet claim conformance to them, and the shape of the
-required evidence is being decided now rather than settled.
+**On the deferral, plainly:** it removes the emergency, not the requirement. A
+reader deciding what to build this quarter should weigh two things it does not
+change. First, **ISO/IEC 42001** clause 9.2 requires internal audit against your
+own AI policies with a documented chain from finding to correction — which is
+`aura audit` plus `aura why` — and it is in force today, certifiable now, and
+already appearing in procurement questionnaires that do not wait for Brussels.
+Second, an audit trail is a property of the execution path rather than a module
+beside it: a system that was not built to emit this evidence is rebuilt, not
+extended, when it has to. That is an argument for using the extra sixteen months,
+not for spending them.
+
+The **harmonised standards** that will operationalise Article 12 — prEN 18229-1,
+ISO/IEC DIS 24970 — are still drafts, which is worth knowing for two reasons:
+nobody can yet claim conformance to them, and the shape of the required evidence
+is now being decided *during* the deferral rather than settled before it. That
+cuts both ways — the target may still move, and there is an unusually long window
+in which to influence where it lands.
 
 A caution that belongs in a security model rather than in marketing: **none of
 the above makes a deployment compliant.** Article 12 is one obligation among
@@ -2548,8 +2563,10 @@ what actually ran, cited by which effects, under which policy. A model that
 was configured but never invoked does not appear; one swapped in at runtime
 does. Output is CycloneDX 1.6 with `machine-learning-model` components, so it
 drops into tooling that already exists — relevant to the EU AI Act's
-record-keeping obligations, in force since 2 August 2026. It inherits C5's
-standing exactly: an accurate record of what was *claimed* and what it caused.
+record-keeping obligations, which apply to high-risk systems from 2 December 2027
+(see [Security model](#security-model) for the Omnibus deferral). It inherits
+C5's standing exactly: an accurate record of what was *claimed* and what it
+caused.
 
 The payload itself is never stored — only `payload_sha256` — so the ledger
 stays small (~300–400 bytes/entry) and a payload carrying personal data does
@@ -2904,9 +2921,6 @@ is the one that keeps this from being safe outside a trusted network:
   C/Rust library with Kotlin/Swift/JS bindings, so a TV/mobile/watch app captures
   and plays streams and runs light logic without a full node. A packaging effort;
   the protocol is already the contract.
-- **Wasm skills** — a `format: wasm` executor (wazero) for hard-sandboxed logic
-  running in-process. The manifest already carries `format`; source/Wasm parity is
-  a settled trade-off.
 - **Peripheral protocol** — a minimal MQTT/BLE bridge that projects sensors and
   controls (which run no logic) as graph ports — structurally identical to the
   OpenAPI projection host.
@@ -2995,6 +3009,7 @@ was a choice rather than the only option.
 - [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) — Ed25519. Every signature in this system.
 - [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446), [RFC 9000](https://www.rfc-editor.org/rfc/rfc9000) — TLS 1.3 and QUIC, under WebTransport.
 - [Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/) — the EU AI Act. Articles 12 and 14 in particular; see [Security model](#security-model).
+- [Regulation (EU) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj) — the Digital Omnibus on AI (in force 27 July 2026). Deferred the high-risk regime to 2 December 2027 (Annex III) and 2 August 2028 (Annex I); the substance of Articles 12 and 14 is unchanged.
 - [draft-sharif-agent-audit-trail](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/) — an individual Internet-Draft, not endorsed by the IETF, defining a JSON agent audit record. Our [signed-approval draft](spec/proposals/draft-signed-human-approval.md) is designed to fit inside its `human_override` member.
 - ISO/IEC 42001 (AI management systems, clause 9.2 internal audit); prEN 18229-1 and ISO/IEC DIS 24970, both still drafts.
 
