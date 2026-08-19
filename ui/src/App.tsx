@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Sidebar, TopBar, type ViewId } from "./components/Layout";
+import { CanvasView } from "./views/CanvasView";
 import { ChatView } from "./views/ChatView";
 import { GraphsView } from "./views/GraphsView";
 import { OperateView } from "./views/OperateView";
@@ -12,6 +13,7 @@ const VIEWS: Record<ViewId, () => React.ReactNode> = {
   chat: ChatView,
   voice: VoiceView,
   operate: OperateView,
+  canvas: CanvasView,
   skills: SkillsView,
   projections: ProjectionsView,
   graphs: GraphsView,

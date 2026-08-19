@@ -6,7 +6,8 @@
     "projections": "Proyecciones",
     "graphs": "Grafos",
     "sessions": "Sesiones",
-    "voice": "Voz"
+    "voice": "Voz",
+    "canvas": "Lienzo"
   },
   "topbar": {
     "connected": "nodo {{node}} · modo {{mode}} · protocolo {{protocol}}",
@@ -133,5 +134,54 @@
     "requires": "Necesita micrófono y el grafo de voz corriendo: skills/asr, skills/llm-chat, skills/sentence-chunker y skills/tts.",
     "insecureContext": "El micrófono necesita un contexto seguro. localhost vale; una dirección de LAN por http:// plano no — usa https o abre la UI en la propia máquina.",
     "unknownError": "algo falló"
+  },
+  "canvas": {
+    "graphIdPlaceholder": "id del grafo",
+    "open": "Abrir grafo…",
+    "new": "Nuevo",
+    "relayout": "Reordenar",
+    "ir": "IR",
+    "irTitle": "IR del grafo C2 — edítalo y aplícalo, o cópialo",
+    "irApply": "Aplicar",
+    "register": "Registrar",
+    "hint": "Elige un skill de la paleta para colocarlo. Arrastra de un puerto de salida a uno de entrada para crear una arista. Rueda para hacer zoom, arrastra el fondo para desplazarte.",
+    "status": {
+      "registered": "Registrado como {{id}}.",
+      "blocked": "Hay {{count}} error(es) que resolver antes de poder registrar este grafo."
+    },
+    "palette": {
+      "search": "Buscar skills…",
+      "empty": "Ningún skill del catálogo coincide. Un nodo recién arrancado tiene el catálogo vacío hasta que los skills se conectan."
+    },
+    "inspector": {
+      "nothing": "Selecciona un nodo o una arista para ver lo que declara.",
+      "node": "Nodo",
+      "edge": "Arista",
+      "ref": "Ref",
+      "refHelp": "El nombre local de este nodo dentro del grafo. Minúsculas, dígitos, guion o guion bajo.",
+      "resolve": "Capacidad (resolve)",
+      "resolveHelp": "Una demanda que el kernel satisface al instanciar. Prefiérelo a un paquete: permite que el nodo degrade a otro proveedor.",
+      "use": "Paquete (use)",
+      "useHelp": "Fija un paquete exacto en vez de una capacidad. Tiene prioridad sobre resolve.",
+      "type": "Tipo",
+      "format": "Formato",
+      "clientNote": "El pseudo-nodo client es la conexión de la aplicación externa. C2 lo deduce de las aristas que lo nombran, así que nunca se escribe en nodes[] y no se puede eliminar.",
+      "gate": "Gate",
+      "gateUnset": "— sin declarar —",
+      "gateHelp": "human-approval retiene el mensaje hasta que una persona confirme. La política del nodo puede añadir uno igualmente; un grafo puede pedir más supervisión, nunca menos.",
+      "gateMotorHelp": "Este destino actúa sobre el mundo. Por la regla 5 de C2 el kernel añade un gate human-approval cuando no se declara ninguno — en modo published rechaza la sesión en su lugar.",
+      "qos": "QoS",
+      "qosUnset": "— por defecto (reliable) —",
+      "qosReliable": "un stream ordenado, FIFO por arista",
+      "qosRealtime": "datagrama; no puede frenar ni ser frenado",
+      "qosBulk": "su propio stream por transferencia",
+      "speculative": "Especulativa",
+      "speculativeHelp": "Entrega sobre salida parcial y descarta el trabajo si la salida final difiere. Se rechaza hacia un skill motor, y junto a un gate human-approval.",
+      "deadline": "Deadline (ms)",
+      "deadlineHelp": "Cuánto vale la pena esperar una entrega aquí. Absoluto una vez en el cable; un salto posterior puede apretarlo, nunca extenderlo.",
+      "priority": "Prioridad",
+      "priorityHelp": "El más alto gana cuando dos cadenas compiten por el mismo skill.",
+      "delete": "Eliminar"
+    }
   }
 }

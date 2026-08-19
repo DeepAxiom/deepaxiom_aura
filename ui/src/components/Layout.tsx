@@ -3,14 +3,23 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import type { Health } from "../api/types";
 import { LANGUAGES, setLanguage } from "../i18n";
-import { IconBolt, IconChat, IconGraph, IconMic, IconGrid, IconList, IconLogo, IconPlug } from "./Icons";
+import { IconBolt, IconCanvas, IconChat, IconGraph, IconMic, IconGrid, IconList, IconLogo, IconPlug } from "./Icons";
 
-export type ViewId = "chat" | "voice" | "operate" | "skills" | "projections" | "graphs" | "sessions";
+export type ViewId =
+  | "chat"
+  | "voice"
+  | "operate"
+  | "canvas"
+  | "skills"
+  | "projections"
+  | "graphs"
+  | "sessions";
 
 const NAV: { id: ViewId; icon: (p: { size?: number }) => React.ReactNode }[] = [
   { id: "chat", icon: IconChat },
   { id: "voice", icon: IconMic },
   { id: "operate", icon: IconBolt },
+  { id: "canvas", icon: IconCanvas },
   { id: "skills", icon: IconGrid },
   { id: "projections", icon: IconPlug },
   { id: "graphs", icon: IconGraph },

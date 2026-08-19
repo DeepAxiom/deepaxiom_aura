@@ -6,7 +6,8 @@
     "projections": "Projections",
     "graphs": "Graphs",
     "sessions": "Sessions",
-    "voice": "Voice"
+    "voice": "Voice",
+    "canvas": "Canvas"
   },
   "topbar": {
     "connected": "node {{node}} · {{mode}} mode · protocol {{protocol}}",
@@ -133,5 +134,54 @@
     "requires": "Needs a microphone and the voice graph running: skills/asr, skills/llm-chat, skills/sentence-chunker and skills/tts.",
     "insecureContext": "A microphone needs a secure context. localhost works; a LAN address over plain http:// does not — use https or open the UI on the machine itself.",
     "unknownError": "something went wrong"
+  },
+  "canvas": {
+    "graphIdPlaceholder": "graph id",
+    "open": "Open graph…",
+    "new": "New",
+    "relayout": "Re-layout",
+    "ir": "IR",
+    "irTitle": "C2 graph IR — edit and apply, or copy out",
+    "irApply": "Apply",
+    "register": "Register",
+    "hint": "Pick a skill from the palette to place it. Drag from an output port to an input port to wire an edge. Scroll to zoom, drag the background to pan.",
+    "status": {
+      "registered": "Registered as {{id}}.",
+      "blocked": "{{count}} error(s) must be resolved before this graph can be registered."
+    },
+    "palette": {
+      "search": "Search skills…",
+      "empty": "No skill in the catalogue matches. A fresh node has an empty catalogue until skills connect to it."
+    },
+    "inspector": {
+      "nothing": "Select a node or an edge to see what it declares.",
+      "node": "Node",
+      "edge": "Edge",
+      "ref": "Ref",
+      "refHelp": "This node's local name inside the graph. Lowercase, digits, dash or underscore.",
+      "resolve": "Capability (resolve)",
+      "resolveHelp": "A demand the kernel satisfies at instantiation. Prefer this over a package: it lets the node degrade to another provider.",
+      "use": "Package (use)",
+      "useHelp": "Pin an exact package instead of a capability. Overrides resolve.",
+      "type": "Type",
+      "format": "Format",
+      "clientNote": "The client pseudo-node is the external application connection. C2 implies it from the edges that name it, so it is never written into nodes[] and cannot be removed.",
+      "gate": "Gate",
+      "gateUnset": "— not declared —",
+      "gateHelp": "human-approval holds the message until a person confirms. Node policy may add one regardless; a graph can ask for more scrutiny, never less.",
+      "gateMotorHelp": "This destination acts on the world. C2 rule 5 means the kernel adds a human-approval gate when none is declared — in published mode it refuses the session instead.",
+      "qos": "QoS",
+      "qosUnset": "— default (reliable) —",
+      "qosReliable": "one ordered stream, FIFO per edge",
+      "qosRealtime": "datagram; cannot stall or be stalled",
+      "qosBulk": "its own stream per transfer",
+      "speculative": "Speculative",
+      "speculativeHelp": "Deliver on partial upstream output and discard the work if the final output differs. Refused into a motor skill, and refused alongside a human-approval gate.",
+      "deadline": "Deadline (ms)",
+      "deadlineHelp": "How long a delivery here is worth waiting for. Absolute once on the wire; a later hop may tighten it, never extend it.",
+      "priority": "Priority",
+      "priorityHelp": "Higher wins when two chains contend for the same skill.",
+      "delete": "Delete"
+    }
   }
 }

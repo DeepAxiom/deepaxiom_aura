@@ -53,6 +53,15 @@ export const IconGraph = (p: P) => (
   </S>
 );
 
+/** Two boxes wired left to right — the canvas editor's own shape. */
+export const IconCanvas = (p: P) => (
+  <S {...p}>
+    <rect x="2.5" y="5" width="7" height="6" rx="1.5" />
+    <rect x="14.5" y="13" width="7" height="6" rx="1.5" />
+    <path d="M9.5 8h3a2 2 0 0 1 2 2v6" />
+  </S>
+);
+
 export const IconList = (p: P) => (
   <S {...p}>
     <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />

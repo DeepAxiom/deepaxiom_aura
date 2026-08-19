@@ -61,15 +61,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 22, not 20: the graph-model tests run on node:test with
+      # --experimental-strip-types, which lands in 22.6.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
       - name: install
         working-directory: ui
         run: npm ci
+
+      # The canvas serialises the C2 IR the kernel executes, so its model layer
+      # is checked against the same conformance vectors the kernel is.
+      - name: test
+        working-directory: ui
+        run: npm test
 
       - name: build
         working-directory: ui
