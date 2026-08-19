@@ -1122,7 +1122,7 @@ like every connector above, not a kernel feature.
 ALTER SYSTEM SET wal_level = logical;   # once, on the source database; then restart it
 
 PG_CDC_DSN="host=... dbname=... user=... password=..." \
-    PYTHONPATH=sdk/python/src python skills/postgres-cdc/main.py
+    cd skills/postgres-cdc && PYTHONPATH=../../sdk/python/src python main.py
 ```
 
 It uses `test_decoding` — built into Postgres core since 9.4, so there is

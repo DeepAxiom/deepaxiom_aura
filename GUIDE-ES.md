@@ -1096,7 +1096,7 @@ skill, como cualquier conector de arriba, no una funcionalidad del kernel.
 ALTER SYSTEM SET wal_level = logical;   # una vez, en la base origen; después reiniciarla
 
 PG_CDC_DSN="host=... dbname=... user=... password=..." \
-    PYTHONPATH=sdk/python/src python skills/postgres-cdc/main.py
+    cd skills/postgres-cdc && PYTHONPATH=../../sdk/python/src python main.py
 ```
 
 Usa `test_decoding` — incluido en el núcleo de Postgres desde la 9.4, así

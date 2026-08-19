@@ -6,10 +6,11 @@ and the one the seeded `echo` graph resolves. It exists so a node with no
 model downloaded, no API key and no network can still prove the whole path:
 client → kernel → graph executor → skill → back.
 
-Run it from the repo root:
+Run it from its own directory — the SDK loads `skill.yaml` from the working
+directory, so starting it from the repo root cannot find the manifest:
 
     pip install -r skills/echo/requirements.txt
-    PYTHONPATH=sdk/python/src python skills/echo/main.py
+    cd skills/echo && PYTHONPATH=../../sdk/python/src python main.py
 """
 import logging
 
