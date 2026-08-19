@@ -1,32 +1,106 @@
 {
-  "nav": {
-    "chat": "Chat",
-    "skills": "Skills",
-    "projections": "Proyecciones",
-    "graphs": "Grafos",
-    "sessions": "Sesiones",
-    "voice": "Voz",
-    "reference": "Referencia",
-    "studio": "Estudio"
+  "common": {
+    "loading": "Cargando…",
+    "error": "Error: {{message}}",
+    "close": "Cerrar",
+    "language": "Idioma"
   },
-  "topbar": {
-    "connected": "nodo {{node}} · modo {{mode}} · protocolo {{protocol}}",
-    "disconnected": "kernel no disponible — ejecuta `aura up`"
-  },
-  "chat": {
-    "title": "Chat",
+  "converse": {
+    "approve": "¿Apruebas?",
+    "clear": "Limpiar",
+    "connecting": "conectando…",
+    "emptyText": "Elige un grafo y empieza la conversación.",
+    "emptyVoice": "Pulsa empezar y di algo. Lo que digas aparece mientras lo dices.",
     "graph": "Grafo",
+    "halfDuplex": "Silenciar mientras habla",
+    "halfDuplexHelp": "Apaga el micrófono mientras el asistente habla. Úsalo si el asistente se interrumpe a sí mismo a través de tus altavoces; los auriculares resuelven lo mismo.",
+    "hearingYou": "escuchando",
+    "insecureContext": "El micrófono necesita un contexto seguro. localhost vale; una dirección de LAN por http:// plano no — usa https o abre la UI en la propia máquina.",
     "placeholder": "Escribe un mensaje…",
+    "requires": "Necesita micrófono y el grafo de voz corriendo: skills/asr, skills/llm-chat, skills/sentence-chunker y skills/tts.",
     "send": "Enviar",
-    "empty": "Elige un grafo y empieza la conversación.",
     "sessionReady": "sesión {{session}} · grafo {{graph}}",
-    "disconnected": "desconectado — envía para reconectar"
+    "speaking": "hablando",
+    "start": "Empezar a escuchar",
+    "stop": "Parar",
+    "text": "Texto",
+    "transport": "Cómo le hablas",
+    "unknownError": "algo falló",
+    "voice": "Voz",
+    "voiceGraphHelp": "Voz corre el grafo `voice`: voz a texto, un modelo, un troceador de frases y síntesis de voz, todo a la vez.",
+    "waiting": "te toca"
   },
   "gate": {
     "approve": "Aprobar",
     "deny": "Denegar",
     "approved": "aprobado",
     "denied": "denegado"
+  },
+  "graphs": {
+    "title": "Grafos",
+    "subtitle": "Grafos IR registrados — declarados por humanos o generados por planners.",
+    "empty": "No hay grafos registrados.",
+    "origin": {
+      "declared": "declarado",
+      "planner": "planner"
+    },
+    "nodes": "{{count}} nodo(s)",
+    "viewIR": "IR"
+  },
+  "nav": {
+    "skills": "Skills",
+    "projections": "Proyecciones",
+    "graphs": "Grafos",
+    "sessions": "Sesiones",
+    "reference": "Referencia",
+    "studio": "Estudio"
+  },
+  "projections": {
+    "title": "Proyecciones",
+    "subtitle": "Sistemas existentes expuestos como skills — sin tocar su código.",
+    "connect": "Conectar un API",
+    "specLabel": "Spec OpenAPI (JSON o YAML)",
+    "specPlaceholder": "Pega aquí el documento OpenAPI…",
+    "name": "Nombre (opcional)",
+    "baseUrl": "URL base (opcional si el spec declara servers)",
+    "submit": "Conectar",
+    "connecting": "Conectando…",
+    "empty": "Sin proyecciones. Conecta un API existente y sus operaciones se vuelven skills.",
+    "readOnly": "solo lectura",
+    "write": "escritura",
+    "mode": {
+      "live": "live",
+      "dry-run": "dry-run",
+      "disabled": "deshabilitada"
+    },
+    "writeWarning": "el modo live ejecuta escrituras REALES sobre el sistema destino"
+  },
+  "reference": {
+    "search": "Buscar en todo…",
+    "noMatch": "Nada coincide con esa búsqueda.",
+    "onThisPage": "En esta página",
+    "default": "por defecto",
+    "undocumented": "El binario ofrece comandos que la guía no documenta: {{list}}. Ejecuta scripts/gen_ui_reference.py después de documentarlos.",
+    "enumsLead": "Las enumeraciones de los contratos, desde spec/enums.yaml — el mismo archivo del que se generan las constantes Go del kernel, las tuplas de Python y las uniones TypeScript del SDK. Lo que aparece aquí es lo que el kernel acepta.",
+    "tab": {
+      "commands": "Comandos",
+      "contracts": "Contratos",
+      "schemas": "Esquemas",
+      "enums": "Enumeraciones"
+    }
+  },
+  "sessions": {
+    "title": "Sesiones",
+    "subtitle": "Cada sesión con su log causal — haz clic en una para inspeccionar la cadena (cause_id → id).",
+    "refresh": "Actualizar",
+    "empty": "Aún no hay sesiones registradas.",
+    "noEvents": "Sin eventos para esa sesión.",
+    "events": "{{count}} envelope(s)",
+    "errors": "{{count}} error(es)",
+    "cols": {
+      "cause": "causa",
+      "origin": "nodo.puerto"
+    }
   },
   "skills": {
     "title": "Skills",
@@ -55,122 +129,17 @@
       "restartRequiredHint": "Cambiar esto solo tiene efecto la próxima vez que arranque el proceso del skill."
     }
   },
-  "projections": {
-    "title": "Proyecciones",
-    "subtitle": "Sistemas existentes expuestos como skills — sin tocar su código.",
-    "connect": "Conectar un API",
-    "specLabel": "Spec OpenAPI (JSON o YAML)",
-    "specPlaceholder": "Pega aquí el documento OpenAPI…",
-    "name": "Nombre (opcional)",
-    "baseUrl": "URL base (opcional si el spec declara servers)",
-    "submit": "Conectar",
-    "connecting": "Conectando…",
-    "empty": "Sin proyecciones. Conecta un API existente y sus operaciones se vuelven skills.",
-    "readOnly": "solo lectura",
-    "write": "escritura",
-    "mode": {
-      "live": "live",
-      "dry-run": "dry-run",
-      "disabled": "deshabilitada"
-    },
-    "writeWarning": "el modo live ejecuta escrituras REALES sobre el sistema destino"
-  },
-  "graphs": {
-    "title": "Grafos",
-    "subtitle": "Grafos IR registrados — declarados por humanos o generados por planners.",
-    "empty": "No hay grafos registrados.",
-    "origin": {
-      "declared": "declarado",
-      "planner": "planner"
-    },
-    "nodes": "{{count}} nodo(s)",
-    "viewIR": "IR"
-  },
-  "sessions": {
-    "title": "Sesiones",
-    "subtitle": "Cada sesión con su log causal — haz clic en una para inspeccionar la cadena (cause_id → id).",
-    "refresh": "Actualizar",
-    "empty": "Aún no hay sesiones registradas.",
-    "noEvents": "Sin eventos para esa sesión.",
-    "events": "{{count}} envelope(s)",
-    "errors": "{{count}} error(es)",
-    "cols": {
-      "cause": "causa",
-      "origin": "nodo.puerto"
-    }
-  },
-  "common": {
-    "loading": "Cargando…",
-    "error": "Error: {{message}}",
-    "close": "Cerrar",
-    "language": "Idioma"
-  },
-  "voice": {
-    "title": "Voz",
-    "subtitle": "Habla con un grafo. Interrúmpelo cuando quieras — se para.",
-    "start": "Empezar a escuchar",
-    "stop": "Parar",
-    "halfDuplex": "Silenciar mientras habla",
-    "halfDuplexHelp": "Apaga el micrófono mientras el asistente habla. Úsalo si el asistente se interrumpe a sí mismo a través de tus altavoces; los auriculares resuelven lo mismo.",
-    "hearingYou": "escuchando",
-    "speaking": "hablando",
-    "waiting": "te toca",
-    "connecting": "conectando…",
-    "empty": "Pulsa empezar y di algo. Lo que digas aparece mientras lo dices.",
-    "requires": "Necesita micrófono y el grafo de voz corriendo: skills/asr, skills/llm-chat, skills/sentence-chunker y skills/tts.",
-    "insecureContext": "El micrófono necesita un contexto seguro. localhost vale; una dirección de LAN por http:// plano no — usa https o abre la UI en la propia máquina.",
-    "unknownError": "algo falló"
-  },
-  "reference": {
-    "search": "Buscar en todo…",
-    "noMatch": "Nada coincide con esa búsqueda.",
-    "onThisPage": "En esta página",
-    "default": "por defecto",
-    "undocumented": "El binario ofrece comandos que la guía no documenta: {{list}}. Ejecuta scripts/gen_ui_reference.py después de documentarlos.",
-    "enumsLead": "Las enumeraciones de los contratos, desde spec/enums.yaml — el mismo archivo del que se generan las constantes Go del kernel, las tuplas de Python y las uniones TypeScript del SDK. Lo que aparece aquí es lo que el kernel acepta.",
-    "tab": {
-      "commands": "Comandos",
-      "contracts": "Contratos",
-      "schemas": "Esquemas",
-      "enums": "Enumeraciones"
-    }
-  },
   "studio": {
-    "placeholder": "¿Qué quieres hacer? p. ej. rank which models fit on this machine",
-    "run": "Ejecutar",
-    "running": "Ejecutando…",
-    "empty": "Escribe un objetivo arriba. El planner elige los skills, compila un grafo y aparece aquí — y luego se enciende mientras corre.",
-    "hint": "Elige un skill de la paleta, o escribe un objetivo arriba y deja que el planner lo construya. Arrastra de un puerto de salida a uno de entrada para crear una arista. Shift+arrastrar para seleccionar en caja, rueda para zoom.",
-    "planTimeout": "se agotó el tiempo esperando el plan",
-    "unreachable": "kernel inalcanzable",
-    "needPlanner": "no hay ningún skill planner conectado — arranca skills/planner, o usa `aura up --with-examples`",
-    "phase": {
-      "idle": "en reposo",
-      "planning": "planificando",
-      "executing": "corriendo",
-      "done": "listo",
-      "failed": "falló"
-    },
-    "graphId": "id del grafo",
-    "open": "Abrir grafo…",
-    "register": "Registrar",
-    "runCanvas": "Ejecutar este grafo",
-    "searchSkills": "Buscar skills…",
-    "noSkills": "Ningún skill coincide. Un nodo nuevo tiene el catálogo vacío hasta que se conecten skills.",
-    "undo": "Deshacer (Ctrl+Z)",
-    "redo": "Rehacer (Ctrl+Shift+Z)",
-    "duplicate": "Duplicar (Ctrl+D)",
-    "delete": "Eliminar (Supr)",
-    "zoomIn": "Acercar",
-    "zoomOut": "Alejar",
-    "fit": "Ajustar",
-    "tidy": "Ordenar",
-    "ir": "IR",
-    "irTitle": "IR del grafo C2 — edítalo y aplícalo, o cópialo",
-    "irApply": "Aplicar",
-    "registered": "Registrado como {{id}}.",
     "blocked": "Hay {{count}} error(es) que resolver primero.",
-    "sideHint": "Selecciona un nodo o arista para inspeccionarlo. Mientras un grafo corre, el progreso, los resultados y los gates aparecen aquí.",
+    "delete": "Eliminar (Supr)",
+    "duplicate": "Duplicar (Ctrl+D)",
+    "empty": "Escribe un objetivo arriba. El planner elige los skills, compila un grafo y aparece aquí — y luego se enciende mientras corre.",
+    "fit": "Ajustar",
+    "graphId": "id del grafo",
+    "hint": "Elige un skill de la paleta, o escribe un objetivo arriba y deja que el planner lo construya. Arrastra de un puerto de salida a uno de entrada para crear una arista. Shift+arrastrar para seleccionar en caja, rueda para zoom.",
+    "ir": "IR",
+    "irApply": "Aplicar",
+    "irTitle": "IR del grafo C2 — edítalo y aplícalo, o cópialo",
     "live": {
       "title": "Corriendo ahora",
       "following": "Siguiendo",
@@ -180,6 +149,38 @@
       "neverRan": "nunca ejecutado",
       "n": "{{count}} en vivo",
       "meta": "{{events}} eventos · hace {{when}}"
-    }
+    },
+    "needPlanner": "no hay ningún skill planner conectado — arranca skills/planner, o usa `aura up --with-examples`",
+    "noSkills": "Ningún skill coincide. Un nodo nuevo tiene el catálogo vacío hasta que se conecten skills.",
+    "open": "Abrir grafo…",
+    "phase": {
+      "idle": "en reposo",
+      "planning": "planificando",
+      "executing": "corriendo",
+      "done": "listo",
+      "failed": "falló"
+    },
+    "placeholder": "¿Qué quieres hacer? p. ej. rank which models fit on this machine",
+    "planTimeout": "se agotó el tiempo esperando el plan",
+    "redo": "Rehacer (Ctrl+Shift+Z)",
+    "register": "Registrar",
+    "registered": "Registrado como {{id}}.",
+    "run": "Ejecutar",
+    "runCanvas": "Ejecutar este grafo",
+    "running": "Ejecutando…",
+    "searchSkills": "Buscar skills…",
+    "sideHint": "Selecciona un nodo o arista para inspeccionarlo. Mientras un grafo corre, el progreso, los resultados y los gates aparecen aquí.",
+    "tabActivity": "Actividad",
+    "tabConverse": "Conversar",
+    "tabInspect": "Inspector",
+    "tidy": "Ordenar",
+    "undo": "Deshacer (Ctrl+Z)",
+    "unreachable": "kernel inalcanzable",
+    "zoomIn": "Acercar",
+    "zoomOut": "Alejar"
+  },
+  "topbar": {
+    "connected": "nodo {{node}} · modo {{mode}} · protocolo {{protocol}}",
+    "disconnected": "kernel no disponible — ejecuta `aura up`"
   }
 }

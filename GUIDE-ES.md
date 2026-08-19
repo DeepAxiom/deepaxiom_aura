@@ -615,7 +615,7 @@ un skill `sensorial` que envuelve un sistema externo, y
 El frontend ([`ui/`](ui/), React 19 + Vite + TypeScript, internacionalizado con
 react-i18next — base en inglés, español incluido) está **integrado en el
 binario** vía `go:embed`. `aura up` lo sirve en `http://localhost:9080` sin
-proceso Node en runtime. Ocho vistas, abriendo en el Estudio:
+proceso Node en runtime. Seis vistas, abriendo en el Estudio:
 
 - **Estudio** — la pantalla de inicio, y la única superficie para construir y
   ejecutar. Una paleta de skills vivos, un lienzo donde arrastras y cableas, un
@@ -636,10 +636,23 @@ proceso Node en runtime. Ocho vistas, abriendo en el Estudio:
   sí, porque cada envelope nombra su nodo. No le cuesta nada al nodo: esos
   envelopes ya llegan por el socket de la sesión, y la actividad se agrupa a un
   render por frame.
-- **Chat** — elige un grafo, transmite una conversación y responde a las puertas
-  de aprobación humana en línea con botones Aprobar/Denegar.
-- **Voz** — habla con el grafo `voice`. Tus palabras aparecen mientras las
-  dices, la respuesta se habla mientras se escribe, y hablarle encima la para.
+
+  Su columna derecha tiene pestañas: el **inspector** de lo que esté
+  seleccionado, la **actividad** de la sesión que corre, o **conversar** — que
+  es donde fueron a parar las pantallas de Chat y Voz. Escribir y hablar nunca
+  fueron dos funciones (ambas abren una sesión, meten entrada por un puerto de
+  cliente y renderizan lo que vuelve), así que son un solo panel con un
+  selector de transporte:
+
+  - *Texto* corre el grafo registrado que elijas, normalmente `chat`, y
+    responde a las puertas de aprobación en línea con Aprobar/Denegar.
+  - *Voz* corre el grafo `voice` — cuatro skills a la vez, seis puertos de
+    cliente. Tus palabras aparecen mientras las dices, la respuesta se habla
+    mientras se escribe, y hablarle encima la para.
+
+  Siguen siendo dos grafos y no un grafo con un ajuste, porque eso es lo que
+  son; el selector cambia la sesión. Volver a texto, o salir del panel, suelta
+  el micrófono.
 - **Skills** — el catálogo vivo de capacidades, con colores por tipo, con los
   puertos, esquemas y descripción de cada skill.
 - **Projections** — conecta una especificación OpenAPI pegándola, y cambia cada
@@ -1141,9 +1154,9 @@ cadena de conexión lleva una contraseña.
 
 ## Hablarle
 
-`aura up` siembra un grafo `voice`, y la UI del plano de control tiene una vista
-**Voz** que lo maneja. Arranca los cuatro skills que resuelve, pulsa empezar y
-habla:
+`aura up` siembra un grafo `voice`, y la UI del plano de control lo maneja desde
+la pestaña de conversación del Estudio (transporte: *Voz*). Arranca los cuatro
+skills que resuelve, pulsa empezar y habla:
 
 ```powershell
 $env:PYTHONPATH = "sdk\python\src"
@@ -1412,7 +1425,7 @@ de una muerte silenciosa por falta de memoria:
 
 ### Qué modelo usa cada skill, y cómo cambiarlo
 
-Dos skills cargan un modelo: **llm-chat** (la vista Chat) y **planner** (la
+Dos skills cargan un modelo: **llm-chat** (la pestaña de conversación del Estudio) y **planner** (la
 vista Operate, y `aura do`). Son procesos separados, así que cada uno responde
 la pregunta por su cuenta — y ambos la responden igual, en este orden:
 

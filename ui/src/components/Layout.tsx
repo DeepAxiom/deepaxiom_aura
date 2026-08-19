@@ -6,20 +6,16 @@ import { LANGUAGES, setLanguage } from "../i18n";
 import { SPEC_VERSION } from "../reference/generated";
 import {
   IconBook,
-  IconChat,
   IconGraph,
   IconGrid,
   IconList,
   IconLogo,
-  IconMic,
   IconPlug,
   IconStudio,
 } from "./Icons";
 
 export type ViewId =
   | "studio"
-  | "chat"
-  | "voice"
   | "skills"
   | "projections"
   | "graphs"
@@ -28,8 +24,6 @@ export type ViewId =
 
 const NAV: { id: ViewId; icon: (p: { size?: number }) => React.ReactNode }[] = [
   { id: "studio", icon: IconStudio },
-  { id: "chat", icon: IconChat },
-  { id: "voice", icon: IconMic },
   { id: "skills", icon: IconGrid },
   { id: "projections", icon: IconPlug },
   { id: "graphs", icon: IconGraph },

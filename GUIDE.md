@@ -660,7 +660,7 @@ a `motor` skill that acts on the world.
 The frontend ([`ui/`](ui/), React 19 + Vite + TypeScript, internationalized with
 react-i18next — English base, Spanish included) is **built into the binary** via
 `go:embed`. `aura up` serves it at `http://localhost:9080` with no Node process at
-runtime. Eight views, opening on the Studio:
+runtime. Six views, opening on the Studio:
 
 - **Studio** — the home screen, and the only surface for building and running.
   A palette of live skills, a canvas you drag and wire on, an inspector for
@@ -680,10 +680,22 @@ runtime. Eight views, opening on the Studio:
   every envelope names its node. It costs the node nothing: those envelopes
   already arrive on the session's socket, and activity is batched to one render
   per animation frame.
-- **Chat** — pick a graph, stream a conversation, answer human-approval gates
-  inline with Approve/Deny buttons.
-- **Voice** — talk to the `voice` graph. Your words appear as you speak them,
-  the reply is spoken back as it is written, and speaking over it stops it.
+
+  Its right column is tabbed: the **inspector** for whatever is selected, the
+  **activity** of the running session, or **conversation** — which is where
+  the old Chat and Voice screens went. Typing and talking were never two
+  features (both open a session, push input through a client port and render
+  what returns), so they are one panel with a transport toggle:
+
+  - *Text* runs whichever registered graph you pick, usually `chat`, and
+    answers human-approval gates inline with Approve/Deny.
+  - *Voice* runs the `voice` graph — four skills at once, six client ports.
+    Your words appear as you speak them, the reply is spoken back as it is
+    written, and speaking over it stops it.
+
+  They stay two graphs rather than one graph with a setting, because that is
+  what they are; the toggle swaps the session. Switching back to text, or
+  leaving the panel, releases the microphone.
 - **Skills** — the live capability catalog, color-coded by type, with each
   skill's ports, schemas, and description.
 - **Projections** — connect an OpenAPI spec by pasting it, and flip each
@@ -1167,7 +1179,8 @@ carries a password.
 
 ## Talking to it
 
-`aura up` seeds a `voice` graph, and the control-plane UI has a **Voice** view
+`aura up` seeds a `voice` graph, and the control-plane UI reaches it from
+Studio's conversation tab (transport: *Voice*)
 that drives it. Start the four skills it resolves, press start, and speak:
 
 ```powershell
@@ -1433,7 +1446,7 @@ silent out-of-memory kill:
 
 ### Which model each skill uses, and how to change it
 
-Two skills load a model: **llm-chat** (the Chat view) and **planner** (the
+Two skills load a model: **llm-chat** (Studio's conversation tab) and **planner** (the
 Operate view, and `aura do`). They are separate processes, so each answers the
 question separately — and both answer it the same way, in this order:
 

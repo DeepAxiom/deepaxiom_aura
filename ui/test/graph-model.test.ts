@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
-import { autoLayout, fromIR, toIR, validate } from "../src/graph/model.ts";
+import { autoLayout, fromIR, portMap, toIR, validate } from "../src/graph/model.ts";
 import type { GraphIR, SkillManifest } from "../src/api/types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -58,7 +58,43 @@ const skills: SkillManifest[] = [
     format: "source",
     ports: { ingress: [{ name: "text_in", schema: "std/text@1" }], egress: [] },
   },
+  {
+    // Copied from skills/model-fit/skill.yaml: the schemas that made the
+    // validator disagree with the kernel are the point of these vectors.
+    id: "example/sensorial/model-fit@1.0.0",
+    version: "1.0.0",
+    protocol: "1",
+    name: "Model fit",
+    description: "",
+    capability: "sensorial.hardware.modelfit",
+    type: "sensorial",
+    format: "source",
+    ports: {
+      ingress: [{ name: "command_in", schema: "deepaxiom/model-command@1" }],
+      egress: [
+        { name: "result_out", schema: "deepaxiom/model-result@1" },
+        { name: "status_out", schema: "std/status@1" },
+      ],
+    },
+  },
 ];
+
+/**
+ * The graph the planner really emitted for "rank which models fit on this
+ * machine", copied out of the node. It ran to completion, so anything the
+ * validator says about it had better not be an error.
+ */
+const PLANNER_GRAPH: GraphIR = {
+  ir: "1",
+  graph_id: "plan-01m0dnnsn4",
+  origin: { kind: "planner", skill: "example/cognitive/planner", cause: "01M0DNNK7A4SMHA8ZYG9Q5YF09" },
+  nodes: [{ ref: "s1", resolve: "sensorial.hardware.modelfit" }],
+  edges: [
+    { from: "client.step1_out", to: "s1.command_in" },
+    { from: "s1.result_out", to: "client.text_in" },
+    { from: "s1.status_out", to: "client.text_in" },
+  ],
+};
 
 /** Build IR inline for the rule tests, so each states only what it exercises. */
 function ir(nodes: GraphIR["nodes"], edges: GraphIR["edges"], id = "t"): GraphIR {
@@ -142,11 +178,19 @@ test("C2 rule 6 — the speculation invariant", () => {
   );
 });
 
-test("C2 rule 2 — port schemas must be compatible", () => {
-  const mismatch = fromIR(
+test("C2 rule 2 stops where the kernel stops it: at the client", () => {
+  // This test used to assert the opposite, and was wrong. The kernel compares
+  // schemas only when both ends are declared skills — executor/session.go
+  // guards the comparison with `if fromRef != ClientRef` — because the client's
+  // schema arrives in the session's inputs, which a registered graph does not
+  // carry. There is nothing on the other side to compare against.
+  const clientEdge = fromIR(
     ir([{ ref: "eco", resolve: "logical.echo" }], [{ from: "client.audio_out", to: "eco.text_in" }]),
   );
-  assert.ok(validate(mismatch, skills, "local").some((f) => f.rule === 2 && f.severity === "error"));
+  assert.ok(
+    !validate(clientEdge, skills, "local").some((f) => f.rule === 2),
+    "the kernel accepts this; reporting it red would teach authors to ignore the bar",
+  );
 
   const fine = fromIR(ir([{ ref: "eco", resolve: "logical.echo" }], [{ from: "client.text_out", to: "eco.text_in" }]));
   assert.ok(!validate(fine, skills, "local").some((f) => f.rule === 2));
@@ -181,4 +225,76 @@ test("optional edge fields are omitted rather than written as null", () => {
   for (const key of ["gate", "qos", "speculative", "deadline_ms", "priority"]) {
     assert.ok(!(key in edge), `${key} should be absent, not null — a round-trip must not inflate a hand-written graph`);
   }
+});
+
+/* ── the client pseudo-node's ports are open ─────────────────────── */
+
+test("a planner graph that ran to completion produces no errors", () => {
+  // Three false positives used to fire here: an invented `client.step1_out`,
+  // and two schema comparisons against `client.text_in` that the kernel never
+  // makes. A validator stricter than the kernel is a validator authors ignore.
+  const findings = validate(fromIR(PLANNER_GRAPH), skills, "local");
+  assert.deepEqual(
+    findings.filter((f) => f.severity === "error"),
+    [],
+    "the kernel accepted and ran this graph; the canvas must agree",
+  );
+});
+
+test("the client draws the ports a graph names, not only the ones C2 lists", () => {
+  const ports = portMap(fromIR(PLANNER_GRAPH), skills).get("client")!;
+  assert.ok(ports.open, "the client's port set is extensible per C2");
+  assert.ok(
+    ports.egress.some((p) => p.name === "step1_out"),
+    "an edge leaves client.step1_out, so it needs an anchor of its own to leave from",
+  );
+  assert.ok(
+    ports.egress.some((p) => p.name === "text_out"),
+    "extending must not drop the ports C2 does spell out",
+  );
+});
+
+test("the shipped chat graph is clean, status_out into text_in and all", () => {
+  // Hand-written, declared, and in daily use. If this reports an error the
+  // rule is wrong, not the graph.
+  const chat = fromIR(
+    ir(
+      [{ ref: "s1", resolve: "sensorial.hardware.modelfit" }],
+      [
+        { from: "client.text_out", to: "s1.command_in" },
+        { from: "s1.status_out", to: "client.text_in" },
+      ],
+      "chat",
+    ),
+  );
+  assert.deepEqual(validate(chat, skills, "local").filter((f) => f.severity === "error"), []);
+});
+
+test("a genuine skill-to-skill schema mismatch is still an error", () => {
+  // The exemption is for edges touching `client` only. Between two declared
+  // skills the kernel does compare, and so must we.
+  const g = fromIR(
+    ir(
+      [
+        { ref: "fit", resolve: "sensorial.hardware.modelfit" },
+        { ref: "eco", resolve: "logical.echo" },
+      ],
+      [
+        { from: "client.text_out", to: "fit.command_in" },
+        { from: "fit.result_out", to: "eco.text_in" },
+      ],
+    ),
+  );
+  const mismatch = validate(g, skills, "local").filter((f) => f.rule === 2 && f.severity === "error");
+  assert.equal(mismatch.length, 1, "deepaxiom/model-result@1 does not fit std/text@1");
+});
+
+test("a typo in a real skill's port is still an error", () => {
+  const g = fromIR(
+    ir([{ ref: "eco", resolve: "logical.echo" }], [{ from: "eco.txt_out", to: "client.text_in" }]),
+  );
+  assert.ok(
+    validate(g, skills, "local").some((f) => f.severity === "error" && f.message.includes("txt_out")),
+    "openness belongs to the client, never to a skill with a declared manifest",
+  );
 });

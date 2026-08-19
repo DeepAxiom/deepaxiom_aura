@@ -76,6 +76,11 @@ export interface ResolvedPorts {
   type?: SkillType;
   /** The manifest we matched, if any — absent means unresolved at draw time. */
   manifest?: SkillManifest;
+  /**
+   * The port set is a floor, not a ceiling: this node accepts port names
+   * nobody declared ahead of time. True only for `client` — see CLIENT_PORTS.
+   */
+  open?: boolean;
 }
 
 /**
@@ -88,8 +93,16 @@ export interface ResolvedPorts {
  * holds `text_out` and its ingress list holds `text_in` — the opposite of the
  * names, because the names are written from the client's point of view and the
  * canvas draws from the graph's.
+ *
+ * **This list is a floor, not a ceiling.** C2 calls the client's ports
+ * "extensible to other schemas", and the planner exercises that: it mints a
+ * `client.step<N>_out` per step and declares that port's schema in the
+ * session's `inputs[]`, which a registered graph does not carry. So a port
+ * named here is one we can label; a port this graph names and we cannot is
+ * still real. `open` is what stops the validator from calling it an error.
  */
 export const CLIENT_PORTS: ResolvedPorts = {
+  open: true,
   ingress: [
     { name: "text_in", schema: "std/text@1" },
     { name: "confirm_in", schema: "std/confirmation@1" },
@@ -128,6 +141,42 @@ export function resolvePorts(node: CanvasNode, skills: SkillManifest[]): Resolve
     type: m.type,
     manifest: m,
   };
+}
+
+/**
+ * Every node's ports, resolved against the live catalogue **and this graph**.
+ *
+ * The graph is not decoration here. An open node (`client`) draws whatever
+ * ports the edges actually name, so a planner's `step1_out` gets a row of its
+ * own instead of quietly borrowing another port's anchor and drawing the edge
+ * to the wrong place.
+ *
+ * One builder, used by the validator and by the canvas, so the boxes you see
+ * and the findings you read can never disagree about what a port is.
+ */
+export function portMap(g: CanvasGraph, skills: SkillManifest[]): Map<string, ResolvedPorts> {
+  const m = new Map<string, ResolvedPorts>();
+  for (const n of g.nodes) {
+    const base = resolvePorts(n, skills);
+    if (!base.open) {
+      m.set(n.ref, base);
+      continue;
+    }
+    // Extend an open node with the ports this graph names. Schema is left
+    // empty: it lives in the session's inputs, which we genuinely do not have.
+    const ingress = [...base.ingress];
+    const egress = [...base.egress];
+    for (const e of g.edges) {
+      if (e.fromRef === n.ref && !egress.some((p) => p.name === e.fromPort)) {
+        egress.push({ name: e.fromPort, schema: "" });
+      }
+      if (e.toRef === n.ref && !ingress.some((p) => p.name === e.toPort)) {
+        ingress.push({ name: e.toPort, schema: "" });
+      }
+    }
+    m.set(n.ref, { ...base, ingress, egress });
+  }
+  return m;
 }
 
 /** How many candidate skills satisfy a capability demand. */
@@ -383,7 +432,7 @@ export function validate(
 ): Finding[] {
   const out: Finding[] = [];
   const byRef = new Map(g.nodes.map((n) => [n.ref, n]));
-  const portsOf = new Map(g.nodes.map((n) => [n.ref, resolvePorts(n, skills)]));
+  const portsOf = portMap(g, skills);
 
   if (!g.graphId.trim()) {
     out.push({ severity: "error", message: "The graph needs an id before it can be registered." });
@@ -455,21 +504,35 @@ export function validate(
     const src = fromPorts.egress.find((p) => p.name === e.fromPort);
     const dst = toPorts.ingress.find((p) => p.name === e.toPort);
 
-    if (fromPorts.egress.length && !src) {
+    // An open node cannot be missing a port: `portMap` already gave it every
+    // port this graph names, and the ones it cannot name are still real.
+    if (!fromPorts.open && fromPorts.egress.length && !src) {
       out.push({
         severity: "error",
         edgeId: e.id,
         message: `"${e.fromRef}" has no egress port "${e.fromPort}".`,
       });
     }
-    if (toPorts.ingress.length && !dst) {
+    if (!toPorts.open && toPorts.ingress.length && !dst) {
       out.push({
         severity: "error",
         edgeId: e.id,
         message: `"${e.toRef}" has no ingress port "${e.toPort}".`,
       });
     }
-    if (src && dst && !schemaCompatible(src.schema, dst.schema)) {
+
+    // C2 rule 2, exactly as the kernel applies it: schemas are compared only
+    // when **both** ends are declared skills. The kernel skips any edge that
+    // touches `client` (executor/session.go, `if fromRef != ClientRef`) because
+    // the client's schema arrives with the session's inputs, not the graph.
+    //
+    // Mirroring that boundary is the whole point. A validator stricter than the
+    // kernel paints a working graph red — the shipped `chat` graph wires
+    // `llm.status_out` (std/status@1) into `client.text_in` (std/text@1) and
+    // runs fine — and a findings bar that cries wolf is one authors learn to
+    // stop reading.
+    const clientEdge = !!fromPorts.open || !!toPorts.open;
+    if (!clientEdge && src && dst && !schemaCompatible(src.schema, dst.schema)) {
       out.push({
         severity: "error",
         rule: 2,

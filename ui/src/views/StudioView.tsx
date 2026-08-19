@@ -38,6 +38,7 @@ import { GraphNode } from "../components/canvas/GraphNode";
 import { Inspector } from "../components/canvas/Inspector";
 import { LiveRail } from "../components/canvas/LiveRail";
 import { Minimap } from "../components/canvas/Minimap";
+import { ConversePanel } from "../components/converse/ConversePanel";
 import { curve, portAnchor } from "../graph/geometry";
 import {
   type CanvasEdge,
@@ -48,7 +49,7 @@ import {
   candidateCount,
   fromIR,
   nodeHeight,
-  resolvePorts,
+  portMap,
   savePositions,
   toIR,
   validate,
@@ -108,6 +109,15 @@ export function StudioView() {
   const [mode, setMode] = useState("local");
   const [paletteQuery, setPaletteQuery] = useState("");
   const [showIR, setShowIR] = useState(false);
+  /**
+   * Which pane the right column shows.
+   *
+   * "inspect" is implicit rather than sticky — selecting a node means you want
+   * its fields, and making that a click as well would be a click nobody would
+   * thank us for. The conversation, by contrast, is a place you go and stay,
+   * so it is the one an author picks and keeps.
+   */
+  const [side, setSide] = useState<"auto" | "converse">("auto");
   const [irDraft, setIrDraft] = useState("");
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
@@ -168,11 +178,9 @@ export function StudioView() {
 
   /* ── derived ───────────────────────────────────────────────────── */
 
-  const portsByRef = useMemo(() => {
-    const m = new Map<string, ReturnType<typeof resolvePorts>>();
-    for (const n of graph.nodes) m.set(n.ref, resolvePorts(n, skills));
-    return m;
-  }, [graph.nodes, skills]);
+  // Graph-aware on purpose: the client draws the ports this graph names, not
+  // only the four C2 spells out. See portMap.
+  const portsByRef = useMemo(() => portMap(graph, skills), [graph, skills]);
 
   const heightOf = useCallback(
     (n: CanvasNode) => nodeHeight(portsByRef.get(n.ref) ?? { ingress: [], egress: [] }),
@@ -528,6 +536,7 @@ export function StudioView() {
 
   /* ── inspector plumbing ────────────────────────────────────────── */
 
+  const inspecting = sel.nodes.length === 1 || sel.edges.length === 1;
   const selectedNode = sel.nodes.length === 1 ? graph.nodes.find((n) => n.ref === sel.nodes[0]) ?? null : null;
   const selectedEdge = sel.edges.length === 1 ? graph.edges.find((e) => e.id === sel.edges[0]) ?? null : null;
   const selFindings = findings.filter(
@@ -775,8 +784,31 @@ export function StudioView() {
           </div>
         </div>
 
-        <aside className="studio__side">
-          {(sel.nodes.length === 1 || sel.edges.length === 1) ? (
+        <aside className={`studio__side ${side === "converse" ? "studio__side--wide" : ""}`}>
+          <div className="studio__tabs" role="tablist">
+            <button
+              role="tab"
+              aria-selected={side === "auto"}
+              className={`studio__tab ${side === "auto" ? "studio__tab--on" : ""}`}
+              onClick={() => setSide("auto")}
+            >
+              {inspecting ? t("studio.tabInspect") : t("studio.tabActivity")}
+            </button>
+            <button
+              role="tab"
+              aria-selected={side === "converse"}
+              className={`studio__tab ${side === "converse" ? "studio__tab--on" : ""}`}
+              onClick={() => setSide("converse")}
+            >
+              {t("studio.tabConverse")}
+            </button>
+          </div>
+
+          {side === "converse" ? (
+            <ConversePanel />
+          ) : (
+          <div className="studio__pane">
+          {inspecting ? (
             <Inspector
               node={selectedNode}
               edge={selectedEdge}
@@ -807,6 +839,8 @@ export function StudioView() {
                 }
               })}
             </div>
+          )}
+          </div>
           )}
         </aside>
       </div>
