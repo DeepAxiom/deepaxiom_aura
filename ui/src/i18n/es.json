@@ -8,7 +8,8 @@
     "sessions": "Sesiones",
     "voice": "Voz",
     "canvas": "Lienzo",
-    "reference": "Referencia"
+    "reference": "Referencia",
+    "studio": "Estudio"
   },
   "topbar": {
     "connected": "nodo {{node}} · modo {{mode}} · protocolo {{protocol}}",
@@ -207,6 +208,23 @@
       "contracts": "Contratos",
       "schemas": "Esquemas",
       "enums": "Enumeraciones"
+    }
+  },
+  "studio": {
+    "placeholder": "¿Qué quieres hacer? p. ej. rank which models fit on this machine",
+    "run": "Ejecutar",
+    "running": "Ejecutando…",
+    "empty": "Escribe un objetivo arriba. El planner elige los skills, compila un grafo y aparece aquí — y luego se enciende mientras corre.",
+    "hint": "El progreso, los resultados y cualquier gate de aprobación llegan aquí, mientras el grafo de la izquierda muestra dónde están los datos.",
+    "planTimeout": "se agotó el tiempo esperando el plan",
+    "unreachable": "kernel inalcanzable",
+    "needPlanner": "no hay ningún skill planner conectado — arranca skills/planner, o usa `aura up --with-examples`",
+    "phase": {
+      "idle": "en reposo",
+      "planning": "planificando",
+      "executing": "corriendo",
+      "done": "listo",
+      "failed": "falló"
     }
   }
 }

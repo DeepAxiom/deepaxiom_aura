@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import type { GraphIR, SkillManifest } from "../api/types";
+import { curve } from "../graph/geometry";
 import { GraphNode } from "../components/canvas/GraphNode";
 import { Inspector } from "../components/canvas/Inspector";
 import { LiveRail } from "../components/canvas/LiveRail";
@@ -601,14 +602,3 @@ export function CanvasView() {
   );
 }
 
-/**
- * A cubic bezier between two ports, with the control points pushed
- * horizontally. The push scales with the gap so short hops stay tight and long
- * ones bow enough to be followed across a busy graph, and it has a floor so a
- * node wired back to one on its left still bulges instead of folding into a
- * straight line through both boxes.
- */
-function curve(a: { x: number; y: number }, b: { x: number; y: number }): string {
-  const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
-  return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
-}

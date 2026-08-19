@@ -8,9 +8,11 @@ import { ProjectionsView } from "./views/ProjectionsView";
 import { ReferenceView } from "./views/ReferenceView";
 import { SessionsView } from "./views/SessionsView";
 import { SkillsView } from "./views/SkillsView";
+import { StudioView } from "./views/StudioView";
 import { VoiceView } from "./views/VoiceView";
 
 const VIEWS: Record<ViewId, () => React.ReactNode> = {
+  studio: StudioView,
   chat: ChatView,
   voice: VoiceView,
   operate: OperateView,
@@ -23,7 +25,7 @@ const VIEWS: Record<ViewId, () => React.ReactNode> = {
 };
 
 export default function App() {
-  const [view, setView] = useState<ViewId>("chat");
+  const [view, setView] = useState<ViewId>("studio");
   const View = VIEWS[view];
   return (
     <div className="shell">

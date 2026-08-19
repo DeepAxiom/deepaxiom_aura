@@ -15,9 +15,11 @@ import {
   IconLogo,
   IconMic,
   IconPlug,
+  IconStudio,
 } from "./Icons";
 
 export type ViewId =
+  | "studio"
   | "chat"
   | "voice"
   | "operate"
@@ -29,6 +31,7 @@ export type ViewId =
   | "reference";
 
 const NAV: { id: ViewId; icon: (p: { size?: number }) => React.ReactNode }[] = [
+  { id: "studio", icon: IconStudio },
   { id: "chat", icon: IconChat },
   { id: "voice", icon: IconMic },
   { id: "operate", icon: IconBolt },

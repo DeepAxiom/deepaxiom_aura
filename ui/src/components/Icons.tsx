@@ -69,6 +69,15 @@ export const IconBook = (p: P) => (
   </S>
 );
 
+/** A node with a pulse running through it — the studio. */
+export const IconStudio = (p: P) => (
+  <S {...p}>
+    <rect x="2.5" y="8" width="6" height="8" rx="1.5" />
+    <rect x="15.5" y="8" width="6" height="8" rx="1.5" />
+    <path d="M8.5 12h2.2l1.3-2.4 1.3 2.4h2.2" />
+  </S>
+);
+
 export const IconList = (p: P) => (
   <S {...p}>
     <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />

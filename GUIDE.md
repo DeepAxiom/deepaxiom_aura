@@ -660,8 +660,15 @@ a `motor` skill that acts on the world.
 The frontend ([`ui/`](ui/), React 19 + Vite + TypeScript, internationalized with
 react-i18next — English base, Spanish included) is **built into the binary** via
 `go:embed`. `aura up` serves it at `http://localhost:9080` with no Node process at
-runtime. Nine views:
+runtime. Ten views, opening on the Studio:
 
+- **Studio** — the home screen. State a goal; the planner compiles a graph, it appears
+  on a canvas, and the canvas lights up as the graph runs: nodes glow as data
+  reaches them, a gate pulses while it waits for you, a failure stays red where
+  it happened. The plan arrives complete (the planner emits one `std/plan@1`),
+  so the graph is not drawn edge by edge — the execution is what is live. It
+  costs the node nothing: those envelopes already arrive on the session's
+  socket, and activity is batched to one render per animation frame.
 - **Chat** — pick a graph, stream a conversation, answer human-approval gates
   inline with Approve/Deny buttons.
 - **Voice** — talk to the `voice` graph. Your words appear as you speak them,

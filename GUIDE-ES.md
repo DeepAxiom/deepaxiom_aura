@@ -615,8 +615,16 @@ un skill `sensorial` que envuelve un sistema externo, y
 El frontend ([`ui/`](ui/), React 19 + Vite + TypeScript, internacionalizado con
 react-i18next — base en inglés, español incluido) está **integrado en el
 binario** vía `go:embed`. `aura up` lo sirve en `http://localhost:9080` sin
-proceso Node en runtime. Nueve vistas:
+proceso Node en runtime. Diez vistas, abriendo en el Estudio:
 
+- **Estudio** — la pantalla de inicio. Escribe un objetivo; el planner compila un
+  grafo, este aparece en un lienzo, y el lienzo se enciende mientras el grafo
+  corre: los nodos brillan al llegarles datos, un gate late mientras te espera,
+  un fallo se queda en rojo donde ocurrió. El plan llega completo (el planner
+  emite un solo `std/plan@1`), así que el grafo no se dibuja arista por arista
+  — lo que está en vivo es la ejecución. No le cuesta nada al nodo: esos
+  envelopes ya llegan por el socket de la sesión, y la actividad se agrupa a un
+  render por frame.
 - **Chat** — elige un grafo, transmite una conversación y responde a las puertas
   de aprobación humana en línea con botones Aprobar/Denegar.
 - **Voz** — habla con el grafo `voice`. Tus palabras aparecen mientras las
