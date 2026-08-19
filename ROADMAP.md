@@ -62,7 +62,10 @@ Measured, not remembered — the numbers are in
 - **`gateway` 56%, `store` 56%, `projection` 59%, `grammar` 52%.** The
   guarantees these implement are covered thoroughly; the accessor error paths
   around them are not.
-- **The UI has no tests at all.**
+- **The UI is tested at the model layer only.** The canvas's graph model runs
+  against the same C2 conformance vectors the kernel does, and the Markdown
+  parser has its own suite; the components, the audio capture path and the
+  session views have nothing.
 - **The seams between components are the real gap.** Every pre-existing bug found
   in the last round of work — WebTransport serving `/ws/skill` unauthenticated,
   an open path promoting a scoped credential, `/metrics` public because a rule

@@ -264,7 +264,9 @@ all. `format: wasm` *is* genuinely sandboxed, in a real WASI sandbox. A real
 boundary for source skills means a microVM, which is declared and refused at
 startup rather than quietly downgraded.
 
-`internal/` sits at 72% test coverage, `cmd/aura` at 7.5%, the UI has none. A
+`internal/` sits at 72% test coverage, `cmd/aura` at 7.5%, and the UI is tested
+at its model layer — the canvas's graph model against the kernel's own C2
+conformance vectors — but not its components. A
 59-check conformance suite runs the kernel over the wire, and separate CI jobs
 prove the ledger detects tampering by editing a real database behind a real
 binary's back, and that a scoped token cannot act as the operator. Read

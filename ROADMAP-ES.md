@@ -63,7 +63,10 @@ hitos](GUIDE-ES.md#estado-de-los-hitos).
 - **`gateway` 56%, `store` 56%, `projection` 59%, `grammar` 52%.** Las garantías
   que implementan están cubiertas a fondo; los caminos de error de los accesores
   alrededor no.
-- **La UI no tiene tests.**
+- **La UI está probada solo en su capa de modelo.** El modelo de grafos del
+  lienzo corre contra los mismos vectores de conformidad C2 que el kernel, y el
+  parser de Markdown tiene su propia suite; los componentes, la captura de audio
+  y las vistas de sesiones no tienen nada.
 - **Las costuras entre componentes son el hueco real.** Cada bug preexistente que
   apareció en la última ronda de trabajo — WebTransport sirviendo `/ws/skill` sin
   autenticar, una ruta abierta elevando una credencial acotada, `/metrics`

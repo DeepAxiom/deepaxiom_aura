@@ -613,7 +613,7 @@ un skill `sensorial` que envuelve un sistema externo, y
 El frontend ([`ui/`](ui/), React 19 + Vite + TypeScript, internacionalizado con
 react-i18next — base en inglés, español incluido) está **integrado en el
 binario** vía `go:embed`. `aura up` lo sirve en `http://localhost:9080` sin
-proceso Node en runtime. Siete vistas:
+proceso Node en runtime. Nueve vistas:
 
 - **Chat** — elige un grafo, transmite una conversación y responde a las puertas
   de aprobación humana en línea con botones Aprobar/Denegar.
@@ -622,6 +622,7 @@ proceso Node en runtime. Siete vistas:
 - **Operate** — el flujo de `aura do` con UI: escribe un objetivo, observa el
   razonamiento y los pasos del planner, y luego la ejecución con puertas y el
   resultado.
+- **Lienzo** — crea un grafo dibujándolo. Ver más abajo.
 - **Skills** — el catálogo vivo de capacidades, con colores por tipo, con los
   puertos, esquemas y descripción de cada skill.
 - **Projections** — conecta una especificación OpenAPI pegándola, y cambia cada
@@ -630,6 +631,50 @@ proceso Node en runtime. Siete vistas:
 - **Sessions** — todas las sesiones con insignias de error; haz clic en una para
   inspeccionar su log causal de eventos en línea (la materia prima detrás de
   `aura why`).
+- **Referencia** — todos los comandos, los cinco contratos completos, todos los
+  esquemas JSON y todas las enumeraciones. Ver más abajo.
+
+### El lienzo
+
+Una paleta de skills alimentada por el catálogo vivo, nodos arrastrables, cableado
+puerto a puerto que solo ilumina destinos con esquema compatible, pan y zoom, y un
+inspector que expone cada campo C2 que lleva una arista — `gate`, `qos`,
+`speculative`, `deadline_ms`, `priority` — con lo que hace cada uno, no solo su
+nombre. Un cajón de IR hace round-trip de texto en ambas direcciones, así que un
+grafo se puede pegar, dibujar encima y copiar de vuelta.
+
+**El IR que emite es puro según la especificación.** Sin coordenadas ni claves del
+editor: un grafo dibujado aquí es comparable byte a byte con uno escrito a mano.
+Las posiciones viven en el almacenamiento local del navegador indexadas por id de
+grafo, y un grafo abierto en una máquina que nunca lo ha visto se dispone a partir
+de su topología.
+
+La validación corre las reglas C2 que correrá el executor, mientras dibujas, y
+nunca lo sustituye. La regla 5 (el invariante del gate motor) se reporta según el
+modo del nodo, porque `local` repara un gate omitido y `published` rechaza la
+sesión. La regla 6 (especulación hacia un skill motor, o junto a un gate
+human-approval) y la regla 2 (compatibilidad de esquemas entre puertos) bloquean
+el registro directamente.
+
+**El rail en vivo** de la izquierda es lo que el nodo está corriendo, lo haya
+puesto esta UI o no. Un grafo registrado por `aura do`, traído por un peer
+federado o instanciado por una ruta de webhook aparece ahí con su número de
+sesiones vivas, de eventos y de errores. Con *Siguiendo* activo, el lienzo abre un
+grafo que apareció por su cuenta — con la guarda de que nunca descarta un dibujo
+sin registrar que tengas en curso.
+
+### La referencia
+
+Todos los comandos del CLI agrupados como los agrupa esta guía, los cinco
+contratos congelados completos, todos los esquemas JSON y todas las enumeraciones
+de los contratos — con búsqueda, y servidos por el propio nodo, así que funciona
+sin red.
+
+Nada de eso está escrito a mano. `scripts/gen_ui_reference.py` lo genera desde las
+tablas de comandos de esta guía, el propio bloque de uso del binario y `spec/`, y
+CI falla cuando el archivo generado está obsoleto **o cuando el binario ofrece un
+comando que esta guía nunca documentó**. Así que "la referencia está completa" es
+una afirmación comprobada, no una intención.
 
 Para desarrollar la UI contra un kernel en ejecución:
 
@@ -637,7 +682,15 @@ Para desarrollar la UI contra un kernel en ejecución:
 cd ui
 npm install
 npm run dev      # servidor de desarrollo Vite en :3000, con proxy de API + WS al kernel
+npm test         # modelo del grafo + parser Markdown (node:test, requiere node 22.6+)
 npm run build    # emite en kernel/internal/gateway/ui/dist (re-embeber: recompila el kernel)
+```
+
+Regenera la referencia tras cambiar una tabla de comandos, un contrato o un esquema:
+
+```powershell
+python scripts/gen_ui_reference.py          # escribe
+python scripts/gen_ui_reference.py --check  # lo que corre CI
 ```
 
 ---
@@ -2574,6 +2627,13 @@ kernel/             El kernel en Go — el binario único `aura`.
                       capa de archivo --config, ver "Configuración de skills en
                       tiempo de ejecución").
 ui/                 Frontend del plano de control (React + Vite + TypeScript, i18n).
+                      · graph/ (el modelo C2 del lienzo: round-trip del IR,
+                      disposición, las reglas que comprueba pronto) · markdown/
+                      (un parser pequeño y su renderer, para los contratos) ·
+                      reference/ (generado — ver scripts/gen_ui_reference.py) ·
+                      hooks/ (useLiveGraphs: lo que el nodo está corriendo) ·
+                      test/ (el modelo de grafos contra los vectores de
+                      conformidad de spec/).
 sdk/python/         El SDK `aura` para escribir skills (incluye aura.llm.ChatBackend).
 sdk/node/           @deepaxiom/aura — expone las funciones de una app como
                     skills, o maneja un grafo desde TypeScript. Tipos
@@ -2583,7 +2643,11 @@ skills/             Skills de referencia — ejemplos trabajados que llevan el
                     mínimo), llm-chat, asr, tts, sentence-chunker, planner,
                     model-manager, memory-context, postgres-cdc. Ver
                     skills/README.md.
-scripts/            release.ps1 — construye un zip distribuible.
+scripts/            release.ps1 — construye un zip distribuible. gen_ssot.py
+                    (spec/ → constantes generadas), gen_ui_reference.py
+                    (GUIDE.md + spec/ + el uso del binario → la referencia
+                    del plano de control), check_links.py, adversarial.sh y
+                    ledger_adversarial.py (CI: un binario real rechaza lo que debe).
 aura-landing/       El sitio de marketing (Astro) — independiente del runtime.
 ```
 
@@ -2784,11 +2848,6 @@ fuera de una red de confianza:
   `tee`, así que aterrizarlo es aditivo; lo que falta es la integración y el
   hardware para probarla. Hasta entonces la documentación dice "afirmado",
   nunca "probado" — ver [Modelo de seguridad](#modelo-de-seguridad).
-- **Un editor visual de grafos** — hoy un grafo se escribe como IR C2 crudo en
-  JSON o lo genera el planner; la vista de Grafos de la UI del plano de
-  control es un visor de JSON de solo lectura, no un canvas de arrastrar y
-  soltar.
-
 - **Librería embebible (`libaura`)** — el mismo cliente de channels como
   librería enlazable en C/Rust con bindings Kotlin/Swift/JS, para que una app de
   TV/móvil/reloj capture y reproduzca streams y ejecute lógica ligera sin un
@@ -2832,7 +2891,8 @@ contribuir nunca de vuelta.
 *Todo lo descrito en este README se ha ejecutado; nada de aquí es un plan
 disfrazado de funcionalidad — lo que solo está diseñado vive en su propia
 sección. Es pre-1.0: `cmd/aura` tiene cobertura delgada de tests unitarios (se
-ejercita levantando nodos reales en su lugar), no hay editor visual de grafos,
+ejercita levantando nodos reales en su lugar), la cobertura propia de la UI se
+limita a su modelo de grafos y al parser de Markdown,
 y el catálogo de integraciones es pequeño.
 [Estado de los hitos](#estado-de-los-hitos) es el resumen exacto; si ese
 apartado y este documento se contradicen alguna vez, el que tiene razón es

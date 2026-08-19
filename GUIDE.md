@@ -658,7 +658,7 @@ a `motor` skill that acts on the world.
 The frontend ([`ui/`](ui/), React 19 + Vite + TypeScript, internationalized with
 react-i18next — English base, Spanish included) is **built into the binary** via
 `go:embed`. `aura up` serves it at `http://localhost:9080` with no Node process at
-runtime. Seven views:
+runtime. Nine views:
 
 - **Chat** — pick a graph, stream a conversation, answer human-approval gates
   inline with Approve/Deny buttons.
@@ -666,6 +666,7 @@ runtime. Seven views:
   the reply is spoken back as it is written, and speaking over it stops it.
 - **Operate** — the `aura do` flow with a UI: type a goal, watch the planner's
   reasoning and steps, then the gated execution and result.
+- **Canvas** — author a graph by drawing it. See below.
 - **Skills** — the live capability catalog, color-coded by type, with each
   skill's ports, schemas, and description.
 - **Projections** — connect an OpenAPI spec by pasting it, and flip each
@@ -673,6 +674,47 @@ runtime. Seven views:
 - **Graphs** — the registered graphs and their IR.
 - **Sessions** — every session with error badges; click one to inspect its causal
   event log inline (the raw material behind `aura why`).
+- **Reference** — every command, all five contracts in full, every JSON Schema
+  and every enumeration. See below.
+
+### The canvas
+
+A skill palette fed from the live catalogue, draggable nodes, port-to-port
+wiring that lights up only schema-compatible targets, pan and zoom, and an
+inspector exposing every C2 field an edge carries — `gate`, `qos`,
+`speculative`, `deadline_ms`, `priority` — with what each one does rather than
+its name alone. An IR drawer round-trips text in both directions, so a graph can
+be pasted in, drawn on, and copied back out.
+
+**The IR it emits is spec-pure.** No coordinates, no editor keys: a graph drawn
+here is byte-comparable with one written by hand. Positions live in the
+browser's local storage keyed by graph id, and a graph opened on a machine that
+has never seen it is laid out from its topology instead.
+
+Validation runs the C2 rules the executor will run, while you draw, and never
+outranks it. Rule 5 (the motor-gate invariant) is reported by node mode, because
+`local` repairs an omitted gate and `published` refuses the session. Rule 6
+(speculation into a motor skill, or beside a human-approval gate) and rule 2
+(port schema compatibility) block registration outright.
+
+**The live rail** on the left is what the node is running, whether or not this
+UI put it there. A graph registered by `aura do`, brought by a federated peer or
+instantiated by a webhook route appears there with its live session count, event
+count and error count. While *Following* is on the canvas opens a graph that
+appeared on its own — guarded so it never discards an unregistered drawing in
+progress.
+
+### The reference
+
+Every CLI command grouped as this guide groups them, the five frozen contracts
+in full, every JSON Schema and every contract enumeration — searchable, and
+served by the node itself, so it works with no network.
+
+None of it is written by hand. `scripts/gen_ui_reference.py` generates it from
+this guide's command tables, the binary's own usage block and `spec/`, and CI
+fails when the generated file is stale **or when the binary offers a command
+this guide never documented**. "The reference is complete" is therefore a
+checked claim rather than an intention.
 
 To develop the UI against a running kernel:
 
@@ -680,7 +722,15 @@ To develop the UI against a running kernel:
 cd ui
 npm install
 npm run dev      # Vite dev server on :3000, proxying API + WS to the kernel
+npm test         # graph model + Markdown parser (node:test, needs node 22.6+)
 npm run build    # emits into kernel/internal/gateway/ui/dist (re-embed: rebuild the kernel)
+```
+
+Regenerate the reference after changing a command table, a contract or a schema:
+
+```powershell
+python scripts/gen_ui_reference.py          # write
+python scripts/gen_ui_reference.py --check  # what CI runs
 ```
 
 ---
@@ -2708,6 +2758,12 @@ kernel/             The Go kernel — the single `aura` binary.
                       · spec (generated constants) · config (the --config file
                       layer, see "Runtime skill config").
 ui/                 Control plane frontend (React + Vite + TypeScript, i18n).
+                      · graph/ (the canvas's C2 model: IR round-trip, layout,
+                      the rules it checks early) · markdown/ (a small parser
+                      and its renderer, for the contracts) · reference/
+                      (generated — see scripts/gen_ui_reference.py) · hooks/
+                      (useLiveGraphs: what the node is running) · test/ (the
+                      graph model against spec/ conformance vectors).
 sdk/python/         The `aura` SDK for writing skills (includes aura.llm.ChatBackend).
 sdk/node/           @deepaxiom/aura — expose an app's functions as skills, or
                     drive a graph from TypeScript. Types generated from spec/schemas.
@@ -2717,7 +2773,9 @@ skills/             Reference skills — worked examples carrying the `example/`
                     model-manager, memory-context, postgres-cdc. See
                     skills/README.md.
 scripts/            release.ps1 (distributable zip), gen_ssot.py (spec/ → generated
-                    constants), check_links.py, adversarial.sh and
+                    constants), gen_ui_reference.py (GUIDE.md + spec/ + the
+                    binary's usage → the control plane's reference),
+                    check_links.py, adversarial.sh and
                     ledger_adversarial.py (CI: a real binary refuses what it should).
 aura-landing/       The marketing site (Astro) — independent from the runtime.
 ```
@@ -2878,7 +2936,10 @@ falls:
   argument parsing and output formatting over logic that is tested where it
   lives.
 
-  The UI has no test suite at all. The conformance suite exercises the kernel
+  The UI's tests cover the two layers where a mistake reaches the kernel or
+  misreads a contract — the canvas's graph model, checked against the same C2
+  conformance vectors the kernel uses, and the Markdown parser that renders the
+  specs. Its components and audio paths have none. The conformance suite exercises the kernel
   end to end over the wire; the effect ledger's tamper-detection guarantee is
   exercised separately, against a real binary, by a dedicated adversarial CI
   job. Treat this as pre-production.
@@ -2918,10 +2979,6 @@ is the one that keeps this from being safe outside a trusted network:
   field, so landing it is additive; what is missing is the integration and
   the hardware to test it on. Until then the documentation says "asserted",
   never "proven" — see [Security model](#security-model).
-- **A visual graph editor** — today a graph is authored as raw C2 IR JSON or
-  generated by the planner; the control-plane UI's Graphs view is a read-only
-  JSON viewer, not a drag-and-drop canvas.
-
 - **Embedded library (`libaura`)** — the same channel client as a linkable
   C/Rust library with Kotlin/Swift/JS bindings, so a TV/mobile/watch app captures
   and plays streams and runs light logic without a full node. A packaging effort;
@@ -2962,8 +3019,8 @@ cloud provider hosting the product itself without ever contributing back.
 *Everything described in this README has been run; nothing here is a plan
 dressed as a feature — what is only designed lives in its own section. It is
 pre-1.0: `cmd/aura` is thinly covered by unit tests (exercised instead by
-running real nodes), there is no visual graph editor, and the integration
-catalog is small. [Milestone
+running real nodes), the UI's own coverage is limited to its graph model and
+Markdown parser, and the integration catalog is small. [Milestone
 status](#milestone-status) is the accurate summary; if it and this document
 ever disagree, Milestone status is right.*
 
