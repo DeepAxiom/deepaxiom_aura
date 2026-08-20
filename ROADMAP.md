@@ -58,15 +58,23 @@ status](GUIDE.md#milestone-status).
 Measured, not remembered — the numbers are in
 [Milestone status](GUIDE.md#milestone-status).
 
-- **`cmd/aura` at 7.5%.** Argument parsing and output formatting over logic
+- **`cmd/aura` at 8.8%.** Argument parsing and output formatting over logic
   tested where it lives. The honest outlier, and low risk.
-- **`gateway` 56%, `store` 56%, `projection` 59%, `grammar` 52%.** The
+- **`gateway` 54%, `store` 54%, `projection` 59%, `grammar` 52%.** The
   guarantees these implement are covered thoroughly; the accessor error paths
   around them are not.
-- **The UI is tested at the model layer only.** The canvas's graph model runs
-  against the same C2 conformance vectors the kernel does, and the Markdown
-  parser has its own suite; the components, the audio capture path and the
-  session views have nothing.
+- **The UI is tested at the model layer only.** That layer is now most of the
+  logic — the graph model against the same C2 conformance vectors the kernel
+  uses, the editing operations, the bypass, the conversation fold, the frames
+  and every translation key the source asks for. What has nothing is the part
+  that touches a browser: the components, the audio capture path and the
+  session views.
+
+  The split is deliberate rather than a plan half-executed. Anything that can
+  produce IR the kernel would reject is pure and tested; pointer arithmetic and
+  CSS are verified by driving a real node and looking. Both bugs the i18n suite
+  was written for got past review and shipped, which is the argument for moving
+  more of the browser half into something mechanical.
 - **The seams between components are the real gap.** Every pre-existing bug found
   in the last round of work — WebTransport serving `/ws/skill` unauthenticated,
   an open path promoting a scoped credential, `/metrics` public because a rule

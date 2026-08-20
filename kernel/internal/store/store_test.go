@@ -550,3 +550,85 @@ func TestCheckpointRoundTrip(t *testing.T) {
 		t.Fatalf("LastCheckpoint = %+v; want seq 20", last)
 	}
 }
+
+// A graph's history is what makes "go back to the version that worked" a real
+// operation rather than an archaeology exercise, so its rules get direct tests
+// instead of being covered incidentally through the HTTP layer.
+
+func TestGraphHistoryRecordsOnlyRealChanges(t *testing.T) {
+	st := open(t)
+	a := []byte(`{"ir":"1","graph_id":"g","nodes":[{"ref":"a"}]}`)
+	b := []byte(`{"ir":"1","graph_id":"g","nodes":[{"ref":"b"}]}`)
+
+	for _, ir := range [][]byte{a, a, b, a} {
+		if err := st.SaveGraph("g", ir); err != nil {
+			t.Fatalf("SaveGraph: %v", err)
+		}
+	}
+
+	revs, err := st.GraphRevisions("g")
+	if err != nil {
+		t.Fatalf("GraphRevisions: %v", err)
+	}
+	// A, A, B, A is three things that happened: the second A changed nothing,
+	// the last one is a deliberate return and the history has to say so.
+	if len(revs) != 3 {
+		t.Fatalf("want 3 revisions, got %d", len(revs))
+	}
+	if revs[0].N != 3 || revs[2].N != 1 {
+		t.Fatalf("want newest first, got %d..%d", revs[0].N, revs[2].N)
+	}
+	if revs[0].Digest != revs[2].Digest {
+		t.Fatal("returning to a previous version must produce its digest again, or the history cannot show you went back")
+	}
+	if revs[0].Digest == revs[1].Digest {
+		t.Fatal("two different graphs share a digest")
+	}
+}
+
+func TestGraphRevisionReturnsThatVersionNotTheCurrentOne(t *testing.T) {
+	st := open(t)
+	old := []byte(`{"ir":"1","graph_id":"g","nodes":[{"ref":"old"}]}`)
+	cur := []byte(`{"ir":"1","graph_id":"g","nodes":[{"ref":"cur"}]}`)
+	_ = st.SaveGraph("g", old)
+	_ = st.SaveGraph("g", cur)
+
+	got, err := st.GraphRevision("g", 1)
+	if err != nil {
+		t.Fatalf("GraphRevision: %v", err)
+	}
+	if string(got) != string(old) {
+		t.Fatalf("revision 1 = %s, want the original", got)
+	}
+	live, _ := st.LoadGraph("g")
+	if string(live) != string(cur) {
+		t.Fatalf("reading history must not disturb what is current, got %s", live)
+	}
+}
+
+func TestGraphRevisionRefusesOneThatDoesNotExist(t *testing.T) {
+	st := open(t)
+	_ = st.SaveGraph("g", []byte(`{"ir":"1"}`))
+	if _, err := st.GraphRevision("g", 99); err == nil {
+		t.Fatal("want an error for a revision that was never written")
+	}
+	// A graph nobody registered has an empty history, not an error: the UI asks
+	// before it knows, and a 500 there would be noise.
+	revs, err := st.GraphRevisions("never-seen")
+	if err != nil || len(revs) != 0 {
+		t.Fatalf("want an empty history, got %v / %v", revs, err)
+	}
+}
+
+func TestGraphRevisionsAreListedWithoutTheirBodies(t *testing.T) {
+	st := open(t)
+	ir := []byte(`{"ir":"1","graph_id":"g","nodes":[{"ref":"a"}]}`)
+	_ = st.SaveGraph("g", ir)
+	revs, _ := st.GraphRevisions("g")
+	if revs[0].IR != nil {
+		t.Fatal("a listing carries no bodies; a long history would dwarf the graph")
+	}
+	if revs[0].Bytes != len(ir) {
+		t.Fatalf("size = %d, want %d", revs[0].Bytes, len(ir))
+	}
+}

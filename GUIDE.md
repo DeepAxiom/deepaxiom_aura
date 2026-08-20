@@ -855,7 +855,7 @@ To develop the UI against a running kernel:
 cd ui
 npm install
 npm run dev      # Vite dev server on :3000, proxying API + WS to the kernel
-npm test         # graph model + Markdown parser (node:test, needs node 22.6+)
+npm test         # graph model, editing, conversation, i18n (node:test, needs node 22.6+)
 npm run build    # emits into kernel/internal/gateway/ui/dist (re-embed: rebuild the kernel)
 ```
 
@@ -1584,8 +1584,8 @@ silent out-of-memory kill:
 
 ### Which model each skill uses, and how to change it
 
-Two skills load a model: **llm-chat** (Studio's conversation tab) and **planner** (the
-Operate view, and `aura do`). They are separate processes, so each answers the
+Two skills load a model: **llm-chat** (Studio's conversation tab) and **planner**
+(Studio's goal bar, and `aura do`). They are separate processes, so each answers the
 question separately — and both answer it the same way, in this order:
 
 | | Where it looks | What it means |
@@ -2906,6 +2906,8 @@ A node serves everything on one port (default 9080).
 | `PUT /v1/skills/config?id=<id>` | Set runtime config overrides; validated, persisted, pushed to the live skill. |
 | `GET /v1/graphs` · `GET /v1/graphs/{id}` | List / fetch registered graphs. |
 | `POST /v1/graphs` | Register a C2 IR document. |
+| `GET /v1/graphs/{id}/revisions` | Every version of a graph ever registered, newest first, with the SHA-256 of each. Bodies omitted. |
+| `GET /v1/graphs/{id}/revisions/{n}` | One version's IR. |
 | `GET /v1/sessions` · `GET /v1/sessions/{id}` | List / summarize sessions. |
 | `GET /v1/sessions/{id}/events` | A session's causal event log (with timestamps). |
 | `POST /v1/projections` · `GET /v1/projections` | Connect / list projections. |
@@ -2942,6 +2944,18 @@ A node serves everything on one port (default 9080).
 
 Clients may send a full C3 envelope, or the shorthand `{"text": "…"}` — handy for
 `curl` or a browser without the SDK.
+
+One frame is not data: a `config_update` carrying `schema: "aura/pins@1"` fixes
+node outputs for the session (see [Pinned outputs](#pinned-outputs)). It is
+accepted only before the first data envelope, and refused outright in
+`published` mode.
+
+```json
+{ "v": "1", "id": "…", "node": "client", "kind": "config_update",
+  "schema": "aura/pins@1",
+  "payload": { "pins": { "eco": { "port": "text_out",
+                                  "payload": { "text": "canned", "final": true } } } } }
+```
 
 **Registry — HTTP** (served by `aura registry serve`, default port 9091)
 
@@ -3140,42 +3154,49 @@ falls:
 
   | Package | Coverage | | Package | Coverage |
   |---|---|---|---|---|
-  | `approvals` | 100.0% | | `guard` | 80.9% |
-  | `config` | 100.0% | | `wtsrv` | 79.7% |
-  | `channel` | 97.5% | | `registry` | 78.8% |
-  | `signing` | 90.4% | | `identity` | 78.3% |
-  | `approver` | 90.0% | | `mcpsrv` | 75.6% |
-  | `sandbox` | 89.7% | | `ledger` | 73.7% |
-  | `mcpcli` | 89.6% | | `projection` | 58.6% |
-  | `fed` | 86.4% | | `gateway` | 56.4% |
-  | `broker` | 86.2% | | `store` | 56.0% |
-  | `wasmrt` | 85.6% | | `grammar` | 52.3% |
-  | `executor` | 83.7% | | `cmd/aura` | **7.5%** |
-  | `seglog` | 83.7% | | | |
-  | `hub` | 81.2% | | | |
+  | `config` | 100.0% | | `hub` | 81.2% |
+  | `approvals` | 97.6% | | `guard` | 80.9% |
+  | `channel` | 97.5% | | `wtsrv` | 79.7% |
+  | `signing` | 90.4% | | `registry` | 78.8% |
+  | `approver` | 90.0% | | `identity` | 78.3% |
+  | `sandbox` | 89.7% | | `mcpsrv` | 75.6% |
+  | `mcpcli` | 89.6% | | `ledger` | 75.3% |
+  | `fed` | 86.4% | | `projection` | 58.6% |
+  | `broker` | 86.2% | | `gateway` | 54.1% |
+  | `wasmrt` | 85.6% | | `store` | 53.7% |
+  | `executor` | 84.2% | | `grammar` | 52.3% |
+  | `seglog` | 83.2% | | `cmd/aura` | **8.8%** |
 
-  No package is at zero. `internal/` overall is at **72.2%**; the whole-module
-  figure (`go test ./...`, all packages) is **53.9%**, and the gap between the
-  two is `cmd/aura`: roughly 3,200 lines of CLI at 7.5%, exercised by running
+  No package is at zero. `internal/` overall is at **71.5%**; the whole-module
+  figure (`go test ./...`, all packages) is **52.6%**, and the gap between the
+  two is `cmd/aura`: roughly 3,200 lines of CLI at 8.8%, exercised by running
   real nodes end to end rather than by unit tests — `aura verify`'s core logic
   is the exception, tested directly (see [Security model](#security-model)).
 
   These are re-measured on every release rather than carried forward, because
   this table has drifted before and the drift always ran the same direction: a
   package grew, its tests did not, and the old number kept being quoted. Two
-  still sit lower than a reader might expect. `gateway` (56.4%) and `store`
-  (56.0%) both carry large accessor surfaces whose error paths are untested —
+  still sit lower than a reader might expect. `gateway` (54.1%) and `store`
+  (53.7%) both carry large accessor surfaces whose error paths are untested —
   the guarantees they implement are covered thoroughly, the plumbing around
   them is not. `cmd/aura` is the honest outlier and always has been: it is
   argument parsing and output formatting over logic that is tested where it
   lives.
 
-  The UI's tests cover the two layers where a mistake reaches the kernel or
-  misreads a contract — the canvas's graph model, checked against the same C2
-  conformance vectors the kernel uses, and the Markdown parser that renders the
-  specs. Its components and audio paths have none. Both SDKs now cover
-  credential resolution, which is the thing in them that had none and shipped
-  broken.
+  The UI's tests cover the layers where a mistake reaches the kernel or misreads
+  a contract: the graph model against the same C2 conformance vectors the kernel
+  uses, every editing operation that can change what gets registered, the fold
+  that turns envelopes into a conversation, and the Markdown parser that renders
+  these specs. One of them earns its keep differently — a suite that walks every
+  `t("…")` in the source and fails when a key is missing from either language,
+  written after that exact mistake shipped twice and rendered a translation key
+  at the user in the middle of a panel.
+
+  Its components and audio paths have none, and that split is deliberate:
+  anything that can produce IR the kernel would reject is pure and tested, while
+  pointer arithmetic and CSS are verified by driving a real node and looking at
+  it. Both SDKs now cover credential resolution, which is the thing in them that
+  had none and shipped broken.
 
   The conformance suite exercises the kernel end to end over the wire, and four
   jobs drive a real binary rather than a package: the ledger's tamper-detection
@@ -3267,8 +3288,8 @@ cloud provider hosting the product itself without ever contributing back.
 *Everything described in this README has been run; nothing here is a plan
 dressed as a feature — what is only designed lives in its own section. It is
 pre-1.0: `cmd/aura` is thinly covered by unit tests (exercised instead by
-running real nodes), the UI's own coverage is limited to its graph model and
-Markdown parser, and the integration catalog is small. [Milestone
+running real nodes), the UI is tested at its model layer but not its
+components, and the integration catalog is small. [Milestone
 status](#milestone-status) is the accurate summary; if it and this document
 ever disagree, Milestone status is right.*
 

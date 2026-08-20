@@ -25,8 +25,10 @@ Imprime un banner. Dos líneas importan:
   open      http://localhost:9080/#token=FM-cEnU-zwwENsS0iBb3Xy2SeQ...
 ```
 
-**Abre la URL de `open` en el navegador.** Ese es el plano de control — el
-lienzo, la referencia, el chat, las sesiones. El token viaja en el fragmento
+**Abre la URL de `open` en el navegador.** Ese es el plano de control. Abre en
+**Estudio**, que es donde construyes un grafo, lo ejecutas y hablas con él — el
+lienzo, el panel de conversación y la actividad en vivo son una sola pantalla.
+Skills, proyecciones, grafos, sesiones y la referencia completa están al lado. El token viaja en el fragmento
 porque los navegadores nunca envían el fragmento al servidor, así que no acaba en
 los logs de acceso; la página lo guarda y lo borra de la barra de direcciones.
 
@@ -42,8 +44,8 @@ ningún skill: los skills son procesos aparte que se conectan *a* él. No va a
 correr nada hasta que uno lo haga.
 
 Sí trae cuatro grafos — `echo`, `chat`, `plan` y `voice` — para que haya algo a
-lo que apuntar un skill en el primer arranque. Por eso la vista Lienzo tiene
-filas en su rail antes de que hayas dibujado nada, y por eso el comando del paso
+lo que apuntar un skill en el primer arranque. Por eso el rail vivo del Estudio
+tiene filas antes de que hayas dibujado nada, y por eso el comando del paso
 3 nombra `echo` sin registrarlo antes. Los grafos vienen sembrados; el catálogo
 de skills no.
 

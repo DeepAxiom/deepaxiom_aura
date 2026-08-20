@@ -59,15 +59,24 @@ hitos](GUIDE-ES.md#estado-de-los-hitos).
 Medida, no recordada — los números están en [Estado de los
 hitos](GUIDE-ES.md#estado-de-los-hitos).
 
-- **`cmd/aura` al 7,5%.** Parseo de argumentos y formateo de salida sobre lógica
+- **`cmd/aura` al 8,8%.** Parseo de argumentos y formateo de salida sobre lógica
   que está probada donde vive. El outlier honesto, y de bajo riesgo.
-- **`gateway` 56%, `store` 56%, `projection` 59%, `grammar` 52%.** Las garantías
+- **`gateway` 54%, `store` 54%, `projection` 59%, `grammar` 52%.** Las garantías
   que implementan están cubiertas a fondo; los caminos de error de los accesores
   alrededor no.
-- **La UI está probada solo en su capa de modelo.** El modelo de grafos del
-  lienzo corre contra los mismos vectores de conformidad C2 que el kernel, y el
-  parser de Markdown tiene su propia suite; los componentes, la captura de audio
-  y las vistas de sesiones no tienen nada.
+- **La UI está probada solo en su capa de modelo.** Esa capa es ya casi toda la
+  lógica — el modelo de grafos contra los mismos vectores de conformidad C2 que
+  usa el kernel, las operaciones de edición, el bypass, el fold de
+  conversación, los marcos y cada clave de traducción que el código pide. Lo que
+  no tiene nada es la parte que toca un navegador: los componentes, la captura
+  de audio y las vistas de sesiones.
+
+  La división es deliberada, no un plan a medio ejecutar. Todo lo que puede
+  producir IR que el kernel rechazaría es puro y está probado; la aritmética de
+  punteros y el CSS se verifican manejando un nodo de verdad y mirando. Los dos
+  bugs por los que se escribió la suite de i18n pasaron revisión y se
+  publicaron, que es el argumento para llevar más de la mitad-navegador a algo
+  mecánico.
 - **Las costuras entre componentes son el hueco real.** Cada bug preexistente que
   apareció en la última ronda de trabajo — WebTransport sirviendo `/ws/skill` sin
   autenticar, una ruta abierta elevando una credencial acotada, `/metrics`

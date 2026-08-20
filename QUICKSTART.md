@@ -25,8 +25,10 @@ It prints a banner. Two lines from it matter:
   open      http://localhost:9080/#token=FM-cEnU-zwwENsS0iBb3Xy2SeQ...
 ```
 
-**Open the `open` URL in a browser.** That is the control plane — the canvas,
-the reference, chat, sessions. The token rides in the fragment because browsers
+**Open the `open` URL in a browser.** That is the control plane. It opens on
+**Studio**, which is where you build a graph, run one, and talk to it — the
+canvas, the conversation panel and the live activity are one screen. Skills,
+projections, graphs, sessions and the full reference are beside it. The token rides in the fragment because browsers
 never send a fragment to a server, so it stays out of access logs; the page
 stores it and strips it from the address bar.
 
@@ -42,8 +44,8 @@ skills are separate processes that connect *to* it. Nothing will run until one
 does.
 
 It does ship four graphs — `echo`, `chat`, `plan` and `voice` — so there is
-something to point a skill at on the first run. That is why the Canvas view has
-rows in its rail before you have drawn anything, and why the command in step 3
+something to point a skill at on the first run. That is why Studio's live rail
+has rows in it before you have drawn anything, and why the command in step 3
 names `echo` without registering it first. Graphs are seeded; the catalogue of
 skills is not.
 

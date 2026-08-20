@@ -821,7 +821,7 @@ Para desarrollar la UI contra un kernel en ejecución:
 cd ui
 npm install
 npm run dev      # servidor de desarrollo Vite en :3000, con proxy de API + WS al kernel
-npm test         # modelo del grafo + parser Markdown (node:test, requiere node 22.6+)
+npm test         # modelo, edición, conversación, i18n (node:test, requiere node 22.6+)
 npm run build    # emite en kernel/internal/gateway/ui/dist (re-embeber: recompila el kernel)
 ```
 
@@ -1569,8 +1569,8 @@ de una muerte silenciosa por falta de memoria:
 
 ### Qué modelo usa cada skill, y cómo cambiarlo
 
-Dos skills cargan un modelo: **llm-chat** (la pestaña de conversación del Estudio) y **planner** (la
-vista Operate, y `aura do`). Son procesos separados, así que cada uno responde
+Dos skills cargan un modelo: **llm-chat** (la pestaña de conversación del
+Estudio) y **planner** (la barra de objetivo del Estudio, y `aura do`). Son procesos separados, así que cada uno responde
 la pregunta por su cuenta — y ambos la responden igual, en este orden:
 
 | | Dónde mira | Qué significa |
@@ -2781,6 +2781,8 @@ Un nodo sirve todo en un solo puerto (9080 por defecto).
 | `PUT /v1/skills/config?id=<id>` | Fija overrides de config en runtime; validados, persistidos y empujados al skill vivo. |
 | `GET /v1/graphs` · `GET /v1/graphs/{id}` | Listar / obtener grafos registrados. |
 | `POST /v1/graphs` | Registrar un documento IR C2. |
+| `GET /v1/graphs/{id}/revisions` | Todas las versiones registradas de un grafo, la más nueva primero, con el SHA-256 de cada una. Sin cuerpos. |
+| `GET /v1/graphs/{id}/revisions/{n}` | El IR de una versión. |
 | `GET /v1/sessions` · `GET /v1/sessions/{id}` | Listar / resumir sesiones. |
 | `GET /v1/sessions/{id}/events` | El log causal de eventos de una sesión (con timestamps). |
 | `POST /v1/projections` · `GET /v1/projections` | Conectar / listar proyecciones. |
@@ -2817,6 +2819,18 @@ Un nodo sirve todo en un solo puerto (9080 por defecto).
 
 Los clientes pueden enviar un envelope C3 completo, o el atajo `{"text": "…"}`
 — práctico para `curl` o un navegador sin el SDK.
+
+Un frame no es dato: un `config_update` con `schema: "aura/pins@1"` fija las
+salidas de nodos para la sesión (ver [Salidas pineadas](#salidas-pineadas)).
+Solo se acepta antes del primer envelope de datos, y se rechaza de plano en modo
+`published`.
+
+```json
+{ "v": "1", "id": "…", "node": "client", "kind": "config_update",
+  "schema": "aura/pins@1",
+  "payload": { "pins": { "eco": { "port": "text_out",
+                                  "payload": { "text": "canned", "final": true } } } } }
+```
 
 **Registro — HTTP** (servido por `aura registry serve`, puerto 9091 por defecto)
 
@@ -3013,42 +3027,52 @@ cae la línea:
 
   | Paquete | Cobertura | | Paquete | Cobertura |
   |---|---|---|---|---|
-  | `approvals` | 100,0% | | `guard` | 80,9% |
-  | `config` | 100,0% | | `wtsrv` | 79,7% |
-  | `channel` | 97,5% | | `registry` | 78,8% |
-  | `signing` | 90,4% | | `identity` | 78,3% |
-  | `approver` | 90,0% | | `mcpsrv` | 75,6% |
-  | `sandbox` | 89,7% | | `ledger` | 73,7% |
-  | `mcpcli` | 89,6% | | `projection` | 58,6% |
-  | `fed` | 86,4% | | `gateway` | 56,4% |
-  | `broker` | 86,2% | | `store` | 56,0% |
-  | `wasmrt` | 85,6% | | `grammar` | 52,3% |
-  | `executor` | 83,7% | | `cmd/aura` | **7,5%** |
-  | `seglog` | 83,7% | | | |
-  | `hub` | 81,2% | | | |
+  | `config` | 100,0% | | `hub` | 81,2% |
+  | `approvals` | 97,6% | | `guard` | 80,9% |
+  | `channel` | 97,5% | | `wtsrv` | 79,7% |
+  | `signing` | 90,4% | | `registry` | 78,8% |
+  | `approver` | 90,0% | | `identity` | 78,3% |
+  | `sandbox` | 89,7% | | `mcpsrv` | 75,6% |
+  | `mcpcli` | 89,6% | | `ledger` | 75,3% |
+  | `fed` | 86,4% | | `projection` | 58,6% |
+  | `broker` | 86,2% | | `gateway` | 54,1% |
+  | `wasmrt` | 85,6% | | `store` | 53,7% |
+  | `executor` | 84,2% | | `grammar` | 52,3% |
+  | `seglog` | 83,2% | | `cmd/aura` | **8,8%** |
 
-  **Ningún paquete está en cero.** `internal/` está en **72,3%**; el agregado
-  del módulo entero (`go test ./...`, todos los paquetes) es **54,9%**, y la
-  diferencia es enteramente `cmd/aura`: unas 3.200 líneas de CLI al 9,5%, que
+  **Ningún paquete está en cero.** `internal/` está en **71,5%**; el agregado
+  del módulo entero (`go test ./...`, todos los paquetes) es **52,6%**, y la
+  diferencia es enteramente `cmd/aura`: unas 3.200 líneas de CLI al 8,8%, que
   se prueban levantando nodos de verdad y no con tests unitarios — la lógica
   central de `aura verify` es la excepción, probada directamente (ver [Modelo
   de seguridad](#modelo-de-seguridad)).
 
-  Los números de arriba están medidos, no recordados, y dos son más bajos de lo
-  que una release anterior afirmaba: `registry` está en 77,4% donde esta tabla
-  decía 92,6%, y `gateway` en 58,7% donde decía 67,6%. Ambos habían crecido sin
-  que sus tests crecieran con ellos. `ledger` y `store` están por debajo de sus
-  cifras viejas por la misma razón — ambos ganaron superficie considerable
-  (árbol Merkle, witnessing, recibos, atestaciones, ML-BOM) y los tests nuevos,
-  aunque exhaustivos con la criptografía, no cubren los caminos de error de
-  cada accesor nuevo. Las garantías están cubiertas; la fontanería alrededor
-  está más floja de lo que los números viejos sugerían, y citar los números
-  viejos sería la mentira más cómoda.
+  Los números de arriba están medidos en cada release, no arrastrados, porque
+  esta tabla ya ha derivado antes y la deriva siempre fue en la misma dirección:
+  un paquete crecía, sus tests no, y se seguía citando el número viejo. Dos
+  siguen más bajos de lo que un lector esperaría. `gateway` (54,1%) y `store`
+  (53,7%) cargan superficies de accesores grandes cuyos caminos de error no
+  están probados — las garantías que implementan sí lo están, la fontanería
+  alrededor no. `cmd/aura` es el outlier honesto y siempre lo ha sido: es parseo
+  de argumentos y formateo de salida sobre lógica que está probada donde vive.
 
-  La UI sigue sin suite de tests. La suite de conformidad ejercita el kernel de
-  punta a punta sobre el cable; la garantía de detección de manipulación del
-  ledger de efectos se ejercita por separado, contra un binario real, con un
-  job de CI adversarial dedicado. Trátalo como pre-producción.
+  La UI sí tiene suite, y cubre las capas donde un error alcanza al kernel o
+  malinterpreta un contrato: el modelo de grafos contra los mismos vectores de
+  conformidad C2 que usa el kernel, cada operación de edición que puede cambiar
+  lo que se registra, el fold que convierte envelopes en conversación, y el
+  parser de Markdown que renderiza estas especificaciones. Una de ellas se gana
+  el sitio de otra forma — una suite que recorre cada `t("…")` del código y
+  falla cuando falta una clave en cualquiera de los dos idiomas, escrita después
+  de que ese error exacto se publicara dos veces y pintara una clave de
+  traducción en la cara del usuario en mitad de un panel.
+
+  Sus componentes y rutas de audio no tienen ninguno, y esa división es
+  deliberada: todo lo que puede producir IR que el kernel rechazaría es puro y
+  está probado, mientras que la aritmética de punteros y el CSS se verifican
+  manejando un nodo de verdad y mirándolo. La suite de conformidad ejercita el
+  kernel de punta a punta sobre el cable; la garantía de detección de
+  manipulación del ledger se ejercita por separado, contra un binario real, con
+  un job de CI adversarial dedicado. Trátalo como pre-producción.
 
 ---
 

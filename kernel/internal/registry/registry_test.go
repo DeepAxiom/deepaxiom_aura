@@ -363,3 +363,35 @@ func TestReplicaRotationDoesNotBreakDeterminismAcrossPackages(t *testing.T) {
 		}
 	}
 }
+
+// Replicas is what a report about the catalogue reads; Register answers the
+// same question for one connection as it happens. They must agree.
+func TestReplicasCountsConnectionsPerSkill(t *testing.T) {
+	r := New()
+	live := func(id string) *Live {
+		var m Manifest
+		m.ID = id
+		m.Capability = "logical.echo"
+		m.Type = "logical"
+		return &Live{Manifest: m}
+	}
+	if n := r.Register("c1", live("a/b/one")); n != 1 {
+		t.Fatalf("first connection reported %d instances", n)
+	}
+	if n := r.Register("c2", live("a/b/one")); n != 2 {
+		t.Fatalf("second connection to the same skill reported %d", n)
+	}
+	if n := r.Register("c3", live("a/b/two")); n != 1 {
+		t.Fatalf("a different skill reported %d", n)
+	}
+
+	got := r.Replicas()
+	if got["a/b/one"] != 2 || got["a/b/two"] != 1 {
+		t.Fatalf("Replicas = %v", got)
+	}
+
+	r.Unregister("c2")
+	if r.Replicas()["a/b/one"] != 1 {
+		t.Fatal("a disconnected replica must stop being counted")
+	}
+}

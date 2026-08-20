@@ -279,9 +279,10 @@ aislado, en un sandbox WASI real. Una frontera de verdad para skills source
 significa un microVM, que está declarado y rechazado al arrancar en vez de
 degradado en silencio.
 
-`internal/` está en 72% de cobertura, `cmd/aura` en 7,5%, y la UI está probada en
-su capa de modelo — el modelo de grafos del lienzo contra los propios vectores de
-conformidad C2 del kernel — pero no en sus componentes. Una
+`internal/` está en 71,5% de cobertura, `cmd/aura` en 8,8%, y la UI está probada
+en su capa de modelo — el modelo de grafos contra los propios vectores de
+conformidad C2 del kernel, más las operaciones de edición, el fold de
+conversación y cada clave de traducción — pero no en sus componentes. Una
 suite de conformidad de 59 verificaciones ejercita el kernel sobre el cable, y
 jobs de CI aparte demuestran que el ledger detecta manipulación editando una base
 de datos real a espaldas de un binario real, que un token con alcance no puede
