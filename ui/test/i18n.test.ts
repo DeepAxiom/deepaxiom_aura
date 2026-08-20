@@ -60,6 +60,9 @@ const COMPUTED = [
   "studio.keys.tidy",
   "studio.keys.note",
   "studio.keys.help",
+  "studio.keys.disable",
+  "studio.keys.frame",
+  "studio.keys.history",
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

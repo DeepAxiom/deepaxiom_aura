@@ -1,9 +1,9 @@
 {
   "common": {
-    "loading": "Cargando…",
-    "error": "Error: {{message}}",
     "close": "Cerrar",
-    "language": "Idioma"
+    "error": "Error: {{message}}",
+    "language": "Idioma",
+    "loading": "Cargando…"
   },
   "converse": {
     "approve": "¿Apruebas?",
@@ -138,8 +138,18 @@
     "duplicate": "Duplicar (Ctrl+D)",
     "empty": "Escribe un objetivo arriba. El planner elige los skills, compila un grafo y aparece aquí — y luego se enciende mientras corre.",
     "fit": "Ajustar",
+    "framePlaceholder": "Nombra esta parte…",
     "graphId": "id del grafo",
     "hint": "Elige un skill de la paleta, o escribe un objetivo arriba y deja que el planner lo construya. Arrastra de un puerto de salida a uno de entrada para crear una arista. Shift+arrastrar para seleccionar en caja, rueda para zoom.",
+    "history": {
+      "empty": "Aún no hay nada registrado. Se guarda una versión la primera vez que se registra el grafo, y de nuevo cada vez que su contenido cambia.",
+      "here": "en el lienzo",
+      "meta": "hace {{when}} · {{bytes}} bytes",
+      "note": "Cargar una versión no revierte el nodo. Regístrala y el historial gana una entrada diciendo que volviste atrás — que es lo que pasó.",
+      "restore": "Cargar",
+      "restored": "Versión #{{n}} cargada en el lienzo. Regístrala para que sea la actual.",
+      "title": "{{graph}} — todas las versiones registradas"
+    },
     "inspector": {
       "clientNote": "El pseudo-nodo client es la conexión de la aplicación externa. C2 lo deduce de las aristas que lo nombran, así que nunca se escribe en nodes[] y no se puede eliminar.",
       "deadline": "Deadline (ms)",
@@ -179,9 +189,12 @@
       "copyIR": "Copiar el grafo entero como IR",
       "delete": "Borrar selección",
       "deselect": "Descartar / deseleccionar",
+      "disable": "Apagar un nodo y rodearlo",
       "duplicate": "Duplicar selección",
       "fit": "Ajustar el grafo",
+      "frame": "Enmarcar la selección",
       "help": "Esta lista",
+      "history": "Todas las versiones registradas",
       "menu": "Todo lo que puedes hacer ahí",
       "note": "Añadir una nota",
       "pan": "Mover el lienzo",
@@ -215,16 +228,24 @@
       "copy": "Copiar",
       "copyIR": "Copiar IR del grafo",
       "delete": "Borrar",
+      "disable": "Apagar",
       "duplicate": "Duplicar",
+      "enable": "Encender",
+      "frame": "Enmarcar la selección",
+      "frameColor": "Siguiente color",
+      "history": "Historial de versiones…",
       "insertHere": "Insertar skill aquí…",
       "inspect": "Inspeccionar arista",
       "noteColor": "Siguiente color",
       "pasteHere": "Pegar",
       "pasteIR": "Pegar IR del grafo",
+      "pin": "Pinear su salida",
       "rename": "Renombrar…",
       "selectAll": "Seleccionar todo",
       "spreadX": "Repartir en horizontal",
-      "spreadY": "Repartir en vertical"
+      "spreadY": "Repartir en vertical",
+      "unframe": "Quitar marco",
+      "unpin": "Quitar pin"
     },
     "needPlanner": "no hay ningún skill planner conectado — arranca skills/planner, o usa `aura up --with-examples`",
     "noSkills": "Ningún skill coincide. Un nodo nuevo tiene el catálogo vacío hasta que se conecten skills.",
@@ -239,6 +260,8 @@
       "done": "listo",
       "failed": "falló"
     },
+    "pinned": "{{ref}} pineado: su última salida lo sustituye, y el skill no se ejecutará.",
+    "pinnedEmpty": "{{ref}} pineado con payload vacío — ejecuta el grafo una vez y vuelve a pinear para capturar una salida real.",
     "placeholder": "¿Qué quieres hacer? p. ej. rank which models fit on this machine",
     "planTimeout": "se agotó el tiempo esperando el plan",
     "redo": "Rehacer (Ctrl+Shift+Z)",

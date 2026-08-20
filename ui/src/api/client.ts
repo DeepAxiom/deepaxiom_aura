@@ -1,6 +1,7 @@
 import type {
   Envelope,
   GraphIR,
+  GraphRevision,
   Health,
   Projection,
   SessionMeta,
@@ -88,6 +89,15 @@ export const api = {
 
   graph: (id: string) =>
     call(`/v1/graphs/${encodeURIComponent(id)}`).then((r) => json<GraphIR>(r)),
+
+  /** Every version of a graph that was ever registered, newest first. */
+  graphRevisions: (id: string) =>
+    call(`/v1/graphs/${encodeURIComponent(id)}/revisions`)
+      .then((r) => json<{ revisions: GraphRevision[] }>(r))
+      .then((d) => d.revisions ?? []),
+
+  graphRevision: (id: string, n: number) =>
+    call(`/v1/graphs/${encodeURIComponent(id)}/revisions/${n}`).then((r) => json<GraphIR>(r)),
 
   registerGraph: (ir: GraphIR) =>
     call("/v1/graphs", {

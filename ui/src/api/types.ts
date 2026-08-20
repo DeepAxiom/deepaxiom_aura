@@ -125,3 +125,23 @@ export interface Health {
   protocol: string;
   ir: string;
 }
+
+/**
+ * One registered version of a graph.
+ *
+ * `digest` is the SHA-256 of the IR, which is what makes two revisions
+ * comparable without downloading either: same digest, same graph.
+ */
+export interface GraphRevision {
+  n: number;
+  digest: string;
+  created: number;
+  bytes: number;
+}
+
+/** A node output supplied by the caller instead of produced by the skill. */
+export interface Pin {
+  port: string;
+  schema?: string;
+  payload: unknown;
+}

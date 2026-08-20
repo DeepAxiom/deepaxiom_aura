@@ -4,6 +4,8 @@
 //	GET  /v1/skills                  — live catalog (what a planner reads)
 //	GET  /v1/graphs                  — stored graph ids
 //	POST /v1/graphs                  — register a C2 IR document
+//	GET  /v1/graphs/{id}/revisions   — every version ever registered, newest first
+//	GET  /v1/graphs/{id}/revisions/{n} — one version's IR
 //	GET  /v1/sessions/{id}/events    — causal event log (raw material for `aura why`)
 //	GET  /v1/sessions/{id}/ledger    — one session's sealed effects (`aura undo`)
 //	GET  /v1/ledger/entries/{hash}   — one sealed effect by receipt (`aura undo`)
@@ -17,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -146,6 +149,8 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("PUT /v1/skills/config", g.putSkillConfig)
 	mux.HandleFunc("GET /v1/graphs", g.listGraphs)
 	mux.HandleFunc("GET /v1/graphs/{id}", g.getGraph)
+	mux.HandleFunc("GET /v1/graphs/{id}/revisions", g.listGraphRevisions)
+	mux.HandleFunc("GET /v1/graphs/{id}/revisions/{n}", g.getGraphRevision)
 	mux.HandleFunc("POST /v1/graphs", g.registerGraph)
 	mux.HandleFunc("GET /v1/sessions", g.listSessions)
 	mux.HandleFunc("GET /v1/sessions/{id}", g.sessionMeta)
@@ -368,6 +373,35 @@ func (g *Gateway) listGraphs(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"graphs": ids})
+}
+
+// listGraphRevisions serves a graph's history, newest first.
+//
+// Bodies are omitted: a listing is for choosing, and a long-lived graph's
+// history can be larger than the graph by a wide margin. The digest is enough
+// to tell two versions apart, and to tell that two are the same.
+func (g *Gateway) listGraphRevisions(w http.ResponseWriter, r *http.Request) {
+	revs, err := g.St.GraphRevisions(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"graph_id": r.PathValue("id"), "revisions": revs})
+}
+
+func (g *Gateway) getGraphRevision(w http.ResponseWriter, r *http.Request) {
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "revision must be a number"})
+		return
+	}
+	ir, err := g.St.GraphRevision(r.PathValue("id"), n)
+	if err != nil {
+		writeJSON(w, 404, map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(ir)
 }
 
 func (g *Gateway) getGraph(w http.ResponseWriter, r *http.Request) {
@@ -912,6 +946,8 @@ func (g *Gateway) clientWS(w http.ResponseWriter, r *http.Request) {
 	_ = writer.Send(rawHello, channel.QoSReliable)
 
 	var seq uint64
+	// Once data has flowed, the pin set is closed. See applyPins.
+	pinned := false
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -928,8 +964,59 @@ func (g *Gateway) clientWS(w http.ResponseWriter, r *http.Request) {
 			_ = writer.Send(rr, channel.QoSReliable)
 			continue
 		}
+		if handled, err := g.applyPins(sess, env, &pinned); handled {
+			if err != nil {
+				payload, _ := json.Marshal(map[string]string{"state": "error", "detail": err.Error()})
+				e := channel.Envelope{V: channel.ProtocolMajor, ID: channel.NewID(),
+					Session: sessionID, Kind: channel.KindError, Payload: payload}
+				rr, _ := json.Marshal(e)
+				_ = writer.Send(rr, channel.QoSReliable)
+			}
+			continue
+		}
+		if env.Kind == channel.KindData {
+			// Everything from here on runs against a fixed set of pins. See
+			// applyPins for why that has to be true.
+			pinned = true
+		}
 		sess.Route(env)
 	}
+}
+
+// PinSchema marks the frame that fixes a session's pinned outputs.
+const PinSchema = "aura/pins@1"
+
+// applyPins handles a client frame that pins node outputs.
+//
+// Carried on `config_update`, which C3 already has, rather than on a new
+// envelope kind: pinning is a property of this session's configuration and the
+// contract is frozen for good reasons. Reported as handled either way, so a
+// pin frame never reaches the graph as data.
+//
+// **Only before the first data envelope.** Changing what a node produces
+// halfway through a session would make the causal log describe two different
+// graphs under one session id, and anyone reading it afterwards would have no
+// way to tell which half they were looking at.
+func (g *Gateway) applyPins(sess *executor.Session, env channel.Envelope, pinned *bool) (bool, error) {
+	if env.Kind != channel.KindConfigUpdate || env.Schema != PinSchema {
+		return false, nil
+	}
+	if *pinned {
+		return true, fmt.Errorf(
+			"pins must be set before the first message: changing them mid-session would " +
+				"leave one session id describing two different graphs")
+	}
+	var body struct {
+		Pins map[string]executor.Pin `json:"pins"`
+	}
+	if err := json.Unmarshal(env.Payload, &body); err != nil {
+		return true, fmt.Errorf("invalid pins: %w", err)
+	}
+	if err := sess.SetPins(body.Pins, string(g.Node.Mode)); err != nil {
+		return true, err
+	}
+	g.Log.Info("session pins set", "session", sess.ID, "nodes", len(body.Pins))
+	return true, nil
 }
 
 // parseClientFrame accepts either a full C3 envelope or the shorthand

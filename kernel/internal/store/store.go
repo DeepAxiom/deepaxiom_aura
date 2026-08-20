@@ -5,7 +5,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -196,6 +198,26 @@ CREATE TABLE IF NOT EXISTS graphs (
   ir       TEXT NOT NULL,
   created  INTEGER NOT NULL
 );
+-- Every version of a graph that was ever registered, append-only.
+--
+-- The digest is the SHA-256 of the IR, which is what makes a revision a fact
+-- rather than a timestamp: two revisions with the same digest are the same
+-- graph, and re-registering an unchanged one adds nothing. That matters
+-- because "aura up" re-seeds its example graphs on every launch, and a history
+-- that grew a row per restart would be noise nobody reads.
+--
+-- Nothing here is ever updated or deleted. Restoring an old version registers
+-- it again, which appends; the history is not rewritten to make the past look
+-- like the present.
+CREATE TABLE IF NOT EXISTS graph_revisions (
+  graph_id TEXT    NOT NULL,
+  n        INTEGER NOT NULL,
+  ir       TEXT    NOT NULL,
+  digest   TEXT    NOT NULL,
+  created  INTEGER NOT NULL,
+  PRIMARY KEY (graph_id, n)
+);
+CREATE INDEX IF NOT EXISTS graph_revisions_by_graph ON graph_revisions(graph_id, n DESC);
 CREATE TABLE IF NOT EXISTS sessions (
   session_id TEXT PRIMARY KEY,
   graph_id   TEXT NOT NULL,
@@ -404,12 +426,87 @@ ON CONFLICT(id, version) DO UPDATE SET manifest=excluded.manifest, last_seen=exc
 	return err
 }
 
+// GraphRevision is one registered version of a graph.
+type GraphRevision struct {
+	N       int    `json:"n"`
+	Digest  string `json:"digest"`
+	Created int64  `json:"created"`
+	Bytes   int    `json:"bytes"`
+	IR      []byte `json:"ir,omitempty"`
+}
+
+// SaveGraph stores a graph and appends a revision when its content changed.
+//
+// Deduplicated by digest against the newest revision, not against every one:
+// registering A, then B, then A again is three things that happened and the
+// history should say so. Only a re-register of what is already current is
+// silence, which is the case that would otherwise fire on every node restart.
 func (s *Store) SaveGraph(graphID string, ir []byte) error {
-	_, err := s.db.Exec(`
+	sum := sha256.Sum256(ir)
+	digest := hex.EncodeToString(sum[:])
+	now := time.Now().UnixMilli()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var lastDigest string
+	var lastN int
+	err = tx.QueryRow(
+		`SELECT digest, n FROM graph_revisions WHERE graph_id = ? ORDER BY n DESC LIMIT 1`,
+		graphID).Scan(&lastDigest, &lastN)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	if lastDigest != digest {
+		if _, err := tx.Exec(
+			`INSERT INTO graph_revisions (graph_id, n, ir, digest, created) VALUES (?,?,?,?,?)`,
+			graphID, lastN+1, string(ir), digest, now); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(`
 INSERT INTO graphs (graph_id, ir, created) VALUES (?,?,?)
 ON CONFLICT(graph_id) DO UPDATE SET ir=excluded.ir`,
-		graphID, string(ir), time.Now().UnixMilli())
-	return err
+		graphID, string(ir), now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// GraphRevisions lists a graph's history, newest first, without the IR bodies.
+func (s *Store) GraphRevisions(graphID string) ([]GraphRevision, error) {
+	rows, err := s.db.Query(
+		`SELECT n, digest, created, LENGTH(ir) FROM graph_revisions WHERE graph_id = ? ORDER BY n DESC`,
+		graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []GraphRevision{}
+	for rows.Next() {
+		var r GraphRevision
+		if err := rows.Scan(&r.N, &r.Digest, &r.Created, &r.Bytes); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GraphRevision returns one version's IR.
+func (s *Store) GraphRevision(graphID string, n int) ([]byte, error) {
+	var ir string
+	err := s.db.QueryRow(
+		`SELECT ir FROM graph_revisions WHERE graph_id = ? AND n = ?`, graphID, n).Scan(&ir)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("graph %q has no revision %d", graphID, n)
+	}
+	return []byte(ir), err
 }
 
 func (s *Store) LoadGraph(graphID string) ([]byte, error) {

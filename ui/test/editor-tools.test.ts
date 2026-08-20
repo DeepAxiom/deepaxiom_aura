@@ -1,5 +1,5 @@
 /**
- * The editing tools added to reach n8n: splice, align, distribute, notes.
+ * The editing tools: splice, align, distribute, notes, frames, bypass.
  *
  * Split from editor.test.ts because these are the operations with arithmetic
  * in them, and arithmetic is what a test is actually good for. The invariant
@@ -10,12 +10,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { align, distribute, insertOn } from "../src/graph/editor.ts";
-import { fromIR } from "../src/graph/model.ts";
+import { align, distribute, insertOn, toggleDisabled } from "../src/graph/editor.ts";
+import { bypass, fromIR, toIR, validate } from "../src/graph/model.ts";
 import {
   NOTE_COLORS, NOTE_MIN, addNote, cycleColor, moveNote, patchNote, removeNote, resizeNote,
   type Note,
 } from "../src/graph/notes.ts";
+import {
+  GROUP_MIN, contained, cycleGroupColor, frame, moveGroup, patchGroup, removeGroup, resizeGroup,
+} from "../src/graph/groups.ts";
 import type { GraphIR, SkillManifest } from "../src/api/types.ts";
 
 const skills: SkillManifest[] = [
@@ -40,6 +43,17 @@ const skills: SkillManifest[] = [
     id: "example/motor/tts@1.0.0", version: "1.0.0", protocol: "1", name: "tts",
     description: "", capability: "motor.tts.speak", type: "motor", format: "source",
     ports: { ingress: [{ name: "text_in", schema: "std/text@1" }], egress: [] },
+  },
+  {
+    // Reads statuses. Exists so a bypass can be shown breaking rule 2 between
+    // two real skills — `send` converts text to status, and switching a
+    // converter off is precisely when the schemas stop lining up.
+    id: "example/logical/watch@1.0.0", version: "1.0.0", protocol: "1", name: "watch",
+    description: "", capability: "logical.status.watch", type: "logical", format: "source",
+    ports: {
+      ingress: [{ name: "status_in", schema: "std/status@1" }],
+      egress: [{ name: "text_out", schema: "std/text@1" }],
+    },
   },
 ];
 
@@ -246,4 +260,247 @@ test("move and remove touch only the note named", () => {
 
   const left = removeNote(moved, a.id);
   assert.deepEqual(left.map((n) => n.id), [b.id]);
+});
+
+/* ── bypass ──────────────────────────────────────────────────────── */
+
+/** a -> mid -> b, so switching `mid` off has something to reconnect. */
+function chain() {
+  return fromIR(ir(
+    [
+      { ref: "a", resolve: "logical.echo" },
+      { ref: "mid", resolve: "logical.echo" },
+      { ref: "b", resolve: "logical.echo" },
+    ],
+    [
+      { from: "client.text_out", to: "a.text_in" },
+      { from: "a.text_out", to: "mid.text_in" },
+      { from: "mid.text_out", to: "b.text_in" },
+    ],
+  ));
+}
+
+test("a disabled node is skipped and the path through it survives", () => {
+  const g = toggleDisabled(chain(), ["mid"]);
+  const out = bypass(g);
+
+  assert.ok(!out.nodes.some((n) => n.ref === "mid"), "the node is not in the graph that runs");
+  assert.ok(
+    out.edges.some((e) => e.fromRef === "a" && e.toRef === "b"),
+    "turning a node off must not break the chain \u2014 that would just be a slow delete",
+  );
+  assert.ok(
+    !out.edges.some((e) => e.fromRef === "mid" || e.toRef === "mid"),
+    "no edge may still name a node the graph no longer contains",
+  );
+});
+
+test("a bypass joins every input to every output", () => {
+  // Two in, two out: four paths ran through this node and all four survive.
+  const g = toggleDisabled(fromIR(ir(
+    [
+      { ref: "i1", resolve: "logical.echo" }, { ref: "i2", resolve: "logical.echo" },
+      { ref: "mid", resolve: "logical.echo" },
+      { ref: "o1", resolve: "logical.echo" }, { ref: "o2", resolve: "logical.echo" },
+    ],
+    [
+      { from: "client.text_out", to: "i1.text_in" },
+      { from: "i1.text_out", to: "mid.text_in" },
+      { from: "i2.text_out", to: "mid.text_in" },
+      { from: "mid.text_out", to: "o1.text_in" },
+      { from: "mid.text_out", to: "o2.text_in" },
+    ],
+  )), ["mid"]);
+  const joined = bypass(g).edges.filter((e) => e.viaDisabled === "mid");
+  assert.equal(joined.length, 4);
+  assert.deepEqual(
+    joined.map((e) => `${e.fromRef}->${e.toRef}`).sort(),
+    ["i1->o1", "i1->o2", "i2->o1", "i2->o2"],
+  );
+});
+
+test("a disabled node with nothing downstream drops its edges rather than inventing one", () => {
+  const g = toggleDisabled(fromIR(ir(
+    [{ ref: "a", resolve: "logical.echo" }, { ref: "sink", resolve: "logical.echo" }],
+    [
+      { from: "client.text_out", to: "a.text_in" },
+      { from: "a.text_out", to: "sink.text_in" },
+    ],
+  )), ["sink"]);
+  const out = bypass(g);
+  assert.ok(!out.edges.some((e) => e.toRef === "sink"));
+  assert.equal(out.edges.length, 1, "only the client hop is left");
+});
+
+test("the IR never mentions a disabled node", () => {
+  const doc = toIR(toggleDisabled(chain(), ["mid"]));
+  assert.ok(!doc.nodes.some((n) => n.ref === "mid"));
+  assert.ok(!JSON.stringify(doc).includes("mid"), "not in a node, not in an edge, not anywhere");
+});
+
+test("bypass fields never reach the wire", () => {
+  const edge = toIR(toggleDisabled(chain(), ["mid"])).edges.find((e) => e.from === "a.text_out")!;
+  assert.ok(!("viaDisabled" in (edge as Record<string, unknown>)));
+  assert.ok(!("id" in (edge as Record<string, unknown>)));
+});
+
+test("a bypass that wires two incompatible ports is reported against the node you switched off", () => {
+  // eco -> send -> watch is sound: text into send, status out of it, status
+  // into watch. `send` is the converter, so switching it off leaves text
+  // wired straight into a status port — nobody's problem until the moment
+  // the author flips that switch, and the finding has to point at the switch.
+  const g = toggleDisabled(fromIR(ir(
+    [
+      { ref: "eco", resolve: "logical.echo" },
+      { ref: "send", resolve: "motor.notify.send" },
+      { ref: "watch", resolve: "logical.status.watch" },
+    ],
+    [
+      { from: "client.text_out", to: "eco.text_in" },
+      { from: "eco.text_out", to: "send.text_in" },
+      { from: "send.status_out", to: "watch.status_in" },
+    ],
+  )), ["send"]);
+
+  // The graph is clean with the converter in place — otherwise this test
+  // proves nothing about bypassing.
+  const before = validate(fromIR(ir(
+    [
+      { ref: "eco", resolve: "logical.echo" },
+      { ref: "send", resolve: "motor.notify.send" },
+      { ref: "watch", resolve: "logical.status.watch" },
+    ],
+    [
+      { from: "client.text_out", to: "eco.text_in" },
+      { from: "eco.text_out", to: "send.text_in", gate: "none" },
+      { from: "send.status_out", to: "watch.status_in" },
+    ],
+  )), skills, "local");
+  assert.deepEqual(before.filter((f) => f.severity === "error"), []);
+
+  const found = validate(g, skills, "local").filter((f) => f.severity === "error");
+  assert.ok(found.length > 0, "an unusable graph must not validate clean");
+  assert.ok(
+    found.every((f) => !f.edgeId),
+    "a synthesised edge has no box on the canvas; pointing at it gives an unclickable finding",
+  );
+  assert.ok(found.some((f) => f.nodeRef === "send"), "the node the author switched off");
+});
+
+test("toggling a mixed selection sets them all the same way", () => {
+  // Flipping each independently is a click nobody can predict.
+  let g = toggleDisabled(chain(), ["a"]);
+  g = toggleDisabled(g, ["a", "b"]);
+  assert.deepEqual(
+    g.nodes.filter((n) => !n.isClient).map((n) => !!n.disabled),
+    [true, false, true],
+    "b was on, so the click turned everything off",
+  );
+  g = toggleDisabled(g, ["a", "b"]);
+  assert.deepEqual(g.nodes.filter((n) => n.ref === "a" || n.ref === "b").map((n) => !!n.disabled), [false, false]);
+});
+
+test("the client cannot be switched off", () => {
+  const g = toggleDisabled(chain(), ["client"]);
+  assert.equal(g.nodes.find((n) => n.isClient)!.disabled, undefined);
+});
+
+test("a graph with nothing disabled is returned untouched", () => {
+  const g = chain();
+  assert.equal(bypass(g), g, "same reference: no allocation on the common path");
+});
+
+/* ── frames ──────────────────────────────────────────────────────── */
+
+const node = (ref: string, x: number, y: number) =>
+  ({ ref, resolve: "logical.echo", x, y }) as ReturnType<typeof fromIR>["nodes"][number];
+
+test("a frame encloses what it was drawn around, with room for its label", () => {
+  const nodes = [node("a", 100, 100), node("b", 400, 300)];
+  const { groups, id } = frame([], nodes, size, "retry path")!;
+  const g = groups[0];
+  assert.equal(g.id, id);
+  assert.ok(g.x < 100 && g.y < 100, "the frame starts above and left of its contents");
+  assert.ok(g.x + g.w > 600 && g.y + g.h > 400, "and ends past the far corner");
+  assert.ok(g.y < 100 - 28, "the label band must not sit on top of the first node's header");
+  assert.equal(g.label, "retry path");
+});
+
+test("framing nothing produces nothing", () => {
+  assert.equal(frame([], [], size), null);
+});
+
+test("a frame holds what is wholly inside it, not what merely overlaps", () => {
+  // Half a node over the edge is an author mid-drag; moving the frame must
+  // not drag along the thing they were pulling out of it.
+  const box = { x: 0, y: 0, w: 500, h: 500 };
+  const nodes = [
+    node("inside", 100, 100),
+    node("straddling", 420, 100),
+    node("outside", 900, 900),
+  ];
+  assert.deepEqual(contained(box, nodes, size), ["inside"]);
+});
+
+test("a frame resized smaller lets go of what no longer fits", () => {
+  const nodes = [node("a", 50, 50), node("b", 600, 50)];
+  const { groups } = frame([], nodes, size, "")!;
+  assert.deepEqual(contained(groups[0], nodes, size).sort(), ["a", "b"]);
+
+  const shrunk = resizeGroup(groups, groups[0].id, -500, 0);
+  assert.deepEqual(contained(shrunk[0], nodes, size), ["a"], "membership is geometry, never a stored list");
+});
+
+test("resize has a floor", () => {
+  const { groups } = frame([], [node("a", 0, 0)], size, "")!;
+  const tiny = resizeGroup(groups, groups[0].id, -9999, -9999);
+  assert.equal(tiny[0].w, GROUP_MIN);
+  assert.equal(tiny[0].h, GROUP_MIN);
+});
+
+test("moving a frame does not touch the others", () => {
+  const first = frame([], [node("a", 0, 0)], size, "one")!;
+  const second = frame(first.groups, [node("b", 900, 900)], size, "two")!;
+  const moved = moveGroup(second.groups, first.id, 40, 60);
+  assert.deepEqual([moved[0].x - first.groups[0].x, moved[0].y - first.groups[0].y], [40, 60]);
+  assert.equal(moved[1].x, second.groups[1].x);
+});
+
+test("patching a frame cannot change its identity", () => {
+  const { groups, id } = frame([], [node("a", 0, 0)], size, "")!;
+  const out = patchGroup(groups, id, { label: "ingest", id: "hijacked" } as Partial<typeof groups[0]>);
+  assert.equal(out[0].id, id);
+  assert.equal(out[0].label, "ingest");
+});
+
+test("deleting a frame is not deleting its nodes", () => {
+  // The frame is annotation. Removing it from the list is the whole operation;
+  // nothing here can reach the graph.
+  const { groups, id } = frame([], [node("a", 0, 0)], size, "")!;
+  assert.deepEqual(removeGroup(groups, id), []);
+});
+
+test("frame colour cycles and wraps", () => {
+  let { groups, id } = frame([], [node("a", 0, 0)], size, "")!;
+  const first = groups[0].color;
+  for (let i = 0; i < 5; i++) groups = cycleGroupColor(groups, id);
+  assert.equal(groups[0].color, first);
+});
+
+test("a bypass never emits the same edge twice", () => {
+  // The shipped `chat` graph in miniature: one node whose two egress ports
+  // both end at client.text_in. The cross product names that pair twice, and
+  // two identical edges would deliver every message down both.
+  const g = toggleDisabled(fromIR(ir(
+    [{ ref: "fit", resolve: "sensorial.hardware.modelfit" }],
+    [
+      { from: "client.text_out", to: "fit.command_in" },
+      { from: "fit.result_out", to: "client.text_in" },
+      { from: "fit.status_out", to: "client.text_in" },
+    ],
+  )), ["fit"]);
+
+  const edges = toIR(g).edges.map((e) => `${e.from}->${e.to}`);
+  assert.deepEqual(edges, ["client.text_out->client.text_in"]);
+  assert.equal(new Set(edges).size, edges.length, "no duplicate endpoints");
 });

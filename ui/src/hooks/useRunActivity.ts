@@ -33,15 +33,25 @@ export interface Activity {
   counts: Record<string, number>;
   /** Edge ids currently holding for a human. */
   gated: string[];
+  /**
+   * The last data payload each node produced, so a node's real output can be
+   * pinned without asking the author to type it out.
+   *
+   * A ref, not state: this is read when someone pins, never rendered, and
+   * copying payloads into React state every frame would undo the batching the
+   * rest of this hook exists for.
+   */
+  lastPayload: Record<string, unknown>;
 }
 
-const EMPTY: Activity = { nodes: {}, counts: {}, gated: [] };
+const EMPTY: Activity = { nodes: {}, counts: {}, gated: [], lastPayload: {} };
 
 interface Pending {
   lastSeen: Map<string, number>;
   state: Map<string, NodeState>;
   counts: Map<string, number>;
   gated: Set<string>;
+  lastPayload: Record<string, unknown>;
 }
 
 export function useRunActivity(live: boolean) {
@@ -54,6 +64,7 @@ export function useRunActivity(live: boolean) {
     state: new Map(),
     counts: new Map(),
     gated: new Set(),
+    lastPayload: {},
   });
   const frame = useRef<number | null>(null);
 
@@ -68,6 +79,7 @@ export function useRunActivity(live: boolean) {
 
     p.lastSeen.set(ref, now);
     p.counts.set(ref, (p.counts.get(ref) ?? 0) + 1);
+    if (env.kind === "data" && env.payload !== undefined) p.lastPayload[ref] = env.payload;
 
     switch (env.kind) {
       case "confirm_request":
@@ -95,6 +107,7 @@ export function useRunActivity(live: boolean) {
   const reset = useCallback(() => {
     pending.current = {
       lastSeen: new Map(), state: new Map(), counts: new Map(), gated: new Set(),
+      lastPayload: {},
     };
     setActivity(EMPTY);
   }, []);
@@ -128,7 +141,7 @@ export function useRunActivity(live: boolean) {
         ) {
           return prev;
         }
-        return { nodes, counts, gated };
+        return { nodes, counts, gated, lastPayload: p.lastPayload };
       });
 
       frame.current = requestAnimationFrame(tick);

@@ -43,6 +43,11 @@ import { ContextMenu, type MenuItem } from "../components/canvas/ContextMenu";
 import { QuickAdd } from "../components/canvas/QuickAdd";
 import { StickyNote } from "../components/canvas/StickyNote";
 import { Shortcuts, keyFor } from "../components/canvas/Shortcuts";
+import { GraphHistory } from "../components/canvas/History";
+import {
+  contained, cycleGroupColor, frame, loadGroups, moveGroup, patchGroup,
+  removeGroup, resizeGroup, saveGroups, type Group,
+} from "../graph/groups";
 import {
   addNote, cycleColor, loadNotes, moveNote, patchNote,
   removeNote, resizeNote, saveNotes, type Note,
@@ -56,6 +61,7 @@ import {
   autoLayout,
   candidateCount,
   dedupeSkills,
+  irDigest,
   fromIR,
   nodeHeight,
   portMap,
@@ -71,6 +77,7 @@ import {
   EMPTY_SELECTION,
   addSkill,
   align,
+  toggleDisabled,
   distribute,
   insertOn,
   commit,
@@ -145,6 +152,20 @@ export function StudioView() {
   const [showKeys, setShowKeys] = useState(false);
   /** The node whose ref is being retyped in place. */
   const [renaming, setRenaming] = useState<{ ref: string; draft: string } | null>(null);
+  /** Frames for the open graph. Annotation, never IR — see graph/groups. */
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  /** The digest of what is on the canvas, for "you are here" in the history. */
+  const [digest, setDigest] = useState<string | null>(null);
+  /**
+   * Outputs supplied by the caller instead of produced by the skill.
+   *
+   * Kept per graph in this tab only, deliberately not persisted: a pin is a
+   * thing you are doing right now, and one that survived a reload would let a
+   * result come back tomorrow from a decision made today without anyone
+   * remembering they made it.
+   */
+  const [pins, setPins] = useState<Record<string, { port: string; payload: unknown }>>({});
   const [irDraft, setIrDraft] = useState("");
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
@@ -168,6 +189,10 @@ export function StudioView() {
     | { kind: "box"; startX: number; startY: number }
     | { kind: "note-move"; id: string; lastX: number; lastY: number }
     | { kind: "note-resize"; id: string; lastX: number; lastY: number }
+    // A frame drags what it holds: `refs` is resolved once on pointerdown, so
+    // a node crossing the boundary mid-drag does not join or leave halfway.
+    | { kind: "group-move"; id: string; refs: string[]; lastX: number; lastY: number }
+    | { kind: "group-resize"; id: string; lastX: number; lastY: number }
     | null
   >(null);
   const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -176,7 +201,21 @@ export function StudioView() {
   // Notes belong to a graph id, so opening another graph swaps them like the
   // canvas swaps nodes. Loaded rather than merged: a note from the last graph
   // showing up on this one would be a ghost nobody could explain.
-  useEffect(() => { setNotes(loadNotes(graph.graphId)); }, [graph.graphId]);
+  useEffect(() => {
+    setNotes(loadNotes(graph.graphId));
+    setGroups(loadGroups(graph.graphId));
+    // Pins name nodes in a graph; carrying them to a different one would pin
+    // refs that may mean something else entirely.
+    setPins({});
+  }, [graph.graphId]);
+
+  // Recomputed on every edit so the history's "you are here" tracks the canvas
+  // rather than the last thing that was registered.
+  useEffect(() => {
+    let alive = true;
+    void irDigest(graph).then((d) => { if (alive) setDigest(d); });
+    return () => { alive = false; };
+  }, [graph]);
 
   /**
    * Every note change goes through here so the store is written exactly once
@@ -184,6 +223,14 @@ export function StudioView() {
    * undo stack that sometimes restores prose and sometimes topology is one
    * nobody can predict.
    */
+  const editGroups = useCallback((next: (g: Group[]) => Group[]) => {
+    setGroups((prev) => {
+      const out = next(prev);
+      saveGroups(graph.graphId, out);
+      return out;
+    });
+  }, [graph.graphId]);
+
   const editNotes = useCallback((next: (n: Note[]) => Note[]) => {
     setNotes((prev) => {
       const out = next(prev);
@@ -233,6 +280,13 @@ export function StudioView() {
   const heightOf = useCallback(
     (n: CanvasNode) => nodeHeight(portsByRef.get(n.ref) ?? { ingress: [], egress: [] }),
     [portsByRef],
+  );
+
+  /** A node's drawn box. Declared here because framing, aligning and
+   *  distributing all need it and all live further down. */
+  const sizeOfNode = useCallback(
+    (n: CanvasNode) => ({ w: NODE_W, h: heightOf(n) }),
+    [heightOf],
   );
 
   const findings = useMemo(() => validate(graph, skills, mode), [graph, skills, mode]);
@@ -334,6 +388,22 @@ export function StudioView() {
       setGraph((prev) => moveBy(prev, g.refs, dx, dy));
       return;
     }
+    if (g?.kind === "group-move" || g?.kind === "group-resize") {
+      const w = toWorld(e.clientX, e.clientY);
+      const dx = w.x - g.lastX;
+      const dy = w.y - g.lastY;
+      g.lastX = w.x;
+      g.lastY = w.y;
+      if (g.kind === "group-move") {
+        setGroups((prev) => moveGroup(prev, g.id, dx, dy));
+        // The frame carries its contents. Anything else makes a frame a
+        // decoration you have to keep re-drawing around nodes you moved.
+        if (g.refs.length) setGraph((prev) => moveBy(prev, g.refs, dx, dy));
+      } else {
+        setGroups((prev) => resizeGroup(prev, g.id, dx, dy));
+      }
+      return;
+    }
     if (g?.kind === "note-move" || g?.kind === "note-resize") {
       const w = toWorld(e.clientX, e.clientY);
       const dx = w.x - g.lastX;
@@ -365,6 +435,10 @@ export function StudioView() {
     const g = gesture.current;
     if (g?.kind === "move" && graph.graphId) savePositions(graph.graphId, graph.nodes);
     if (g?.kind === "note-move" || g?.kind === "note-resize") saveNotes(graph.graphId, notes);
+    if (g?.kind === "group-move" || g?.kind === "group-resize") {
+      saveGroups(graph.graphId, groups);
+      if (g.kind === "group-move" && graph.graphId) savePositions(graph.graphId, graph.nodes);
+    }
     if (g?.kind === "box" && box) {
       setSel(selectWithin(graph, skills, box, (n) => ({ w: NODE_W, h: heightOf(n) })));
     }
@@ -438,9 +512,9 @@ export function StudioView() {
 
   /* ── the system clipboard, in IR ─────────────────────────────────
    *
-   * n8n's real interop trick is that a workflow is text you can paste out of a
-   * forum post. Ours already is — C2 IR is the format, and the IR drawer round
-   * -trips it — so this is the same capability with one fewer step.
+   * A graph is already text you can paste out of a chat message — C2 IR is the
+   * format, and the IR drawer round-trips it — so this is that capability with
+   * one fewer step between the clipboard and the canvas.
    *
    * Deliberately the whole graph rather than the selection: a fragment of IR
    * is not IR (it has no graph_id and may name nodes it does not carry), and
@@ -495,6 +569,36 @@ export function StudioView() {
     edit((g) => addSkill(g, skill, { x: at.x - NODE_W / 2, y: at.y - 60 }).graph);
   }, [graph, skills, edit, t]);
 
+  const doDisable = useCallback(() => {
+    if (!sel.nodes.length) return;
+    edit((g) => toggleDisabled(g, sel.nodes));
+  }, [edit, sel.nodes]);
+
+  const doGroup = useCallback(() => {
+    const picked = graph.nodes.filter((n) => sel.nodes.includes(n.ref));
+    if (!picked.length) return;
+    const made = frame(groups, picked, sizeOfNode, "");
+    if (made) editGroups(() => made.groups);
+  }, [graph.nodes, sel.nodes, groups, editGroups]);
+
+  /** Pin a node's first egress to whatever it last produced in this session. */
+  const doPin = useCallback((ref: string) => {
+    const ports = portsByRef.get(ref);
+    const port = ports?.egress[0]?.name;
+    if (!port) return;
+    const seen = activity.lastPayload[ref];
+    setPins((prev) => ({ ...prev, [ref]: { port, payload: seen ?? {} } }));
+    setStatus({ kind: "ok", text: t(seen ? "studio.pinned" : "studio.pinnedEmpty", { ref }) });
+  }, [portsByRef, activity.lastPayload, t]);
+
+  const doUnpin = useCallback((ref: string) => {
+    setPins((prev) => {
+      const next = { ...prev };
+      delete next[ref];
+      return next;
+    });
+  }, []);
+
   const doAddNote = useCallback((at: { x: number; y: number }) => {
     const out = addNote(notes, at);
     editNotes(() => out.notes);
@@ -502,10 +606,7 @@ export function StudioView() {
 
   /* ── lining things up ────────────────────────────────────────────── */
 
-  const sizeOf = useCallback(
-    (n: CanvasNode) => ({ w: NODE_W, h: heightOf(n) }),
-    [heightOf],
-  );
+  const sizeOf = sizeOfNode;
 
   const doAlign = useCallback((edge: Parameters<typeof align>[2]) => {
     edit((g) => align(g, sel.nodes, edge, sizeOf));
@@ -550,6 +651,9 @@ export function StudioView() {
       { label: t("studio.menu.copyIR"), hint: keyFor("copyIR"), onSelect: () => void doCopyIR() },
       { label: t("studio.tidy"), hint: keyFor("tidy"), onSelect: tidy },
       { label: t("studio.fit"), hint: keyFor("fit"), onSelect: fit },
+      { kind: "separator" },
+      { label: t("studio.menu.history"), hint: keyFor("history"),
+        disabled: !graph.graphId, onSelect: () => setShowHistory(true) },
     ];
   };
 
@@ -562,6 +666,13 @@ export function StudioView() {
       { label: t("studio.menu.duplicate"), hint: keyFor("duplicate"),
         disabled: !!node?.isClient, onSelect: doDuplicate },
       { label: t("studio.menu.copy"), hint: keyFor("copy"), onSelect: doCopy },
+      { kind: "separator" },
+      { label: node?.disabled ? t("studio.menu.enable") : t("studio.menu.disable"),
+        hint: keyFor("disable"), disabled: !!node?.isClient, onSelect: doDisable },
+      { label: pins[ref] ? t("studio.menu.unpin") : t("studio.menu.pin"),
+        disabled: !!node?.isClient,
+        onSelect: () => (pins[ref] ? doUnpin(ref) : doPin(ref)) },
+      { label: t("studio.menu.frame"), onSelect: doGroup },
     ];
     if (many) {
       items.push(
@@ -599,6 +710,15 @@ export function StudioView() {
         onSelect: () => { edit((g) => remove(g, { nodes: [], edges: [id] })); setSel(EMPTY_SELECTION); } },
     ];
   };
+
+  const groupMenu = (id: string): MenuItem[] => [
+    { label: t("studio.menu.frameColor"), onSelect: () => editGroups((g) => cycleGroupColor(g, id)) },
+    { kind: "separator" },
+    // Removing the frame is not removing what it held: it is annotation, and
+    // nothing in this menu can reach the graph.
+    { label: t("studio.menu.unframe"), danger: true,
+      onSelect: () => editGroups((g) => removeGroup(g, id)) },
+  ];
 
   const noteMenu = (id: string): MenuItem[] => [
     { label: t("studio.menu.noteColor"), onSelect: () => editNotes((n) => cycleColor(n, id)) },
@@ -643,11 +763,14 @@ export function StudioView() {
       if (e.key.toLowerCase() === "f") { e.preventDefault(); fit(); return; }
       if (e.key.toLowerCase() === "t") { e.preventDefault(); tidy(); return; }
       if (e.key.toLowerCase() === "n") { e.preventDefault(); doAddNote(centre()); return; }
+      if (e.key.toLowerCase() === "d") { e.preventDefault(); doDisable(); return; }
+      if (e.key.toLowerCase() === "g") { e.preventDefault(); doGroup(); return; }
+      if (e.key.toLowerCase() === "h" && graph.graphId) { e.preventDefault(); setShowHistory(true); return; }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [doUndo, doRedo, doCopy, doPaste, doDuplicate, doDelete, doCopyIR, doPasteIR,
-      doAddNote, editable, graph, menu, quick, renaming]);
+      doAddNote, doDisable, doGroup, editable, graph, menu, quick, renaming]);
 
   /* ── graph lifecycle ───────────────────────────────────────────── */
 
@@ -716,6 +839,16 @@ export function StudioView() {
       switch (env.kind) {
         case "status":
           if (p.state === "ready") {
+            // Pins first, and only before any data: the kernel refuses a pin
+            // frame once a session has started producing, because one session
+            // id describing two different graphs is a log nobody can read.
+            if (Object.keys(pins).length) {
+              ws.send(JSON.stringify({
+                v: "1", id: newId(), node: "client",
+                kind: "config_update", schema: "aura/pins@1",
+                payload: { pins },
+              }));
+            }
             for (const input of inputs) {
               seq += 1;
               ws.send(JSON.stringify({
@@ -968,6 +1101,50 @@ export function StudioView() {
           }}
         >
           <div className="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+            {/* Frames sit under the notes, which sit under the graph. Both are
+                annotation; neither may cover what it annotates. */}
+            {groups.map((gr) => (
+              <div
+                key={gr.id}
+                className={`gframe gframe--${gr.color}`}
+                style={{ left: gr.x, top: gr.y, width: gr.w, height: gr.h }}
+                onContextMenu={(e) => editable && openMenu(e, groupMenu(gr.id))}
+                onPointerDown={(e) => {
+                  if (!editable) return;
+                  e.stopPropagation();
+                  const w = toWorld(e.clientX, e.clientY);
+                  gesture.current = {
+                    kind: "group-move", id: gr.id,
+                    // Resolved once, here: a node crossing the boundary
+                    // mid-drag must not join or leave halfway through.
+                    refs: contained(gr, graph.nodes, sizeOfNode),
+                    lastX: w.x, lastY: w.y,
+                  };
+                  surfaceRef.current?.setPointerCapture(e.pointerId);
+                }}
+              >
+                <input
+                  className="gframe__label"
+                  value={gr.label}
+                  placeholder={t("studio.framePlaceholder")}
+                  disabled={!editable}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onChange={(e) => editGroups((all) => patchGroup(all, gr.id, { label: e.target.value }))}
+                />
+                {editable && (
+                  <div
+                    className="gframe__resize"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      const w = toWorld(e.clientX, e.clientY);
+                      gesture.current = { kind: "group-resize", id: gr.id, lastX: w.x, lastY: w.y };
+                      surfaceRef.current?.setPointerCapture(e.pointerId);
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+
             {/* Behind everything: a note labels a region, and a label that can
                 cover what it labels is one you have to move to work. */}
             {notes.map((n) => (
@@ -1053,7 +1230,12 @@ export function StudioView() {
             {graph.nodes.map((n) => (
               <div
                 key={n.ref}
-                className={`livenode livenode--${activity.nodes[n.ref] ?? "idle"}`}
+                className={[
+                  "livenode",
+                  `livenode--${activity.nodes[n.ref] ?? "idle"}`,
+                  n.disabled ? "livenode--off" : "",
+                  pins[n.ref] ? "livenode--pinned" : "",
+                ].join(" ")}
                 onContextMenu={(e) => editable && openMenu(e, nodeMenu(n.ref))}
                 onDoubleClick={(e) => {
                   if (!editable || n.isClient) return;
@@ -1223,6 +1405,21 @@ export function StudioView() {
       )}
 
       {showKeys && <Shortcuts onClose={() => setShowKeys(false)} />}
+
+      {showHistory && graph.graphId && (
+        <GraphHistory
+          graphId={graph.graphId}
+          currentDigest={digest}
+          onClose={() => setShowHistory(false)}
+          onRestore={(ir, n) => {
+            edit(() => fromIR(ir));
+            setSel(EMPTY_SELECTION);
+            // Loaded, not rolled back. Registering it is a separate, deliberate
+            // act that the node's history will record as its own entry.
+            setStatus({ kind: "ok", text: t("studio.history.restored", { n }) });
+          }}
+        />
+      )}
 
       {findings.length > 0 && (
         <div className="findings-bar">

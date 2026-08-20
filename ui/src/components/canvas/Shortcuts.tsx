@@ -36,6 +36,9 @@ export const SHORTCUTS: { id: string; keys: string }[] = [
   { id: "fit", keys: "F" },
   { id: "tidy", keys: "T" },
   { id: "note", keys: "N" },
+  { id: "disable", keys: "D" },
+  { id: "frame", keys: "G" },
+  { id: "history", keys: "H" },
   { id: "help", keys: "?" },
 ];
 

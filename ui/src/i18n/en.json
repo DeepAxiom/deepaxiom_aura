@@ -1,9 +1,9 @@
 {
   "common": {
-    "loading": "Loading…",
-    "error": "Error: {{message}}",
     "close": "Close",
-    "language": "Language"
+    "error": "Error: {{message}}",
+    "language": "Language",
+    "loading": "Loading…"
   },
   "converse": {
     "approve": "Approve?",
@@ -138,8 +138,18 @@
     "duplicate": "Duplicate (Ctrl+D)",
     "empty": "State a goal above. The planner picks the skills, compiles a graph, and it appears here — then lights up as it runs.",
     "fit": "Fit",
+    "framePlaceholder": "Name this part…",
     "graphId": "graph id",
     "hint": "Pick a skill from the palette, or state a goal above and let the planner build one. Drag an output port to an input to wire an edge. Shift-drag to box-select, scroll to zoom.",
+    "history": {
+      "empty": "Nothing registered yet. A version is recorded the first time this graph is registered, and again whenever its content changes.",
+      "here": "on the canvas",
+      "meta": "{{when}} ago · {{bytes}} bytes",
+      "note": "Loading a version does not roll the node back. Register it and the history gains an entry saying you went back — which is what happened.",
+      "restore": "Load",
+      "restored": "Loaded version #{{n}} onto the canvas. Register it to make it current.",
+      "title": "{{graph}} — every version registered"
+    },
     "inspector": {
       "clientNote": "The client pseudo-node is the external application connection. C2 implies it from the edges that name it, so it is never written into nodes[] and cannot be removed.",
       "deadline": "Deadline (ms)",
@@ -179,9 +189,12 @@
       "copyIR": "Copy the whole graph as IR",
       "delete": "Delete selection",
       "deselect": "Dismiss / deselect",
+      "disable": "Turn a node off, routing around it",
       "duplicate": "Duplicate selection",
       "fit": "Fit the graph",
+      "frame": "Frame the selection",
       "help": "This list",
+      "history": "Every version ever registered",
       "menu": "Everything you can do here",
       "note": "Add a sticky note",
       "pan": "Move the canvas",
@@ -215,16 +228,24 @@
       "copy": "Copy",
       "copyIR": "Copy graph IR",
       "delete": "Delete",
+      "disable": "Turn off",
       "duplicate": "Duplicate",
+      "enable": "Turn on",
+      "frame": "Frame the selection",
+      "frameColor": "Next colour",
+      "history": "Version history…",
       "insertHere": "Insert skill here…",
       "inspect": "Inspect edge",
       "noteColor": "Next colour",
       "pasteHere": "Paste",
       "pasteIR": "Paste graph IR",
+      "pin": "Pin its output",
       "rename": "Rename…",
       "selectAll": "Select all",
       "spreadX": "Even gaps across",
-      "spreadY": "Even gaps down"
+      "spreadY": "Even gaps down",
+      "unframe": "Remove frame",
+      "unpin": "Unpin"
     },
     "needPlanner": "no planner skill is connected — start skills/planner, or run `aura up --with-examples`",
     "noSkills": "No skill matches. A fresh node has an empty catalogue until skills connect.",
@@ -239,6 +260,8 @@
       "done": "done",
       "failed": "failed"
     },
+    "pinned": "Pinned {{ref}}: its last output stands in for it, and the skill will not run.",
+    "pinnedEmpty": "Pinned {{ref}} with an empty payload — run the graph once, then pin again to capture a real output.",
     "placeholder": "What do you want done? e.g. rank which models fit on this machine",
     "planTimeout": "timed out waiting for the plan",
     "redo": "Redo (Ctrl+Shift+Z)",

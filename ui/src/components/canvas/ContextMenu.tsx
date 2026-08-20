@@ -3,7 +3,7 @@
  *
  * Every editing operation this canvas has already existed behind a keyboard
  * shortcut or a toolbar button; none of them were findable by right-clicking,
- * which is the first thing anyone coming from n8n tries. This component does
+ * which is the first thing most people try on a canvas. This component does
  * not know what a node or an edge is — the caller builds the item list — so
  * adding an operation is one line where the operation lives, not a change here.
  */

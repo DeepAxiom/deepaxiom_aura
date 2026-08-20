@@ -276,9 +276,9 @@ export function connect(
 /**
  * Drop a skill onto an existing edge so it sits between the two ends.
  *
- * n8n's most-used editing gesture, and the one that turns a drawn graph into
- * an edited one: you have `a → b` and you want `a → filter → b` without
- * deleting the connection, placing a node, and drawing two new ones.
+ * The gesture that turns a drawn graph into an edited one: you have
+ * `a → b` and you want `a → filter → b` without deleting the connection,
+ * placing a node, and drawing two new ones by hand.
  *
  * Returns null when the skill cannot sit in a chain — something with no
  * ingress, or no egress, has no "through" to splice into. Better to refuse
@@ -441,5 +441,19 @@ export function distribute(
         ? { ...n, ...(axis === "x" ? { x: moved.get(n.ref)! } : { y: moved.get(n.ref)! }) }
         : n,
     ),
+  };
+}
+
+/** Turn nodes on or off. The client is not a skill and cannot be bypassed. */
+export function toggleDisabled(graph: CanvasGraph, refs: string[]): CanvasGraph {
+  const picked = graph.nodes.filter((n) => refs.includes(n.ref) && !n.isClient);
+  if (!picked.length) return graph;
+  // One click sets them all the same way rather than flipping each: a mixed
+  // selection where half toggle each way is a click nobody can predict.
+  const turningOff = picked.some((n) => !n.disabled);
+  const set = new Set(picked.map((n) => n.ref));
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) => (set.has(n.ref) ? { ...n, disabled: turningOff } : n)),
   };
 }

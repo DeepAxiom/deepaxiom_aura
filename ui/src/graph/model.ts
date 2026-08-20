@@ -39,6 +39,15 @@ export interface CanvasNode {
   y: number;
   /** True for the `client` pseudo-node, which is not a skill and cannot be deleted. */
   isClient?: boolean;
+  /**
+   * Bypassed: kept on the canvas, absent from the IR.
+   *
+   * C2 has no field for a disabled node and must not gain one — the kernel
+   * would then need a rule for something that is, by definition, not part of
+   * the graph being run. So this lives beside the position, and `toIR` removes
+   * the node and reconnects around it. See `bypass` in graph/editor.
+   */
+  disabled?: boolean;
 }
 
 /** An edge as the canvas holds it: exactly C2's edge, split into its parts. */
@@ -53,6 +62,11 @@ export interface CanvasEdge {
   speculative?: boolean;
   deadline_ms?: number;
   priority?: number;
+  /**
+   * Set on an edge synthesised by bypassing a disabled node, naming that node.
+   * UI-only: `toIR` lists the fields it emits, so this never reaches the wire.
+   */
+  viaDisabled?: string;
 }
 
 export interface CanvasGraph {
@@ -238,7 +252,16 @@ export function portOffsetY(index: number): number {
 
 const POS_KEY = "aura.canvas.positions";
 
-type PositionBook = Record<string, Record<string, { x: number; y: number }>>;
+/**
+ * Per-node facts that belong to this browser, not to the graph.
+ *
+ * Position was always one. `disabled` joined it for the same reason: it cannot
+ * ride in the IR without making two functionally identical graphs differ on
+ * the wire, and it has to survive a reload or bypassing a node would be undone
+ * by refreshing the page.
+ */
+type NodeState = { x: number; y: number; disabled?: boolean };
+type PositionBook = Record<string, Record<string, NodeState>>;
 
 function readPositions(): PositionBook {
   try {
@@ -259,7 +282,9 @@ function readPositions(): PositionBook {
 export function savePositions(graphId: string, nodes: CanvasNode[]): void {
   try {
     const book = readPositions();
-    book[graphId] = Object.fromEntries(nodes.map((n) => [n.ref, { x: n.x, y: n.y }]));
+    book[graphId] = Object.fromEntries(
+      nodes.map((n) => [n.ref, { x: n.x, y: n.y, ...(n.disabled ? { disabled: true } : {}) }]),
+    );
     localStorage.setItem(POS_KEY, JSON.stringify(book));
   } catch {
     /* a full or disabled localStorage costs layout memory, nothing else */
@@ -395,7 +420,83 @@ export function splitPortRef(s: string): [string, string] {
  * rather than written as null, so a round-trip through the canvas does not
  * inflate a hand-written graph with keys its author did not choose.
  */
-export function toIR(g: CanvasGraph): GraphIR {
+/* ── bypass ──────────────────────────────────────────────────────── */
+
+/**
+ * The graph as the kernel will see it: disabled nodes removed, and every path
+ * that ran through one reconnected around it.
+ *
+ * Turning a node off has to mean *the data still gets there*, or it is just a
+ * slower delete. So each incoming edge is joined to each outgoing edge — the
+ * cross product, because a node with two inputs and two outputs was carrying
+ * four paths and all four have to survive.
+ *
+ * A disabled node with nothing downstream simply drops its edges: there is
+ * nowhere for the data to continue to, and inventing a destination would be
+ * worse than admitting the chain ends.
+ *
+ * The synthesised edges carry `viaDisabled` so that a finding about one can be
+ * reported against the node that caused it. Bypassing can produce a pairing
+ * whose schemas do not fit — that is the honest consequence of switching a
+ * converter off — and an error pointing at an edge the author cannot see on
+ * the canvas would be unactionable.
+ */
+export function bypass(graph: CanvasGraph): CanvasGraph {
+  const off = graph.nodes.filter((n) => n.disabled && !n.isClient);
+  if (off.length === 0) return graph;
+
+  let edges = graph.edges;
+  for (const node of off) {
+    const incoming = edges.filter((e) => e.toRef === node.ref);
+    const outgoing = edges.filter((e) => e.fromRef === node.ref);
+    const rest = edges.filter((e) => e.toRef !== node.ref && e.fromRef !== node.ref);
+
+    const joined: CanvasEdge[] = [];
+    // The cross product can name the same pair twice — a node with one input
+    // and two outputs that both end at `client.text_in` collapses to two
+    // identical edges, and the kernel would deliver every message down both.
+    // Keyed on the endpoints, so the first survivor wins and the duplicate
+    // never reaches the IR.
+    const seen = new Set<string>();
+    for (const into of incoming) {
+      // A self-loop through the bypassed node would join it to itself; the
+      // path it described no longer exists, so it goes.
+      if (into.fromRef === node.ref) continue;
+      for (const out of outgoing) {
+        if (out.toRef === node.ref) continue;
+        const pair = `${into.fromRef}.${into.fromPort}->${out.toRef}.${out.toPort}`;
+        if (seen.has(pair)) continue;
+        seen.add(pair);
+        joined.push({
+          // The upstream hop's delivery fields describe the hop that survives,
+          // exactly as they do for a splice \u2014 the two operations are inverses.
+          ...into,
+          id: `bypass:${node.ref}:${into.id}:${out.id}`,
+          toRef: out.toRef,
+          toPort: out.toPort,
+          // The gate belonged to the old destination. The new one decides for
+          // itself, so it is dropped here and rule 5 is re-applied by the
+          // validator against whatever the edge now ends at.
+          gate: out.gate,
+          viaDisabled: node.ref,
+        });
+      }
+    }
+    edges = [...rest, ...joined];
+  }
+
+  return {
+    ...graph,
+    nodes: graph.nodes.filter((n) => !n.disabled || n.isClient),
+    edges,
+  };
+}
+
+export function toIR(input: CanvasGraph): GraphIR {
+  // A disabled node is not part of the graph being registered. Bypassing here
+  // rather than at the call sites means every path out of the canvas — the IR
+  // drawer, Register, Run this graph, the clipboard — emits the same document.
+  const g = bypass(input);
   const ir: GraphIR & { context_budget?: number } = {
     ir: "1",
     graph_id: g.graphId,
@@ -462,11 +563,16 @@ function schemaCompatible(a: string, b: string): boolean {
  * the worst moment.
  */
 export function validate(
-  g: CanvasGraph,
+  input: CanvasGraph,
   skills: SkillManifest[],
   mode: string,
 ): Finding[] {
   const out: Finding[] = [];
+  // Validate what would be registered, not what is drawn: switching a
+  // converter off can leave two ports wired together that do not fit, and that
+  // is a real error about a real graph even though the edge showing it was
+  // synthesised a moment ago.
+  const g = bypass(input);
   const byRef = new Map(g.nodes.map((n) => [n.ref, n]));
   const portsOf = portMap(g, skills);
 
@@ -520,19 +626,29 @@ export function validate(
     }
   }
 
+  /**
+   * Where a finding about this edge should point.
+   *
+   * A synthesised bypass edge has no box on the canvas, so pointing at it
+   * would give the author a finding they cannot click. The node they switched
+   * off is the thing they can act on.
+   */
+  const at = (e: CanvasEdge) =>
+    e.viaDisabled ? { nodeRef: e.viaDisabled } : { edgeId: e.id };
+
   for (const e of g.edges) {
     const from = byRef.get(e.fromRef);
     const to = byRef.get(e.toRef);
     if (!from) {
-      out.push({ severity: "error", edgeId: e.id, message: `Edge source "${e.fromRef}" is not a node in this graph.` });
+      out.push({ severity: "error", ...at(e), message: `Edge source "${e.fromRef}" is not a node in this graph.` });
       continue;
     }
     if (!to) {
-      out.push({ severity: "error", edgeId: e.id, message: `Edge target "${e.toRef}" is not a node in this graph.` });
+      out.push({ severity: "error", ...at(e), message: `Edge target "${e.toRef}" is not a node in this graph.` });
       continue;
     }
     if (!PORT_RE.test(e.fromPort) || !PORT_RE.test(e.toPort)) {
-      out.push({ severity: "error", edgeId: e.id, message: "Port names must match [a-z0-9_]+." });
+      out.push({ severity: "error", ...at(e), message: "Port names must match [a-z0-9_]+." });
     }
 
     const fromPorts = portsOf.get(e.fromRef)!;
@@ -545,14 +661,14 @@ export function validate(
     if (!fromPorts.open && fromPorts.egress.length && !src) {
       out.push({
         severity: "error",
-        edgeId: e.id,
+        ...at(e),
         message: `"${e.fromRef}" has no egress port "${e.fromPort}".`,
       });
     }
     if (!toPorts.open && toPorts.ingress.length && !dst) {
       out.push({
         severity: "error",
-        edgeId: e.id,
+        ...at(e),
         message: `"${e.toRef}" has no ingress port "${e.toPort}".`,
       });
     }
@@ -572,7 +688,7 @@ export function validate(
       out.push({
         severity: "error",
         rule: 2,
-        edgeId: e.id,
+        ...at(e),
         message: `Schema mismatch: ${src.schema} → ${dst.schema}. C2 rule 2 validates compatibility at instantiation.`,
       });
     }
@@ -585,14 +701,14 @@ export function validate(
         out.push({
           severity: "error",
           rule: 5,
-          edgeId: e.id,
+          ...at(e),
           message: `This edge acts on the world and declares no gate. In published mode the kernel refuses the session rather than repairing it.`,
         });
       } else {
         out.push({
           severity: "info",
           rule: 5,
-          edgeId: e.id,
+          ...at(e),
           message: `The kernel will add a human-approval gate here: the destination acts on the world. Declare it — or "none" — to make the choice visible.`,
         });
       }
@@ -601,7 +717,7 @@ export function validate(
       out.push({
         severity: "warn",
         rule: 5,
-        edgeId: e.id,
+        ...at(e),
         message: `Gate waived on an edge that acts on the world. Node policy decides whether that is honoured, and the ledger records that the graph excused it.`,
       });
     }
@@ -611,7 +727,7 @@ export function validate(
       out.push({
         severity: "error",
         rule: 6,
-        edgeId: e.id,
+        ...at(e),
         message: `Speculation into a motor skill is refused: a discarded effect is not discarded.`,
       });
     }
@@ -619,13 +735,13 @@ export function validate(
       out.push({
         severity: "error",
         rule: 6,
-        edgeId: e.id,
+        ...at(e),
         message: `Speculative and human-approval on one edge are incompatible: asking a human to decide and running before the decision cannot both hold.`,
       });
     }
 
     if (typeof e.deadline_ms === "number" && e.deadline_ms < 0) {
-      out.push({ severity: "error", rule: 7, edgeId: e.id, message: "deadline_ms cannot be negative." });
+      out.push({ severity: "error", rule: 7, ...at(e), message: "deadline_ms cannot be negative." });
     }
   }
 
@@ -634,7 +750,7 @@ export function validate(
   for (const e of g.edges) {
     const key = `${e.fromRef}.${e.fromPort}->${e.toRef}.${e.toPort}`;
     if (seenEdge.has(key)) {
-      out.push({ severity: "warn", edgeId: e.id, message: `Duplicate edge ${key}.` });
+      out.push({ severity: "warn", ...at(e), message: `Duplicate edge ${key}.` });
     }
     seenEdge.add(key);
   }
@@ -659,5 +775,28 @@ export function suggestRef(seed: string, taken: Set<string>): string {
   for (let i = 2; ; i++) {
     const candidate = `${base}-${i}`;
     if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/**
+ * The SHA-256 of a graph's IR, as the node would have computed it.
+ *
+ * Used only to light up "you are here" in the history. It matches for a
+ * version this UI registered, because both sides hash the same
+ * `JSON.stringify(toIR(g))`; a graph the planner or the CLI registered was
+ * serialised by something else and will not match.
+ *
+ * That asymmetry is fine here and would not be fine anywhere else: the failure
+ * mode is a row that is not highlighted, never a row highlighted wrongly.
+ */
+export async function irDigest(g: CanvasGraph): Promise<string | null> {
+  try {
+    const bytes = new TextEncoder().encode(JSON.stringify(toIR(g)));
+    const hash = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    // crypto.subtle needs a secure context; localhost has one, plain http on a
+    // LAN does not. Losing a highlight is not worth an error.
+    return null;
   }
 }

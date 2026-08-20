@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { newId, streamURL } from "./client";
-import type { Envelope } from "./types";
+import type { Envelope, Pin } from "./types";
 
 /**
  * One live stream session against a graph (C3 over WebSocket).
@@ -97,5 +97,25 @@ export function useSession(graph: string | null, onEnvelope: (env: Envelope) => 
     ws.current?.send(JSON.stringify(env));
   }, []);
 
-  return { session, open, sendText, sendData, cancel, respondGate };
+  /**
+   * Fix node outputs for this session, before anything is sent.
+   *
+   * Rides on `config_update`, which C3 already has — pinning is session
+   * configuration and the contract is frozen. The kernel refuses a pin frame
+   * that arrives after the first data message, so this has to run before the
+   * first send, which is why it is a separate call rather than folded into one.
+   */
+  const setPins = useCallback((pins: Record<string, Pin>) => {
+    if (!Object.keys(pins).length) return;
+    ws.current?.send(JSON.stringify({
+      v: "1",
+      id: newId(),
+      node: "client",
+      kind: "config_update",
+      schema: "aura/pins@1",
+      payload: { pins },
+    }));
+  }, []);
+
+  return { session, open, sendText, sendData, cancel, respondGate, setPins };
 }

@@ -68,6 +68,8 @@ type Session struct {
 	// see sealEffect — so tests that only exercise routing never have to wire
 	// a store and a keypair just to construct a Session.
 	ldg *ledger.Ledger
+	// pins short-circuit named nodes: see SetPins.
+	pins map[string]Pin
 	// undoOf is non-empty only for an ephemeral undo session (Phase 2, `aura
 	// undo`): the receipt of the effect this session's single edge reverses.
 	// NewSession validated it against the ledger before this Session was ever
@@ -366,6 +368,146 @@ func (s *Session) rootOf(env channel.Envelope) string {
 
 // Route ingests an envelope emitted by a source (client or skill), logs it,
 // and forwards a new causally-linked envelope per matching edge (C3).
+// Pin is a fixed output standing in for a node's real one.
+type Pin struct {
+	// Port is the node's egress the pinned payload appears on.
+	Port    string          `json:"port"`
+	Schema  string          `json:"schema"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// SetPins fixes named nodes' outputs for this session.
+//
+// The point is to work on the rest of a graph without running the expensive,
+// slow or irreversible part of it: pin the model's answer and iterate on what
+// consumes it; pin the API's response and build the branch that handles it.
+// A pinned node is never dispatched to, so its skill does not run at all.
+//
+// Three rules make this safe to have in a system whose whole claim is that its
+// record of what happened is true.
+//
+//  1. **Refused in published mode.** A pin is a development affordance. On a
+//     public network, a session whose outputs were decided by whoever opened it
+//     is not a session anyone should be reasoning about, and the honest answer
+//     is to refuse rather than to annotate.
+//  2. **Announced in the causal log.** Every pinned delivery emits a `status`
+//     naming the node, before the payload it stands in for. `aura why` then
+//     shows a chain that says a human supplied this, and a reader who does not
+//     know about pinning still cannot mistake it for the skill's own work.
+//  3. **Validated against the manifest.** The port has to be one the node
+//     really has, and its schema has to be the one that port declares. A pin
+//     that could not have come out of that node is a lie the graph downstream
+//     would believe, and it is refused here rather than discovered later.
+func (s *Session) SetPins(pins map[string]Pin, mode string) error {
+	if len(pins) == 0 {
+		return nil
+	}
+	if mode == "published" {
+		return fmt.Errorf(
+			"pinned outputs are refused in published mode: a session whose results " +
+				"were chosen by its caller is not evidence of anything")
+	}
+	out := make(map[string]Pin, len(pins))
+	for ref, pin := range pins {
+		if ref == ClientRef {
+			return fmt.Errorf("cannot pin %q: the client is not a skill", ref)
+		}
+		live, ok := s.resolvedFor(ref)
+		if !ok {
+			return fmt.Errorf("cannot pin %q: no such node in this graph", ref)
+		}
+		schema, ok := live.Manifest.EgressSchema(pin.Port)
+		if !ok {
+			return fmt.Errorf("cannot pin %s.%s: %s has no egress port %q",
+				ref, pin.Port, live.Manifest.ID, pin.Port)
+		}
+		if pin.Schema != "" && pin.Schema != schema {
+			return fmt.Errorf("cannot pin %s.%s: that port carries %s, not %s",
+				ref, pin.Port, schema, pin.Schema)
+		}
+		pin.Schema = schema
+		out[ref] = pin
+	}
+	s.pins = out
+	return nil
+}
+
+// Pinned reports which nodes are standing in for themselves.
+func (s *Session) Pinned() map[string]Pin { return s.pins }
+
+// resolvedFor finds the skill a node resolved to, via the routes into it.
+//
+// The resolution map itself is local to NewSession by design — nothing after
+// wiring should be re-resolving anything — and the routes already carry what
+// this needs.
+func (s *Session) resolvedFor(ref string) (*registry.Live, bool) {
+	for _, dests := range s.routes {
+		for _, d := range dests {
+			if d.ref == ref && d.skill != nil {
+				return d.skill, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// emitStatus puts an explanatory status on the chain and in the log.
+func (s *Session) emitStatus(causeID string, payload []byte) {
+	env := channel.Envelope{
+		V: channel.ProtocolMajor, ID: channel.NewID(), CauseID: causeID,
+		Session: s.ID, Node: ClientRef, Port: "text_in",
+		Kind: channel.KindStatus, Schema: "std/status@1", Payload: payload,
+	}
+	raw, _ := json.Marshal(env)
+	if err := s.st.AppendEvent(s.ID, env.ID, env.CauseID, env.Kind, raw); err != nil {
+		s.log.Error("event log append failed", "err", err)
+	}
+	if err := s.sendClient(raw, channel.QoSReliable); err != nil {
+		s.log.Debug("status delivery failed", "err", err)
+	}
+}
+
+// answerFromPin stands in for a node instead of dispatching to it.
+//
+// Returns false when the node is not pinned, so the caller delivers normally.
+func (s *Session) answerFromPin(src channel.Envelope, d dest) bool {
+	pin, ok := s.pins[d.ref]
+	if !ok || d.ref == ClientRef {
+		return false
+	}
+	// Only a data delivery is answered. A `done` or an `error` travelling to a
+	// pinned node is bookkeeping about a chain, and inventing a second reply
+	// to it would put two answers on the wire for one question.
+	if src.Kind != channel.KindData {
+		return true
+	}
+
+	note, _ := json.Marshal(map[string]any{
+		"state":  "pinned",
+		"node":   d.ref,
+		"port":   pin.Port,
+		"detail": "output supplied by the caller; " + d.ref + " was not run",
+	})
+	s.emitStatus(src.ID, note)
+
+	out := channel.Envelope{
+		V:       channel.ProtocolMajor,
+		ID:      channel.NewID(),
+		CauseID: src.ID,
+		Session: s.ID,
+		Node:    d.ref,
+		Port:    pin.Port,
+		Kind:    channel.KindData,
+		Schema:  pin.Schema,
+		Payload: pin.Payload,
+	}
+	// Back through Route, so a pinned output is fanned out, logged, gated and
+	// sealed by exactly the same code as a real one. Anything less would make
+	// "works when pinned" stop predicting "works when run".
+	s.Route(out)
+	return true
+}
+
 func (s *Session) Route(env channel.Envelope) {
 	raw, _ := json.Marshal(env)
 	if err := s.st.AppendEvent(s.ID, env.ID, env.CauseID, env.Kind, raw); err != nil {
@@ -552,6 +694,13 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 			s.emitError(src.ID, err.Error())
 			return
 		}
+	}
+
+	// A pinned node is answered instead of dispatched to. After the rate check
+	// above, because asking for something you are not allowed to ask for is
+	// still a policy violation.
+	if s.answerFromPin(src, d) {
+		return
 	}
 
 	hopKey := d.ref + "." + d.port

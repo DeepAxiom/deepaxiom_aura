@@ -699,8 +699,81 @@ Además de eso:
 - **`Ctrl+Shift+C` / `Ctrl+Shift+V`** copian y pegan el grafo entero como IR por
   el portapapeles del sistema — un flujo que puedes pegar desde un mensaje de
   chat, que es el truco de interoperabilidad que vale la pena robar.
+- **Apagar un nodo** (`D`). Se queda en el lienzo, atenuado y tachado, y
+  desaparece del IR: cada camino que pasaba por él se reconecta rodeándolo,
+  uniendo cada entrada con cada salida. Apagar un conversor puede dejar dos
+  puertos cableados que no encajan, y el validador lo dice — contra el nodo
+  que apagaste, porque la arista que lo muestra es sintetizada y no tiene caja
+  donde hacer clic.
+- **Marcos** (`G`), para decir "estos cuatro son el camino de reintento". Un
+  marco arrastra lo que contiene, y la pertenencia es geométrica y no una
+  lista guardada: arrastra un nodo dentro y entra, sácalo y sale, sin nada que
+  quede obsoleto cuando un nodo se renombra o se borra.
+- **Pinear la salida de un nodo**, para trabajar el resto del grafo sin
+  ejecutar la parte lenta, cara o irreversible. Ver abajo.
+- **Historial de versiones** (`H`) — todas las versiones de este grafo que el
+  nodo ha tenido.
 - **`?`** lista cada atajo, desde la misma tabla de la que los menús sacan sus
   pistas, para que no puedan separarse.
+
+Las notas, los marcos y el estado encendido/apagado viven en el almacenamiento
+local junto a las posiciones, por una razón: C2 no tiene campo para ninguno y
+no debe ganarlo. Dos grafos que se ejecutan igual tienen que seguir siendo
+idénticos byte a byte en el cable, o `aura verify` empieza a comparar prosa y
+maquetación.
+
+### Salidas pineadas
+
+Pinea un nodo y el kernel deja de despacharle: lo que pineaste pasa a ser su
+salida, y el skill no se ejecuta. Itera sobre lo que consume la respuesta de un
+modelo sin pagar el modelo; construye la rama que maneja la respuesta de una API
+sin llamar a la API.
+
+Toda herramienta de flujos tiene alguna versión de esto. Lo que aquí es
+distinto se deriva de lo que este runtime afirma de sí mismo — que su registro
+de lo que pasó es verdadero — y cuesta tres reglas:
+
+1. **Rechazado en modo `published`.** Un pin es una comodidad de desarrollo. En
+   una red pública, una sesión cuyos resultados eligió quien la abrió no es
+   evidencia de nada, y la respuesta honesta es rechazar, no anotar.
+2. **Anunciado en la cadena.** Cada entrega pineada emite un `status` que nombra
+   el nodo antes del payload que lo sustituye, y ese status va al log causal, así
+   que `aura why` lo enseña. Alguien que nunca haya oído hablar de pinear sigue
+   sin poder confundir una salida pineada con el trabajo del skill.
+3. **Validado contra el manifiesto.** El puerto tiene que ser uno que el nodo
+   realmente tenga, y el esquema el que ese puerto declara. Un pin que no podría
+   haber salido de ese nodo es una mentira que todo lo de aguas abajo se creería.
+
+```
+$ aura why <sesión>
+  status  pinned  node=eco port=text_out
+          output supplied by the caller; eco was not run
+  data    eco.text_out  {"text":"PINNED ANSWER"}
+```
+
+Los pins viajan en `config_update`, que C3 ya tiene, y solo antes del primer
+envelope de datos: cambiar lo que produce un nodo a mitad dejaría un mismo id
+de sesión describiendo dos grafos distintos.
+
+### Historial de versiones
+
+`SaveGraph` añade una revisión cada vez que un registro cambia el documento,
+indexada por el **SHA-256 del IR**. Ese digest es lo que hace de una versión un
+hecho y no una marca de tiempo: dos revisiones con el mismo digest son el mismo
+grafo. Volver a registrar algo sin cambios no añade nada, lo que importa porque
+`aura up` resiembra sus grafos de ejemplo en cada arranque.
+
+```
+GET /v1/graphs/{id}/revisions       todas las versiones, la más nueva primero
+GET /v1/graphs/{id}/revisions/{n}   el IR de una versión
+```
+
+Cargar una versión antigua la pone en el lienzo y la deja ahí, sin registrar.
+No revierte el nodo — eso haría del historial algo reescribible, y la única
+propiedad que vale la pena tener es que solo crece. Registra el grafo
+restaurado y la lista gana una entrada cuyo digest coincide con el antiguo, que
+dice exactamente lo que pasó: volviste atrás, a propósito, en un momento
+conocido.
 
 **Las réplicas se muestran una vez.** El catálogo guarda una entrada por
 *conexión* viva, así que dos procesos sirviendo un skill son dos entradas. La

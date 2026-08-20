@@ -737,8 +737,80 @@ duplicate, delete, zoom with a readout, fit and tidy. Beyond that:
 - **`Ctrl+Shift+C` / `Ctrl+Shift+V`** copy and paste the whole graph as IR
   through the system clipboard — a workflow you can paste out of a chat
   message, which is the interop trick worth stealing.
+- **Turn a node off** (`D`). It stays on the canvas, faded and struck through,
+  and vanishes from the IR: every path that ran through it is reconnected
+  around it, joining each input to each output. Bypassing a converter can leave
+  two ports wired together that do not fit, and the validator says so —
+  against the node you switched off, since the edge showing it was synthesised
+  and has no box to click.
+- **Frames** (`G`), to say "these four are the retry path". A frame carries what
+  it holds when you drag it, and membership is geometric rather than a stored
+  list: drag a node in and it joins, drag it out and it leaves, with nothing to
+  go stale when a node is renamed or deleted.
+- **Pin a node's output**, so the rest of the graph can be worked on without
+  running the slow, expensive or irreversible part of it. See below.
+- **Version history** (`H`) — every version of this graph the node ever had.
 - **`?`** lists every shortcut, from the same table the menus take their hints
   from, so the two cannot drift.
+
+Notes, frames and the on/off state live in local storage beside the positions,
+for one reason: C2 has no field for any of them and must not gain one. Two
+graphs that run identically have to stay byte-identical on the wire, or
+`aura verify` starts comparing prose and layout.
+
+### Pinned outputs
+
+Pin a node and the kernel stops dispatching to it: whatever you pinned becomes
+its output, and the skill does not run. Iterate on what consumes a model's
+answer without paying for the model; build the branch that handles an API's
+response without calling the API.
+
+Every workflow tool has some version of this. What is different here follows
+from what this runtime claims about itself — that its record of what happened
+is true — and it costs three rules:
+
+1. **Refused in `published` mode.** A pin is a development affordance. On a
+   public network, a session whose outputs were chosen by whoever opened it is
+   not evidence of anything, and the honest response is to refuse rather than
+   to annotate.
+2. **Announced on the chain.** Every pinned delivery emits a `status` naming
+   the node before the payload it stands in for, and that status goes in the
+   causal log, so `aura why` shows it. A reader who has never heard of pinning
+   still cannot mistake a pinned output for the skill's own work.
+3. **Validated against the manifest.** The port has to be one the node really
+   has, and the schema has to be the one that port declares. A pin that could
+   not have come out of that node is a lie everything downstream would believe.
+
+```
+$ aura why <session>
+  status  pinned  node=eco port=text_out
+          output supplied by the caller; eco was not run
+  data    eco.text_out  {"text":"PINNED ANSWER"}
+```
+
+Pins ride on `config_update`, which C3 already has, and only before the first
+data envelope: changing what a node produces halfway through would leave one
+session id describing two different graphs.
+
+### Version history
+
+`SaveGraph` appends a revision whenever a registration changes the document,
+keyed by the **SHA-256 of the IR**. That digest is what makes a version a fact
+rather than a timestamp: two revisions with the same digest are the same graph.
+Re-registering something unchanged adds nothing, which matters because `aura up`
+re-seeds its example graphs on every launch.
+
+```
+GET /v1/graphs/{id}/revisions       every version, newest first
+GET /v1/graphs/{id}/revisions/{n}   one version's IR
+```
+
+Loading an old version puts it on the canvas and leaves it there, unregistered.
+It does not roll the node back — that would make the history a thing you can
+rewrite, and the one property worth having is that it only ever grows. Register
+the restored graph and the list gains an entry whose digest matches the old
+one, which says exactly what happened: you went back, deliberately, at a known
+time.
 
 **The IR it emits is spec-pure.** No coordinates, no editor keys: a graph drawn
 here is byte-comparable with one written by hand. Positions live in the
