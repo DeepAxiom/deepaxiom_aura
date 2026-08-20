@@ -715,6 +715,31 @@ inspector exposing every C2 field an edge carries — `gate`, `qos`,
 its name alone. An IR drawer round-trips text in both directions, so a graph can
 be pasted in, drawn on, and copied back out.
 
+**Editing.** Undo/redo, multi-select, Shift-drag box select, copy/paste/
+duplicate, delete, zoom with a readout, fit and tidy. Beyond that:
+
+- **Right-click anything.** The canvas, a node, an edge and a note each get
+  their own menu, built for that target rather than one menu greying out most
+  of itself.
+- **Double-click the canvas** to add a skill *where you clicked*, by typing.
+  Arrows move, Enter picks; the palette on the left stays the thing you browse.
+- **Double-click an edge** — or pick *Insert skill here* — to splice a node
+  into an existing connection. The upstream half keeps that hop's `deadline_ms`
+  and `priority`, because those described the hop and still do, while rule 5's
+  gate moves to whichever half now ends at a motor skill.
+- **Double-click a node** to rename it in place. A ref that C2 would reject, or
+  one already taken, is refused rather than silently corrected.
+- **Align and distribute** a multi-selection, from its menu.
+- **Sticky notes** (`N`), draggable, resizable, five colours. They live in
+  local storage beside the positions and are deliberately *not* in the IR: a
+  note is a fact about a person's understanding, and two graphs differing only
+  in their prose have to stay byte-identical on the wire.
+- **`Ctrl+Shift+C` / `Ctrl+Shift+V`** copy and paste the whole graph as IR
+  through the system clipboard — a workflow you can paste out of a chat
+  message, which is the interop trick worth stealing.
+- **`?`** lists every shortcut, from the same table the menus take their hints
+  from, so the two cannot drift.
+
 **The IR it emits is spec-pure.** No coordinates, no editor keys: a graph drawn
 here is byte-comparable with one written by hand. Positions live in the
 browser's local storage keyed by graph id, and a graph opened on a machine that
@@ -725,6 +750,13 @@ outranks it. Rule 5 (the motor-gate invariant) is reported by node mode, because
 `local` repairs an omitted gate and `published` refuses the session. Rule 6
 (speculation into a motor skill, or beside a human-approval gate) and rule 2
 (port schema compatibility) block registration outright.
+
+**Replicas are shown once.** The catalogue holds one entry per live
+*connection*, so two processes serving one skill are two entries. The palette
+groups them into one row with a `×2` badge, and "how many skills satisfy this
+capability" counts distinct skills — reporting two would send an author looking
+for a second implementation that does not exist. See
+[Skills outlive their node](#skills-outlive-their-node).
 
 **The live rail** on the left is what the node is running, whether or not this
 UI put it there. A graph registered by `aura do`, brought by a federated peer or
@@ -838,6 +870,40 @@ gives you `emit` (a causally-linked reply), `status`, `error`, and `done`; every
 message it sends is automatically chained to the one that caused it and given an
 idempotency key. Handlers should be idempotent — delivery is at-least-once by
 contract.
+
+### Skills outlive their node
+
+The other half of "skills connect *out*": they reconnect forever by contract,
+so stopping a node does not stop them. They keep retrying and attach to
+whichever node comes up next — which is what lets a node restart without an
+operator restarting ten processes behind it, and is also how you end up with
+two of everything.
+
+The usual way in: `Ctrl+C` is clean (`aura up` stops the children it started),
+but a `kill -9`, a crashed terminal or a node killed by the OS is not, and the
+next `aura up --with-examples` starts a second set beside the survivors. The
+symptoms are a doubled catalogue and sessions landing on a process nobody
+remembers starting.
+
+**Running N replicas of a skill is supported and deliberate** — the registry
+round-robins between them, so N copies really do serve N times the sessions.
+So the node does not refuse a second connection. It says so, once, at the
+moment it happens:
+
+```
+level=WARN msg="skill has more than one connection"
+  skill=example/cognitive/llm-chat instances=2
+  note="deliberate for replicas; otherwise a process outlived an earlier node"
+```
+
+On the registration event rather than at startup, because that is the only
+place it is knowable: a reconnecting orphan can arrive ten seconds after the
+node finished booting, long after any startup check has run and reported all
+clear. `aura up --with-examples` additionally skips launching a skill that is
+already attached when it looks, and reports it as `already up`.
+
+If it was not deliberate, stop the extra processes (`pkill -f skills/` on Unix,
+`Get-Process python3.13 | Stop-Process` on Windows) and start them again.
 
 ### Standard schemas
 

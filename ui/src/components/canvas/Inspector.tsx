@@ -41,7 +41,7 @@ export function Inspector({
   if (!node && !edge) {
     return (
       <aside className="inspector">
-        <div className="inspector__empty">{t("canvas.inspector.nothing")}</div>
+        <div className="inspector__empty">{t("studio.inspector.nothing")}</div>
       </aside>
     );
   }
@@ -50,23 +50,23 @@ export function Inspector({
     <aside className="inspector">
       {node && (
         <>
-          <h3 className="inspector__title">{t("canvas.inspector.node")}</h3>
+          <h3 className="inspector__title">{t("studio.inspector.node")}</h3>
           {node.isClient ? (
-            <p className="inspector__note">{t("canvas.inspector.clientNote")}</p>
+            <p className="inspector__note">{t("studio.inspector.clientNote")}</p>
           ) : (
             <>
               <label className="field">
-                <span>{t("canvas.inspector.ref")}</span>
+                <span>{t("studio.inspector.ref")}</span>
                 <input
                   className="input"
                   value={node.ref}
                   onChange={(e) => onNodeChange({ ref: e.target.value })}
                 />
-                <em>{t("canvas.inspector.refHelp")}</em>
+                <em>{t("studio.inspector.refHelp")}</em>
               </label>
 
               <label className="field">
-                <span>{t("canvas.inspector.resolve")}</span>
+                <span>{t("studio.inspector.resolve")}</span>
                 <input
                   className="input"
                   list="aura-capabilities"
@@ -75,11 +75,11 @@ export function Inspector({
                   onChange={(e) => onNodeChange({ resolve: e.target.value || undefined })}
                   disabled={!!node.use}
                 />
-                <em>{t("canvas.inspector.resolveHelp")}</em>
+                <em>{t("studio.inspector.resolveHelp")}</em>
               </label>
 
               <label className="field">
-                <span>{t("canvas.inspector.use")}</span>
+                <span>{t("studio.inspector.use")}</span>
                 <input
                   className="input"
                   list="aura-packages"
@@ -87,7 +87,7 @@ export function Inspector({
                   placeholder="example/logical/echo"
                   onChange={(e) => onNodeChange({ use: e.target.value || undefined })}
                 />
-                <em>{t("canvas.inspector.useHelp")}</em>
+                <em>{t("studio.inspector.useHelp")}</em>
               </label>
 
               <datalist id="aura-capabilities">
@@ -104,11 +104,11 @@ export function Inspector({
               {ports?.manifest && (
                 <div className="inspector__manifest">
                   <div className="inspector__mrow">
-                    <span>{t("canvas.inspector.type")}</span>
+                    <span>{t("studio.inspector.type")}</span>
                     <span className={`badge badge--${ports.manifest.type}`}>{ports.manifest.type}</span>
                   </div>
                   <div className="inspector__mrow">
-                    <span>{t("canvas.inspector.format")}</span>
+                    <span>{t("studio.inspector.format")}</span>
                     <code>{ports.manifest.format}</code>
                   </div>
                   <p className="inspector__desc">{ports.manifest.description}</p>
@@ -121,7 +121,7 @@ export function Inspector({
 
       {edge && (
         <>
-          <h3 className="inspector__title">{t("canvas.inspector.edge")}</h3>
+          <h3 className="inspector__title">{t("studio.inspector.edge")}</h3>
           <p className="inspector__route">
             <code>
               {edge.fromRef}.{edge.fromPort}
@@ -133,7 +133,7 @@ export function Inspector({
           </p>
 
           <label className="field">
-            <span>{t("canvas.inspector.gate")}</span>
+            <span>{t("studio.inspector.gate")}</span>
             <select
               className="select"
               value={edge.gate ?? ""}
@@ -141,19 +141,19 @@ export function Inspector({
                 onEdgeChange({ gate: (e.target.value || undefined) as CanvasEdge["gate"] })
               }
             >
-              <option value="">{t("canvas.inspector.gateUnset")}</option>
+              <option value="">{t("studio.inspector.gateUnset")}</option>
               <option value="human-approval">human-approval</option>
               <option value="none">none</option>
             </select>
             <em>
               {destIsMotor
-                ? t("canvas.inspector.gateMotorHelp")
-                : t("canvas.inspector.gateHelp")}
+                ? t("studio.inspector.gateMotorHelp")
+                : t("studio.inspector.gateHelp")}
             </em>
           </label>
 
           <label className="field">
-            <span>{t("canvas.inspector.qos")}</span>
+            <span>{t("studio.inspector.qos")}</span>
             <select
               className="select"
               value={edge.qos ?? ""}
@@ -161,10 +161,10 @@ export function Inspector({
                 onEdgeChange({ qos: (e.target.value || undefined) as CanvasEdge["qos"] })
               }
             >
-              <option value="">{t("canvas.inspector.qosUnset")}</option>
-              <option value="reliable">reliable — {t("canvas.inspector.qosReliable")}</option>
-              <option value="realtime">realtime — {t("canvas.inspector.qosRealtime")}</option>
-              <option value="bulk">bulk — {t("canvas.inspector.qosBulk")}</option>
+              <option value="">{t("studio.inspector.qosUnset")}</option>
+              <option value="reliable">reliable — {t("studio.inspector.qosReliable")}</option>
+              <option value="realtime">realtime — {t("studio.inspector.qosRealtime")}</option>
+              <option value="bulk">bulk — {t("studio.inspector.qosBulk")}</option>
             </select>
           </label>
 
@@ -174,12 +174,12 @@ export function Inspector({
               checked={!!edge.speculative}
               onChange={(e) => onEdgeChange({ speculative: e.target.checked || undefined })}
             />
-            <span>{t("canvas.inspector.speculative")}</span>
+            <span>{t("studio.inspector.speculative")}</span>
           </label>
-          <em className="field__note">{t("canvas.inspector.speculativeHelp")}</em>
+          <em className="field__note">{t("studio.inspector.speculativeHelp")}</em>
 
           <label className="field">
-            <span>{t("canvas.inspector.deadline")}</span>
+            <span>{t("studio.inspector.deadline")}</span>
             <input
               className="input"
               type="number"
@@ -192,11 +192,11 @@ export function Inspector({
                 })
               }
             />
-            <em>{t("canvas.inspector.deadlineHelp")}</em>
+            <em>{t("studio.inspector.deadlineHelp")}</em>
           </label>
 
           <label className="field">
-            <span>{t("canvas.inspector.priority")}</span>
+            <span>{t("studio.inspector.priority")}</span>
             <input
               className="input"
               type="number"
@@ -208,7 +208,7 @@ export function Inspector({
                 })
               }
             />
-            <em>{t("canvas.inspector.priorityHelp")}</em>
+            <em>{t("studio.inspector.priorityHelp")}</em>
           </label>
         </>
       )}
@@ -226,7 +226,7 @@ export function Inspector({
 
       {(edge || (node && !node.isClient)) && (
         <button className="btn btn--ghost btn--sm inspector__del" onClick={onDelete}>
-          {t("canvas.inspector.delete")}
+          {t("studio.inspector.delete")}
         </button>
       )}
     </aside>

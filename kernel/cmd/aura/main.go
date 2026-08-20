@@ -410,9 +410,9 @@ func cmdUp(args []string) {
 		// example processes. A skill someone else runs should hold a scoped
 		// credential instead; see `aura token issue`.
 		wsURL := fmt.Sprintf("%s://localhost:%d/ws/skill", wsScheme, *port)
-		stopExamples, results := startExamples(*examplesDir, wsURL, token)
+		stopExamples, results, dupes := startExamples(*examplesDir, wsURL, token, gw.Reg)
 		defer stopExamples()
-		reportExamples(results)
+		reportExamples(results, dupes)
 	}
 
 	stop := make(chan os.Signal, 1)

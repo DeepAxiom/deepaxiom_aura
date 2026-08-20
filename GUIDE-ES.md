@@ -673,6 +673,42 @@ inspector que expone cada campo C2 que lleva una arista — `gate`, `qos`,
 nombre. Un cajón de IR hace round-trip de texto en ambas direcciones, así que un
 grafo se puede pegar, dibujar encima y copiar de vuelta.
 
+**Edición.** Deshacer/rehacer, selección múltiple, selección en caja con
+Shift, copiar/pegar/duplicar, borrar, zoom con lectura, ajustar y ordenar.
+Además de eso:
+
+- **Clic derecho en cualquier cosa.** El lienzo, un nodo, una arista y una nota
+  tienen su propio menú, construido para ese objetivo en vez de uno solo con
+  casi todo deshabilitado.
+- **Doble clic en el lienzo** para añadir un skill *donde hiciste clic*,
+  escribiendo. Las flechas mueven, Enter elige; la paleta de la izquierda sigue
+  siendo lo que hojeas.
+- **Doble clic en una arista** — o *Insertar skill aquí* — para meter un nodo
+  dentro de una conexión existente. La mitad de arriba conserva el
+  `deadline_ms` y la `priority` de ese salto, porque describían ese salto y
+  siguen haciendo, mientras que el gate de la regla 5 se va a la mitad que
+  ahora termina en un skill motor.
+- **Doble clic en un nodo** para renombrarlo en el sitio. Una ref que C2
+  rechazaría, o una ya usada, se rechaza en vez de corregirse en silencio.
+- **Alinear y repartir** una selección múltiple, desde su menú.
+- **Notas adhesivas** (`N`), arrastrables, redimensionables, cinco colores.
+  Viven en el almacenamiento local junto a las posiciones y deliberadamente
+  *no* en el IR: una nota es un hecho sobre lo que entiende una persona, y dos
+  grafos que solo difieren en su prosa tienen que seguir siendo idénticos byte
+  a byte en el cable.
+- **`Ctrl+Shift+C` / `Ctrl+Shift+V`** copian y pegan el grafo entero como IR por
+  el portapapeles del sistema — un flujo que puedes pegar desde un mensaje de
+  chat, que es el truco de interoperabilidad que vale la pena robar.
+- **`?`** lista cada atajo, desde la misma tabla de la que los menús sacan sus
+  pistas, para que no puedan separarse.
+
+**Las réplicas se muestran una vez.** El catálogo guarda una entrada por
+*conexión* viva, así que dos procesos sirviendo un skill son dos entradas. La
+paleta las agrupa en una fila con una insignia `×2`, y "cuántos skills
+satisfacen esta capacidad" cuenta skills distintos — decir dos mandaría a un
+autor a buscar una segunda implementación que no existe. Ver
+[Los skills sobreviven a su nodo](#los-skills-sobreviven-a-su-nodo).
+
 **El IR que emite es puro según la especificación.** Sin coordenadas ni claves del
 editor: un grafo dibujado aquí es comparable byte a byte con uno escrito a mano.
 Las posiciones viven en el almacenamiento local del navegador indexadas por id de
@@ -800,6 +836,41 @@ puertos de entrada. El `Context` te da `emit` (una respuesta enlazada
 causalmente), `status`, `error` y `done`; cada mensaje que envía queda
 automáticamente encadenado al que lo causó y recibe una clave de idempotencia.
 Los handlers deben ser idempotentes — la entrega es at-least-once por contrato.
+
+### Los skills sobreviven a su nodo
+
+La otra mitad de "los skills se conectan *hacia fuera*": reconectan para
+siempre por contrato, así que parar un nodo no los para. Siguen reintentando y
+se enganchan al nodo que venga después — que es lo que permite reiniciar un
+nodo sin que un operador reinicie diez procesos detrás, y también es cómo
+acabas con dos de todo.
+
+La vía habitual: `Ctrl+C` es limpio (`aura up` para los hijos que lanzó), pero
+un `kill -9`, una terminal que se cae o un nodo que mata el sistema operativo no
+lo son, y el siguiente `aura up --with-examples` arranca un segundo juego al
+lado de los supervivientes. Los síntomas son un catálogo duplicado y sesiones
+cayendo en un proceso que nadie recuerda haber arrancado.
+
+**Correr N réplicas de un skill está soportado y es deliberado** — el registry
+rota entre ellas, así que N copias sirven de verdad N veces las sesiones. Por
+eso el nodo no rechaza una segunda conexión. Lo dice, una vez, en el momento en
+que pasa:
+
+```
+level=WARN msg="skill has more than one connection"
+  skill=example/cognitive/llm-chat instances=2
+  note="deliberate for replicas; otherwise a process outlived an earlier node"
+```
+
+En el evento de registro y no al arrancar, porque es el único sitio donde se
+sabe: un huérfano que reconecta puede llegar diez segundos después de que el
+nodo termine de arrancar, mucho después de que cualquier comprobación de
+arranque haya corrido y dado el visto bueno. `aura up --with-examples` además
+se salta lanzar un skill que ya esté conectado cuando mira, y lo reporta como
+`already up`.
+
+Si no fue deliberado, para los procesos de más (`pkill -f skills/` en Unix,
+`Get-Process python3.13 | Stop-Process` en Windows) y vuélvelos a arrancar.
 
 ### Esquemas estándar
 

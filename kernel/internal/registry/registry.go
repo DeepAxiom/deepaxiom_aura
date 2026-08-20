@@ -290,11 +290,42 @@ func New() *Registry {
 	return &Registry{byConn: make(map[string]*Live)}
 }
 
-func (r *Registry) Register(connID string, live *Live) {
+// Register attaches a connection and reports how many connections that skill
+// id now holds. One is the ordinary case; more means replicas.
+//
+// The count is returned rather than logged here because the registry has no
+// logger and should not grow one — but the caller needs it at exactly this
+// moment. Replicas are legitimate (`pick` round-robins between them on
+// purpose) and also the shape of an accident: skills reconnect forever by
+// contract, so a node killed without stopping its skills leaves them to
+// attach to the next one. That reconnect can land many seconds later, which
+// is why this is answered on the registration event rather than by anything
+// that samples the catalogue at startup and hopes.
+func (r *Registry) Register(connID string, live *Live) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	live.conn = connID
 	r.byConn[connID] = live
+
+	n := 0
+	for _, l := range r.byConn {
+		if l.Manifest.ID == live.Manifest.ID {
+			n++
+		}
+	}
+	return n
+}
+
+// Replicas counts live connections per skill id, for anything that reports on
+// the catalogue rather than reacting to one registration.
+func (r *Registry) Replicas() map[string]int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]int, len(r.byConn))
+	for _, l := range r.byConn {
+		out[l.Manifest.ID]++
+	}
+	return out
 }
 
 func (r *Registry) Unregister(connID string) {

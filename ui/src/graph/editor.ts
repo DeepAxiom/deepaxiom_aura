@@ -270,3 +270,176 @@ export function connect(
 
   return { graph: { ...graph, edges: [...graph.edges, edge] }, edgeId: id };
 }
+
+/* ── splicing ────────────────────────────────────────────────────── */
+
+/**
+ * Drop a skill onto an existing edge so it sits between the two ends.
+ *
+ * n8n's most-used editing gesture, and the one that turns a drawn graph into
+ * an edited one: you have `a → b` and you want `a → filter → b` without
+ * deleting the connection, placing a node, and drawing two new ones.
+ *
+ * Returns null when the skill cannot sit in a chain — something with no
+ * ingress, or no egress, has no "through" to splice into. Better to refuse
+ * than to leave a node wired on one side and dangling on the other, which
+ * looks connected and is not.
+ */
+export function insertOn(
+  graph: CanvasGraph,
+  skills: SkillManifest[],
+  edgeId: string,
+  skill: SkillManifest,
+): { graph: CanvasGraph; ref: string } | null {
+  const edge = graph.edges.find((e) => e.id === edgeId);
+  if (!edge) return null;
+
+  const inPort = skill.ports?.ingress?.[0]?.name;
+  const outPort = skill.ports?.egress?.[0]?.name;
+  if (!inPort || !outPort) return null;
+
+  const from = graph.nodes.find((n) => n.ref === edge.fromRef);
+  const to = graph.nodes.find((n) => n.ref === edge.toRef);
+  if (!from || !to) return null;
+
+  // Midway between the two ends, which is where the edge the author clicked
+  // actually runs. Placed before addSkill so its overlap walk can push the
+  // node clear if something is already sitting there.
+  const at = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+  const placed = addSkill(graph, skill, at);
+  const ref = placed.ref;
+
+  const stamp = Date.now().toString(36);
+  const head: CanvasEdge = {
+    // The upstream half keeps the original edge's delivery semantics: a
+    // deadline or a priority was a statement about that hop, and dropping it
+    // on splice would silently change how the graph behaves under load.
+    ...edge,
+    id: `e${stamp}-${ref}-head`,
+    toRef: ref,
+    toPort: inPort,
+  };
+  const tail: CanvasEdge = {
+    id: `e${stamp}-${ref}-tail`,
+    fromRef: ref,
+    fromPort: outPort,
+    toRef: edge.toRef,
+    toPort: edge.toPort,
+  };
+  // Rule 5 belongs to the destination, so it moves to whichever half now ends
+  // at a motor skill rather than staying on the half that inherited the fields.
+  delete head.gate;
+  if (resolvePorts({ ref, resolve: skill.capability, x: 0, y: 0 }, skills).type === "motor") {
+    head.gate = "human-approval";
+  }
+  if (edge.gate) tail.gate = edge.gate;
+
+  return {
+    ref,
+    graph: {
+      ...placed.graph,
+      edges: [...placed.graph.edges.filter((e) => e.id !== edgeId), head, tail],
+    },
+  };
+}
+
+/* ── tidying a selection ─────────────────────────────────────────── */
+
+export type AlignEdge = "left" | "right" | "top" | "bottom" | "cx" | "cy";
+
+export interface Size {
+  w: number;
+  h: number;
+}
+
+/**
+ * Line up the selected nodes.
+ *
+ * Sizes come in from the caller because a node's height depends on how many
+ * ports its manifest declares, and this module deliberately knows nothing
+ * about the catalogue.
+ */
+export function align(
+  graph: CanvasGraph,
+  refs: string[],
+  edge: AlignEdge,
+  sizeOf: (n: CanvasNode) => Size,
+): CanvasGraph {
+  const picked = graph.nodes.filter((n) => refs.includes(n.ref));
+  if (picked.length < 2) return graph;
+
+  const boxes = picked.map((n) => ({ n, ...sizeOf(n) }));
+  // Align to the extreme in the direction asked for, and to the mean when
+  // centring — matching what every drawing tool does, so the result is the one
+  // an author already expects before they click.
+  const target = {
+    left: Math.min(...boxes.map((b) => b.n.x)),
+    right: Math.max(...boxes.map((b) => b.n.x + b.w)),
+    top: Math.min(...boxes.map((b) => b.n.y)),
+    bottom: Math.max(...boxes.map((b) => b.n.y + b.h)),
+    cx: boxes.reduce((a, b) => a + b.n.x + b.w / 2, 0) / boxes.length,
+    cy: boxes.reduce((a, b) => a + b.n.y + b.h / 2, 0) / boxes.length,
+  }[edge];
+
+  const moved = new Map(
+    boxes.map((b) => {
+      const at = { x: b.n.x, y: b.n.y };
+      if (edge === "left") at.x = target;
+      if (edge === "right") at.x = target - b.w;
+      if (edge === "cx") at.x = target - b.w / 2;
+      if (edge === "top") at.y = target;
+      if (edge === "bottom") at.y = target - b.h;
+      if (edge === "cy") at.y = target - b.h / 2;
+      return [b.n.ref, at];
+    }),
+  );
+
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) => (moved.has(n.ref) ? { ...n, ...moved.get(n.ref)! } : n)),
+  };
+}
+
+/**
+ * Even out the gaps along one axis, holding the two extremes still.
+ *
+ * Gaps rather than positions: spacing centres evenly makes boxes of different
+ * heights look wrong, because the eye reads the whitespace between them and
+ * not the distance between their middles.
+ */
+export function distribute(
+  graph: CanvasGraph,
+  refs: string[],
+  axis: "x" | "y",
+  sizeOf: (n: CanvasNode) => Size,
+): CanvasGraph {
+  const picked = graph.nodes.filter((n) => refs.includes(n.ref));
+  // Two nodes have one gap, and one gap is already even.
+  if (picked.length < 3) return graph;
+
+  const span = (n: CanvasNode) => (axis === "x" ? sizeOf(n).w : sizeOf(n).h);
+  const at = (n: CanvasNode) => (axis === "x" ? n.x : n.y);
+
+  const ordered = [...picked].sort((a, b) => at(a) - at(b));
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
+  const total = at(last) + span(last) - at(first);
+  const used = ordered.reduce((sum, n) => sum + span(n), 0);
+  const gap = (total - used) / (ordered.length - 1);
+
+  const moved = new Map<string, number>();
+  let cursor = at(first);
+  for (const n of ordered) {
+    moved.set(n.ref, cursor);
+    cursor += span(n) + gap;
+  }
+
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) =>
+      moved.has(n.ref)
+        ? { ...n, ...(axis === "x" ? { x: moved.get(n.ref)! } : { y: moved.get(n.ref)! }) }
+        : n,
+    ),
+  };
+}

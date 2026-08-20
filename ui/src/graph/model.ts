@@ -182,9 +182,45 @@ export function portMap(g: CanvasGraph, skills: SkillManifest[]): Map<string, Re
 /** How many candidate skills satisfy a capability demand. */
 export function candidateCount(node: CanvasNode, skills: SkillManifest[]): number {
   if (node.isClient) return 1;
-  if (node.use) return skills.filter((s) => s.id === node.use || s.id.startsWith(node.use + "@")).length;
-  if (node.resolve) return skills.filter((s) => s.capability === node.resolve).length;
-  return 0;
+  // Distinct skills, not connections. The catalogue holds one entry per live
+  // connection, so two replicas of one skill are two entries — and reporting
+  // "2 skills satisfy this capability" would be false, and would send an
+  // author looking for a second implementation that does not exist. What
+  // matters to a graph author is how many *different* things could resolve
+  // here; how many copies are running is the operator's question.
+  const ids = new Set(
+    skills
+      .filter((s) =>
+        node.use
+          ? s.id === node.use || s.id.startsWith(node.use + "@")
+          : !!node.resolve && s.capability === node.resolve,
+      )
+      .map((s) => s.id),
+  );
+  return ids.size;
+}
+
+/**
+ * The catalogue as a graph author reads it: one entry per skill, carrying how
+ * many connections it currently has.
+ *
+ * Two processes serving one skill is a supported deployment and the kernel
+ * round-robins between them, so the palette listing the skill twice is not
+ * "extra information" — it is the same skill drawn twice, with no way to tell
+ * that from two different skills that happen to share a name.
+ */
+export interface CatalogEntry extends SkillManifest {
+  instances: number;
+}
+
+export function dedupeSkills(skills: SkillManifest[]): CatalogEntry[] {
+  const by = new Map<string, CatalogEntry>();
+  for (const s of skills) {
+    const seen = by.get(s.id);
+    if (seen) seen.instances += 1;
+    else by.set(s.id, { ...s, instances: 1 });
+  }
+  return [...by.values()];
 }
 
 /** Height of a node box, driven by whichever port column is longer. */

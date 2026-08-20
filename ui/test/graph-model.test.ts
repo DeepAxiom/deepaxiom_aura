@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
-import { autoLayout, fromIR, portMap, toIR, validate } from "../src/graph/model.ts";
+import { autoLayout, candidateCount, dedupeSkills, fromIR, portMap, toIR, validate } from "../src/graph/model.ts";
 import type { GraphIR, SkillManifest } from "../src/api/types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -297,4 +297,37 @@ test("a typo in a real skill's port is still an error", () => {
     validate(g, skills, "local").some((f) => f.severity === "error" && f.message.includes("txt_out")),
     "openness belongs to the client, never to a skill with a declared manifest",
   );
+});
+
+/* ── replicas are connections, not skills ────────────────────────── */
+
+/** The catalogue holds one entry per live connection, so a replica repeats. */
+const twice = [skills[0], { ...skills[0] }, skills[1]];
+
+test("the palette shows a skill once however many processes serve it", () => {
+  const out = dedupeSkills(twice);
+  assert.deepEqual(out.map((s) => s.id), [skills[0].id, skills[1].id]);
+  assert.equal(out[0].instances, 2, "the count is kept, not thrown away");
+  assert.equal(out[1].instances, 1);
+});
+
+test("dedupe does not mutate the catalogue it was handed", () => {
+  const before = twice.map((s) => ({ ...s }));
+  dedupeSkills(twice);
+  assert.deepEqual(twice, before, "the entry carrying `instances` must be a copy");
+});
+
+test("two connections to one skill are one candidate, not two", () => {
+  // Reporting "2 skills satisfy this" would send an author looking for a
+  // second implementation that does not exist.
+  const g = fromIR(ir([{ ref: "eco", resolve: "logical.echo" }], [{ from: "client.text_out", to: "eco.text_in" }]));
+  const node = g.nodes.find((n) => n.ref === "eco")!;
+  assert.equal(candidateCount(node, twice), 1);
+});
+
+test("two genuinely different skills for one capability are two candidates", () => {
+  const rival = { ...skills[0], id: "other/logical/echo@2.0.0" };
+  const g = fromIR(ir([{ ref: "eco", resolve: "logical.echo" }], [{ from: "client.text_out", to: "eco.text_in" }]));
+  const node = g.nodes.find((n) => n.ref === "eco")!;
+  assert.equal(candidateCount(node, [skills[0], rival]), 2);
 });

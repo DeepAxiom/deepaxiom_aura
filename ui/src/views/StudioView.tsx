@@ -39,6 +39,14 @@ import { Inspector } from "../components/canvas/Inspector";
 import { LiveRail } from "../components/canvas/LiveRail";
 import { Minimap } from "../components/canvas/Minimap";
 import { ConversePanel } from "../components/converse/ConversePanel";
+import { ContextMenu, type MenuItem } from "../components/canvas/ContextMenu";
+import { QuickAdd } from "../components/canvas/QuickAdd";
+import { StickyNote } from "../components/canvas/StickyNote";
+import { Shortcuts, keyFor } from "../components/canvas/Shortcuts";
+import {
+  addNote, cycleColor, loadNotes, moveNote, patchNote,
+  removeNote, resizeNote, saveNotes, type Note,
+} from "../graph/notes";
 import { curve, portAnchor } from "../graph/geometry";
 import {
   type CanvasEdge,
@@ -47,6 +55,7 @@ import {
   NODE_W,
   autoLayout,
   candidateCount,
+  dedupeSkills,
   fromIR,
   nodeHeight,
   portMap,
@@ -61,6 +70,9 @@ import {
   EMPTY_HISTORY,
   EMPTY_SELECTION,
   addSkill,
+  align,
+  distribute,
+  insertOn,
   commit,
   connect,
   copy,
@@ -118,6 +130,21 @@ export function StudioView() {
    * so it is the one an author picks and keeps.
    */
   const [side, setSide] = useState<"auto" | "converse">("auto");
+
+  /** Sticky notes for the open graph. Never part of the IR — see graph/notes. */
+  const [notes, setNotes] = useState<Note[]>([]);
+  /** An open right-click menu: where it is, and what it offers. */
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  /**
+   * An open quick-add. `onEdge` means the pick splices into that edge instead
+   * of dropping a loose node, which is the same dialog answering two questions.
+   */
+  const [quick, setQuick] = useState<
+    { vx: number; vy: number; world: { x: number; y: number }; onEdge?: string } | null
+  >(null);
+  const [showKeys, setShowKeys] = useState(false);
+  /** The node whose ref is being retyped in place. */
+  const [renaming, setRenaming] = useState<{ ref: string; draft: string } | null>(null);
   const [irDraft, setIrDraft] = useState("");
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
@@ -139,10 +166,31 @@ export function StudioView() {
     | { kind: "pan"; startX: number; startY: number; origin: Viewport }
     | { kind: "move"; refs: string[]; lastX: number; lastY: number }
     | { kind: "box"; startX: number; startY: number }
+    | { kind: "note-move"; id: string; lastX: number; lastY: number }
+    | { kind: "note-resize"; id: string; lastX: number; lastY: number }
     | null
   >(null);
   const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [link, setLink] = useState<{ ref: string; port: string; x: number; y: number } | null>(null);
+
+  // Notes belong to a graph id, so opening another graph swaps them like the
+  // canvas swaps nodes. Loaded rather than merged: a note from the last graph
+  // showing up on this one would be a ghost nobody could explain.
+  useEffect(() => { setNotes(loadNotes(graph.graphId)); }, [graph.graphId]);
+
+  /**
+   * Every note change goes through here so the store is written exactly once
+   * per change. Notes have no undo: they are not part of the graph, and an
+   * undo stack that sometimes restores prose and sometimes topology is one
+   * nobody can predict.
+   */
+  const editNotes = useCallback((next: (n: Note[]) => Note[]) => {
+    setNotes((prev) => {
+      const out = next(prev);
+      saveNotes(graph.graphId, out);
+      return out;
+    });
+  }, [graph.graphId]);
 
   const push = useCallback((item: Item) => setItems((prev) => [...prev, item]), []);
 
@@ -204,6 +252,12 @@ export function StudioView() {
   );
 
   /* ── viewport ──────────────────────────────────────────────────── */
+
+  /** Re-lay the graph. One definition: the button, the menu and T all call it. */
+  const tidy = useCallback(() => {
+    if (!editable) return;
+    edit((g) => ({ ...g, nodes: autoLayout(g.nodes, g.edges) }));
+  }, [editable, edit]);
 
   const fit = useCallback(() => {
     const r = surfaceRef.current?.getBoundingClientRect();
@@ -280,6 +334,19 @@ export function StudioView() {
       setGraph((prev) => moveBy(prev, g.refs, dx, dy));
       return;
     }
+    if (g?.kind === "note-move" || g?.kind === "note-resize") {
+      const w = toWorld(e.clientX, e.clientY);
+      const dx = w.x - g.lastX;
+      const dy = w.y - g.lastY;
+      g.lastX = w.x;
+      g.lastY = w.y;
+      // setNotes, not editNotes: a drag writes to the store once on pointerup
+      // rather than on every frame.
+      setNotes((prev) => (g.kind === "note-move"
+        ? moveNote(prev, g.id, dx, dy)
+        : resizeNote(prev, g.id, dx, dy)));
+      return;
+    }
     if (g?.kind === "box") {
       const w = toWorld(e.clientX, e.clientY);
       setBox({
@@ -297,6 +364,7 @@ export function StudioView() {
   const onPointerUp = () => {
     const g = gesture.current;
     if (g?.kind === "move" && graph.graphId) savePositions(graph.graphId, graph.nodes);
+    if (g?.kind === "note-move" || g?.kind === "note-resize") saveNotes(graph.graphId, notes);
     if (g?.kind === "box" && box) {
       setSel(selectWithin(graph, skills, box, (n) => ({ w: NODE_W, h: heightOf(n) })));
     }
@@ -368,11 +436,176 @@ export function StudioView() {
     setSel(out.selection);
   }, [graph, sel]);
 
+  /* ── the system clipboard, in IR ─────────────────────────────────
+   *
+   * n8n's real interop trick is that a workflow is text you can paste out of a
+   * forum post. Ours already is — C2 IR is the format, and the IR drawer round
+   * -trips it — so this is the same capability with one fewer step.
+   *
+   * Deliberately the whole graph rather than the selection: a fragment of IR
+   * is not IR (it has no graph_id and may name nodes it does not carry), and
+   * handing someone a document the kernel would reject is worse than handing
+   * them a big one. In-canvas copy/paste of a selection is Ctrl+C, and stays
+   * that way.
+   */
+
+  const doCopyIR = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(toIR(graph), null, 2));
+      setStatus({ kind: "ok", text: t("studio.copiedIR") });
+    } catch {
+      // Clipboard writes need a secure context and, in some browsers, a user
+      // gesture. Falling back to the drawer is better than a dead shortcut.
+      setIrDraft(JSON.stringify(toIR(graph), null, 2));
+      setShowIR(true);
+    }
+  }, [graph, t]);
+
+  const doPasteIR = useCallback(async () => {
+    if (!editable) return;
+    try {
+      const text = await navigator.clipboard.readText();
+      const parsed = JSON.parse(text) as GraphIR;
+      if (parsed.ir !== "1" || !Array.isArray(parsed.nodes)) {
+        throw new Error(t("studio.notIR"));
+      }
+      edit(() => fromIR(parsed));
+      setSel(EMPTY_SELECTION);
+      setStatus({ kind: "ok", text: t("studio.pastedIR", { id: parsed.graph_id }) });
+    } catch (e) {
+      setStatus({ kind: "err", text: (e as Error).message });
+    }
+  }, [editable, edit, t]);
+
+  /* ── placing things ──────────────────────────────────────────────── */
+
+  /** Drop a skill at a world point, or splice it into an edge. */
+  const placeSkill = useCallback((skill: SkillManifest, at: { x: number; y: number }, onEdge?: string) => {
+    if (onEdge) {
+      const out = insertOn(graph, skills, onEdge, skill);
+      if (!out) {
+        setStatus({ kind: "err", text: t("studio.cannotSplice", { name: skill.name }) });
+        return;
+      }
+      setHistory((h) => commit(h, graph));
+      setGraph(out.graph);
+      setSel({ nodes: [out.ref], edges: [] });
+      return;
+    }
+    edit((g) => addSkill(g, skill, { x: at.x - NODE_W / 2, y: at.y - 60 }).graph);
+  }, [graph, skills, edit, t]);
+
+  const doAddNote = useCallback((at: { x: number; y: number }) => {
+    const out = addNote(notes, at);
+    editNotes(() => out.notes);
+  }, [notes, editNotes]);
+
+  /* ── lining things up ────────────────────────────────────────────── */
+
+  const sizeOf = useCallback(
+    (n: CanvasNode) => ({ w: NODE_W, h: heightOf(n) }),
+    [heightOf],
+  );
+
+  const doAlign = useCallback((edge: Parameters<typeof align>[2]) => {
+    edit((g) => align(g, sel.nodes, edge, sizeOf));
+  }, [edit, sel.nodes, sizeOf]);
+
+  const doDistribute = useCallback((axis: "x" | "y") => {
+    edit((g) => distribute(g, sel.nodes, axis, sizeOf));
+  }, [edit, sel.nodes, sizeOf]);
+
   const doDelete = useCallback(() => {
     if (!sel.nodes.length && !sel.edges.length) return;
     edit((g) => remove(g, sel));
     setSel(EMPTY_SELECTION);
   }, [sel, edit]);
+
+  /* ── right-click menus ──────────────────────────────────────────── */
+
+  /**
+   * Built per target rather than one menu that greys out what does not apply.
+   * A menu whose items are mostly disabled teaches you to stop opening it.
+   */
+  const openMenu = useCallback((e: React.MouseEvent, items: MenuItem[]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (items.length) setMenu({ x: e.clientX, y: e.clientY, items });
+  }, []);
+
+  const surfaceMenu = (e: React.MouseEvent): MenuItem[] => {
+    const world = toWorld(e.clientX, e.clientY);
+    return [
+      { label: t("studio.menu.addSkill"), hint: keyFor("quickAdd"),
+        onSelect: () => setQuick({ vx: e.clientX, vy: e.clientY, world }) },
+      { label: t("studio.menu.addNote"), hint: keyFor("note"),
+        onSelect: () => doAddNote(world) },
+      { kind: "separator" },
+      { label: t("studio.menu.pasteHere"), hint: keyFor("paste"),
+        disabled: !clipboard, onSelect: doPaste },
+      { label: t("studio.menu.pasteIR"), hint: keyFor("pasteIR"), onSelect: () => void doPasteIR() },
+      { kind: "separator" },
+      { label: t("studio.menu.selectAll"), hint: keyFor("selectAll"),
+        onSelect: () => setSel({ nodes: graph.nodes.map((n) => n.ref), edges: graph.edges.map((x) => x.id) }) },
+      { label: t("studio.menu.copyIR"), hint: keyFor("copyIR"), onSelect: () => void doCopyIR() },
+      { label: t("studio.tidy"), hint: keyFor("tidy"), onSelect: tidy },
+      { label: t("studio.fit"), hint: keyFor("fit"), onSelect: fit },
+    ];
+  };
+
+  const nodeMenu = (ref: string): MenuItem[] => {
+    const node = graph.nodes.find((n) => n.ref === ref);
+    const many = sel.nodes.length > 1 && sel.nodes.includes(ref);
+    const items: MenuItem[] = [
+      { label: t("studio.menu.rename"), hint: keyFor("rename"), disabled: !!node?.isClient,
+        onSelect: () => node && setRenaming({ ref, draft: ref }) },
+      { label: t("studio.menu.duplicate"), hint: keyFor("duplicate"),
+        disabled: !!node?.isClient, onSelect: doDuplicate },
+      { label: t("studio.menu.copy"), hint: keyFor("copy"), onSelect: doCopy },
+    ];
+    if (many) {
+      items.push(
+        { kind: "separator" },
+        { label: t("studio.menu.alignLeft"), onSelect: () => doAlign("left") },
+        { label: t("studio.menu.alignCx"), onSelect: () => doAlign("cx") },
+        { label: t("studio.menu.alignTop"), onSelect: () => doAlign("top") },
+        { label: t("studio.menu.alignCy"), onSelect: () => doAlign("cy") },
+        // Three is where distribution starts meaning anything: two nodes
+        // already have exactly one gap.
+        { label: t("studio.menu.spreadX"), disabled: sel.nodes.length < 3,
+          onSelect: () => doDistribute("x") },
+        { label: t("studio.menu.spreadY"), disabled: sel.nodes.length < 3,
+          onSelect: () => doDistribute("y") },
+      );
+    }
+    items.push(
+      { kind: "separator" },
+      { label: t("studio.menu.delete"), hint: keyFor("delete"), danger: true,
+        disabled: !!node?.isClient, onSelect: doDelete },
+    );
+    return items;
+  };
+
+  const edgeMenu = (id: string, e: React.MouseEvent): MenuItem[] => {
+    const world = toWorld(e.clientX, e.clientY);
+    return [
+      // The gesture that makes an existing graph editable rather than
+      // rebuildable: put something in the middle of a connection.
+      { label: t("studio.menu.insertHere"),
+        onSelect: () => setQuick({ vx: e.clientX, vy: e.clientY, world, onEdge: id }) },
+      { label: t("studio.menu.inspect"), onSelect: () => { setSel({ nodes: [], edges: [id] }); setSide("auto"); } },
+      { kind: "separator" },
+      { label: t("studio.menu.delete"), hint: keyFor("delete"), danger: true,
+        onSelect: () => { edit((g) => remove(g, { nodes: [], edges: [id] })); setSel(EMPTY_SELECTION); } },
+    ];
+  };
+
+  const noteMenu = (id: string): MenuItem[] => [
+    { label: t("studio.menu.noteColor"), onSelect: () => editNotes((n) => cycleColor(n, id)) },
+    { kind: "separator" },
+    { label: t("studio.menu.delete"), hint: keyFor("delete"), danger: true,
+      onSelect: () => editNotes((n) => removeNote(n, id)) },
+  ];
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -392,12 +625,29 @@ export function StudioView() {
         setSel({ nodes: graph.nodes.map((n) => n.ref), edges: graph.edges.map((x) => x.id) });
         return;
       }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "c") { e.preventDefault(); void doCopyIR(); return; }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "v") { e.preventDefault(); void doPasteIR(); return; }
       if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); doDelete(); return; }
-      if (e.key === "Escape") { setLink(null); setSel(EMPTY_SELECTION); }
+      if (e.key === "Escape") {
+        // Innermost first: dismiss whatever is floating before touching the
+        // selection, so one Escape never closes a menu *and* deselects.
+        if (menu) { setMenu(null); return; }
+        if (quick) { setQuick(null); return; }
+        if (renaming) { setRenaming(null); return; }
+        setLink(null); setSel(EMPTY_SELECTION);
+        return;
+      }
+      // Unmodified letters, so they cannot collide with a browser shortcut.
+      if (mod || e.altKey) return;
+      if (e.key === "?") { e.preventDefault(); setShowKeys(true); return; }
+      if (e.key.toLowerCase() === "f") { e.preventDefault(); fit(); return; }
+      if (e.key.toLowerCase() === "t") { e.preventDefault(); tidy(); return; }
+      if (e.key.toLowerCase() === "n") { e.preventDefault(); doAddNote(centre()); return; }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [doUndo, doRedo, doCopy, doPaste, doDuplicate, doDelete, editable, graph]);
+  }, [doUndo, doRedo, doCopy, doPaste, doDuplicate, doDelete, doCopyIR, doPasteIR,
+      doAddNote, editable, graph, menu, quick, renaming]);
 
   /* ── graph lifecycle ───────────────────────────────────────────── */
 
@@ -559,10 +809,17 @@ export function StudioView() {
     edit((g) => ({ ...g, edges: g.edges.map((e) => (e.id === selectedEdge.id ? { ...e, ...patch } : e)) }));
   };
 
-  const filteredSkills = skills.filter((s) => {
+  // One entry per skill, not per connection: see dedupeSkills. Everything that
+  // offers skills to a person reads this, so the palette and the quick-add can
+  // never show different catalogues.
+  const catalog = useMemo(() => dedupeSkills(skills), [skills]);
+
+  const filteredSkills = useMemo(() => {
     const q = paletteQuery.toLowerCase();
-    return !q || s.name.toLowerCase().includes(q) || s.capability.toLowerCase().includes(q);
-  });
+    return catalog.filter(
+      (s) => !q || s.name.toLowerCase().includes(q) || s.capability.toLowerCase().includes(q),
+    );
+  }, [catalog, paletteQuery]);
 
   const centre = () => toWorld(
     (surfaceRef.current?.getBoundingClientRect().left ?? 0) + surfaceSize.w / 2,
@@ -615,7 +872,7 @@ export function StudioView() {
         <button
           className="btn btn--ghost btn--sm"
           disabled={!editable}
-          onClick={() => edit((g) => ({ ...g, nodes: autoLayout(g.nodes, g.edges) }))}
+          onClick={tidy}
         >
           {t("studio.tidy")}
         </button>
@@ -667,7 +924,14 @@ export function StudioView() {
                 }}
               >
                 <span className={`palette__dot palette__dot--${s.type}`} />
-                <span className="palette__name">{s.name}</span>
+                <span className="palette__name">
+                  {s.name}
+                  {s.instances > 1 && (
+                    <span className="palette__instances" title={t("studio.replicasHelp")}>
+                      ×{s.instances}
+                    </span>
+                  )}
+                </span>
                 <span className="palette__cap">{s.capability}</span>
               </button>
             ))}
@@ -689,6 +953,11 @@ export function StudioView() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onContextMenu={(e) => editable && openMenu(e, surfaceMenu(e))}
+          onDoubleClick={(e) => {
+            if (!editable) return;
+            setQuick({ vx: e.clientX, vy: e.clientY, world: toWorld(e.clientX, e.clientY) });
+          }}
           onWheel={(e) => {
             const r = surfaceRef.current?.getBoundingClientRect();
             if (!r) return;
@@ -699,6 +968,31 @@ export function StudioView() {
           }}
         >
           <div className="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+            {/* Behind everything: a note labels a region, and a label that can
+                cover what it labels is one you have to move to work. */}
+            {notes.map((n) => (
+              <StickyNote
+                key={n.id}
+                note={n}
+                editable={editable}
+                selected={false}
+                placeholder={t("studio.notePlaceholder")}
+                onSelect={() => setSel(EMPTY_SELECTION)}
+                onText={(text) => editNotes((all) => patchNote(all, n.id, { text }))}
+                onMenu={(e) => openMenu(e, noteMenu(n.id))}
+                onMoveStart={(e) => {
+                  const w = toWorld(e.clientX, e.clientY);
+                  gesture.current = { kind: "note-move", id: n.id, lastX: w.x, lastY: w.y };
+                  surfaceRef.current?.setPointerCapture(e.pointerId);
+                }}
+                onResizeStart={(e) => {
+                  const w = toWorld(e.clientX, e.clientY);
+                  gesture.current = { kind: "note-resize", id: n.id, lastX: w.x, lastY: w.y };
+                  surfaceRef.current?.setPointerCapture(e.pointerId);
+                }}
+              />
+            ))}
+
             <svg className="canvas-edges" aria-hidden>
               {graph.edges.map((e) => {
                 const a = anchor(e.fromRef, e.fromPort, "out");
@@ -725,6 +1019,15 @@ export function StudioView() {
                         ev.stopPropagation();
                         setSel(select(sel, "edge", e.id, ev.shiftKey));
                       }}
+                      onContextMenu={(ev) => editable && openMenu(ev, edgeMenu(e.id, ev))}
+                      onDoubleClick={(ev) => {
+                        if (!editable) return;
+                        ev.stopPropagation();
+                        setQuick({
+                          vx: ev.clientX, vy: ev.clientY,
+                          world: toWorld(ev.clientX, ev.clientY), onEdge: e.id,
+                        });
+                      }}
                     />
                     {e.gate === "human-approval" && (
                       <circle
@@ -748,7 +1051,16 @@ export function StudioView() {
             </svg>
 
             {graph.nodes.map((n) => (
-              <div key={n.ref} className={`livenode livenode--${activity.nodes[n.ref] ?? "idle"}`}>
+              <div
+                key={n.ref}
+                className={`livenode livenode--${activity.nodes[n.ref] ?? "idle"}`}
+                onContextMenu={(e) => editable && openMenu(e, nodeMenu(n.ref))}
+                onDoubleClick={(e) => {
+                  if (!editable || n.isClient) return;
+                  e.stopPropagation();
+                  setRenaming({ ref: n.ref, draft: n.ref });
+                }}
+              >
                 <GraphNode
                   node={n}
                   ports={portsByRef.get(n.ref) ?? { ingress: [], egress: [] }}
@@ -764,6 +1076,35 @@ export function StudioView() {
                   <span className="livenode__count" style={{ left: n.x, top: n.y - 9 }}>
                     {activity.counts[n.ref]}
                   </span>
+                )}
+                {renaming?.ref === n.ref && (
+                  <input
+                    className="input noderename"
+                    style={{ left: n.x + 8, top: n.y + 8, width: NODE_W - 16 }}
+                    autoFocus
+                    value={renaming.draft}
+                    onChange={(ev) => setRenaming({ ref: n.ref, draft: ev.target.value })}
+                    onPointerDown={(ev) => ev.stopPropagation()}
+                    onBlur={() => setRenaming(null)}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Escape") { ev.stopPropagation(); setRenaming(null); return; }
+                      if (ev.key !== "Enter") return;
+                      const to = renaming.draft.trim();
+                      // Refused rather than silently corrected: a ref the
+                      // kernel would reject, or one already taken, means the
+                      // author has to see the name they typed and change it.
+                      const taken = graph.nodes.some((o) => o.ref === to && o.ref !== n.ref);
+                      if (!to || taken || !/^[a-z0-9_-]+$/.test(to)) {
+                        setStatus({ kind: "err", text: t("studio.badRef", { ref: to }) });
+                        return;
+                      }
+                      if (to !== n.ref) {
+                        edit((g) => rename(g, n.ref, to));
+                        setSel({ nodes: [to], edges: [] });
+                      }
+                      setRenaming(null);
+                    }}
+                  />
                 )}
               </div>
             ))}
@@ -866,6 +1207,22 @@ export function StudioView() {
           <textarea className="textarea ir-drawer__text" value={irDraft} onChange={(e) => setIrDraft(e.target.value)} />
         </div>
       )}
+
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+
+      {quick && (
+        <QuickAdd
+          x={quick.vx}
+          y={quick.vy}
+          skills={catalog}
+          throughOnly={!!quick.onEdge}
+          title={t(quick.onEdge ? "studio.menu.insertHere" : "studio.menu.addSkill")}
+          onClose={() => setQuick(null)}
+          onPick={(skill) => { placeSkill(skill, quick.world, quick.onEdge); setQuick(null); }}
+        />
+      )}
+
+      {showKeys && <Shortcuts onClose={() => setShowKeys(false)} />}
 
       {findings.length > 0 && (
         <div className="findings-bar">

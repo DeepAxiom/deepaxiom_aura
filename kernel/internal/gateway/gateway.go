@@ -807,13 +807,22 @@ func (g *Gateway) ServeSkill(conn wire, p Principal) {
 	defer g.Adm.Release(connID)
 
 	live := &registry.Live{Manifest: manifest, Connected: time.Now(), Send: conn.Send}
-	g.Reg.Register(connID, live)
+	instances := g.Reg.Register(connID, live)
 	defer g.Reg.Unregister(connID)
 	if err := g.St.UpsertSkill(manifest.ID, manifest.Version, manifest); err != nil {
 		g.Log.Error("persist skill failed", "err", err)
 	}
 	g.Log.Info("skill registered", "skill", manifest.ID, "type", manifest.Type,
 		"capability", manifest.Capability)
+	if instances > 1 {
+		// Said at the moment it becomes true, because that is the only moment
+		// anyone can act on it: a skill that outlived an earlier node may
+		// reconnect long after this one finished starting up, and a check that
+		// ran at startup would have found nothing to report.
+		g.Log.Warn("skill has more than one connection",
+			"skill", manifest.ID, "instances", instances,
+			"note", "deliberate for replicas; otherwise a process outlived an earlier node")
+	}
 
 	effective, err := g.effectiveConfig(manifest)
 	if err != nil {
