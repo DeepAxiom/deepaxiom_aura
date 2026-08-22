@@ -30,7 +30,6 @@ different jobs, so they carry different licenses:
 |---|---|---|
 | `spec/` — the C1/C2/C3 contracts, schemas, conformance suite | Apache-2.0 | `Apache-2.0` |
 | `sdk/` — the skill-authoring SDK(s) | Apache-2.0 | `Apache-2.0` |
-| `aura-landing/` — the marketing site | Apache-2.0 | `Apache-2.0` |
 | `scripts/` — build/release tooling | Apache-2.0 | `Apache-2.0` |
 | `kernel/` — the `aura` binary (the AURA kernel architecture) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | `ui/` — the control-plane frontend, embedded into the kernel binary | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |

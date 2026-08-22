@@ -2902,7 +2902,6 @@ scripts/            release.ps1 — construye un zip distribuible. gen_ssot.py
                     (GUIDE.md + spec/ + el uso del binario → la referencia
                     del plano de control), check_links.py, adversarial.sh y
                     ledger_adversarial.py (CI: un binario real rechaza lo que debe).
-aura-landing/       El sitio de marketing (Astro) — independiente del runtime.
 ```
 
 ---
@@ -3133,7 +3132,7 @@ fuera de una red de confianza:
 contratos y el modelo de ejecución que implementa `kernel/`. Ambos se licencian
 de forma distinta a propósito, en detalle en [`LICENSE.md`](LICENSE.md):
 
-- **Apache-2.0** para `spec/`, `sdk/`, `aura-landing/`, `scripts/`
+- **Apache-2.0** para `spec/`, `sdk/`, `scripts/`
   y esta documentación — neutrales y abiertos para siempre. Cualquiera puede
   construir un kernel, SDK o skill conforme al estándar con cero fricción y
   cero obligación; el ecosistema tiene que seguir siendo seguro para autores

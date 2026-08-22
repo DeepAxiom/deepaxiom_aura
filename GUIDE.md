@@ -3025,7 +3025,6 @@ scripts/            release.ps1 (distributable zip), gen_ssot.py (spec/ → gene
                     binary's usage → the control plane's reference),
                     check_links.py, adversarial.sh and
                     ledger_adversarial.py (CI: a real binary refuses what it should).
-aura-landing/       The marketing site (Astro) — independent from the runtime.
 ```
 
 ---
@@ -3268,7 +3267,7 @@ is the one that keeps this from being safe outside a trusted network:
 contracts and execution model that `kernel/` implements. The two are licensed
 differently on purpose, in full in [`LICENSE.md`](LICENSE.md):
 
-- **Apache-2.0** for `spec/`, `sdk/`, `aura-landing/`, `scripts/`,
+- **Apache-2.0** for `spec/`, `sdk/`, `scripts/`,
   and this documentation — neutral and open forever. Anyone can build a
   conformant kernel, SDK, or skill against the standard with zero friction and
   zero obligation; the ecosystem has to stay safe for commercial skill authors

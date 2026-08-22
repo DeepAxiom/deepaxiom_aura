@@ -43,3 +43,8 @@ release/
 # voice web client) is demo glue that needs real accounts/hardware/heavy
 # setup to exercise end to end — kept on disk for local use, not tracked.
 examples/
+
+# aura-landing/ — the marketing site. It was here; it is its own repository
+# now (apps/aura-landing). Listed so a stray checkout of it beside the kernel
+# cannot be committed back into this one by `git add .`.
+aura-landing/
