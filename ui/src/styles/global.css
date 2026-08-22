@@ -1,35 +1,160 @@
-/* ── design tokens ─────────────────────────────────────────────── */
+/* ── design tokens ─────────────────────────────────────────────────
+   The same palette as the marketing site, so the control plane and the page
+   that sold it do not look like two products. See the aura-landing repo's src/styles/
+   global.css for the rationale; the short version:
+
+     black, white and a gray ramp — and ONE hue.
+
+   Red marks a single idea: something acts on the world, is stopped, refused,
+   or broken. That is why `motor` is the only skill type with a colour, and
+   why errors are the only status with one. If a red thing here is not one of
+   those, it is a bug.
+
+   No gradients. Flat fills and hairline rules do the work.
+
+   Dark is the default because a control plane is looked at for hours, but the
+   light values are real and complete — the same three-state resolution the
+   site uses (explicit choice wins; otherwise follow the OS).
+*/
 :root {
-  --bg: #0b0e14;
-  --bg-raised: #10141d;
-  --bg-panel: #141926;
-  --bg-hover: #1a2030;
-  --border: #232a3b;
-  --border-strong: #303950;
+  color-scheme: dark;
 
-  --text: #e8ecf4;
-  --text-dim: #8b94a7;
-  --text-faint: #5c6478;
+  --bg: #000000;
+  --bg-raised: #0a0a0a;
+  --bg-panel: #101010;
+  --bg-hover: #1a1a1a;
+  --border: #262626;
+  --border-strong: #3a3a3a;
 
-  --accent: #7c6cff;
-  --accent-soft: rgba(124, 108, 255, 0.14);
-  --ok: #3fb950;
-  --ok-soft: rgba(63, 185, 80, 0.12);
-  --warn: #d29922;
-  --warn-soft: rgba(210, 153, 34, 0.12);
-  --err: #f85149;
-  --err-soft: rgba(248, 81, 73, 0.1);
+  --text: #ffffff;
+  --text-dim: #a3a3a3;
+  --text-faint: #6b6b6b;
 
-  --t-sensorial: #60a5fa;
-  --t-cognitive: #a78bfa;
-  --t-motor: #f472b6;
-  --t-memory: #fbbf24;
-  --t-logical: #34d399;
+  /* The primary action is the page inverted, never a colour. */
+  --invert-bg: #ffffff;
+  --invert-text: #000000;
+
+  --accent: #ff2a2a;
+  --accent-soft: rgba(255, 42, 42, 0.12);
+
+  /* Selection, focus and "this row is active" are UI state, not warnings,
+     so they wear ink rather than the one hue. */
+  --sel: #ffffff;
+  --sel-soft: rgba(255, 255, 255, 0.10);
+
+  /* Status is monochrome except the one that is a problem. Meaning travels on
+     the icon and the label in the markup, never on hue alone. */
+  --ok: #ffffff;
+  --ok-soft: rgba(255, 255, 255, 0.09);
+  --warn: #a3a3a3;
+  --warn-soft: rgba(163, 163, 163, 0.12);
+  --err: #ff2a2a;
+  --err-soft: rgba(255, 42, 42, 0.12);
+
+  /* Skill types: a neutral ramp, with motor red because motor is the type that
+     acts on the world — the same rule the gate follows everywhere else. */
+  --t-sensorial: #e6e6e6;
+  --t-cognitive: #a3a3a3;
+  --t-motor:     #ff2a2a;
+  --t-memory:    #6b6b6b;
+  --t-logical:   #4d4d4d;
+
+  /* Sticky-note paper. Neutral tints so a board stays readable, still five
+     distinguishable choices. */
+  --note-ink: #0a0a0a;
+  --note-1: #f2f2f2; --note-1-edge: #cccccc;
+  --note-2: #e0e0e0; --note-3-edge: #b0b0b0;
+  --note-3: #cfcfcf; --note-2-edge: #bdbdbd;
+  --note-4: #bdbdbd; --note-4-edge: #9a9a9a;
+  --note-5: #a8a8a8; --note-5-edge: #878787;
 
   --radius: 10px;
   --radius-sm: 7px;
   --font: "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+/* Light, for a visitor whose OS says so and who has not chosen otherwise. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+
+    --bg: #ffffff;
+    --bg-raised: #ffffff;
+    --bg-panel: #ffffff;
+    --bg-hover: #f2f2f2;
+    --border: #e2e2e2;
+    --border-strong: #c9c9c9;
+
+    --text: #0a0a0a;
+    --text-dim: #737373;
+    --text-faint: #999999;
+
+    --invert-bg: #0a0a0a;
+    --invert-text: #ffffff;
+
+    --accent: #d20707;
+    --accent-soft: rgba(210, 7, 7, 0.10);
+
+    /* Selection, focus and "this row is active" are UI state, not warnings,
+       so they wear ink rather than the one hue. */
+    --sel: #0a0a0a;
+    --sel-soft: rgba(10, 10, 10, 0.07);
+
+    --ok: #0a0a0a;
+    --ok-soft: rgba(10, 10, 10, 0.06);
+    --warn: #737373;
+    --warn-soft: rgba(115, 115, 115, 0.10);
+    --err: #d20707;
+    --err-soft: rgba(210, 7, 7, 0.10);
+
+    --t-sensorial: #1a1a1a;
+    --t-cognitive: #595959;
+    --t-motor:     #d20707;
+    --t-memory:    #8c8c8c;
+    --t-logical:   #b3b3b3;
+  }
+}
+
+/* Light, chosen explicitly. Same values; a separate block so a toggle would
+   beat the OS in both directions rather than only one. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-hover: #f2f2f2;
+  --border: #e2e2e2;
+  --border-strong: #c9c9c9;
+
+  --text: #0a0a0a;
+  --text-dim: #737373;
+  --text-faint: #999999;
+
+  --invert-bg: #0a0a0a;
+  --invert-text: #ffffff;
+
+  --accent: #d20707;
+  --accent-soft: rgba(210, 7, 7, 0.10);
+
+  /* Selection, focus and "this row is active" are UI state, not warnings,
+     so they wear ink rather than the one hue. */
+  --sel: #0a0a0a;
+  --sel-soft: rgba(10, 10, 10, 0.07);
+
+  --ok: #0a0a0a;
+  --ok-soft: rgba(10, 10, 10, 0.06);
+  --warn: #737373;
+  --warn-soft: rgba(115, 115, 115, 0.10);
+  --err: #d20707;
+  --err-soft: rgba(210, 7, 7, 0.10);
+
+  --t-sensorial: #1a1a1a;
+  --t-cognitive: #595959;
+  --t-motor:     #d20707;
+  --t-memory:    #8c8c8c;
+  --t-logical:   #b3b3b3;
 }
 
 /* ── reset & base ──────────────────────────────────────────────── */
@@ -44,7 +169,7 @@ body {
 button { font: inherit; color: inherit; cursor: pointer; background: none; border: none; }
 input, select, textarea { font: inherit; color: inherit; }
 code, pre { font-family: var(--mono); font-size: 12.5px; }
-::selection { background: var(--accent-soft); }
+::selection { background: var(--sel-soft); }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
 *::-webkit-scrollbar-track { background: transparent; }
@@ -66,7 +191,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   padding: 4px 10px 18px; font-weight: 650; letter-spacing: 0.02em; font-size: 15px;
 }
 .sidebar__brand svg { flex-shrink: 0; }
-.sidebar__brand span { color: var(--accent); }
+.sidebar__brand span { color: var(--text); }
 .sidebar__nav { display: flex; flex-direction: column; gap: 2px; }
 .sidebar__link {
   display: flex; align-items: center; gap: 10px;
@@ -75,8 +200,8 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   transition: background 0.12s, color 0.12s;
 }
 .sidebar__link:hover { background: var(--bg-hover); color: var(--text); }
-.sidebar__link--active { background: var(--accent-soft); color: var(--text); }
-.sidebar__link--active svg { color: var(--accent); }
+.sidebar__link--active { background: var(--sel-soft); color: var(--text); }
+.sidebar__link--active svg { color: var(--sel); }
 .sidebar__footer { margin-top: auto; padding: 10px; }
 
 /* ── topbar ────────────────────────────────────────────────────── */
@@ -100,11 +225,11 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 }
 .btn {
   display: inline-flex; align-items: center; gap: 7px;
-  background: var(--accent); color: #fff; font-weight: 560;
+  background: var(--invert-bg); color: var(--invert-text); font-weight: 560;
   padding: 8px 16px; border-radius: var(--radius-sm);
   transition: filter 0.12s;
 }
-.btn:hover { filter: brightness(1.1); }
+.btn:hover { opacity: 0.85; }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn--ghost {
   background: var(--bg-panel); border: 1px solid var(--border); color: var(--text);
@@ -118,7 +243,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   transition: border-color 0.12s;
 }
 .input:focus, .select:focus, .textarea:focus {
-  outline: none; border-color: var(--accent);
+  outline: none; border-color: var(--sel);
 }
 .textarea { resize: vertical; min-height: 120px; font-family: var(--mono); font-size: 12.5px; }
 
@@ -155,7 +280,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   vertical-align: top;
 }
 .table th { color: var(--text-faint); font-weight: 550; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; }
-.table code { color: var(--accent); }
+.table code { color: var(--sel); }
 .table pre { color: var(--text-dim); white-space: pre-wrap; word-break: break-all; max-width: 46ch; }
 
 /* ── conversation ────────────────────────────────── */
@@ -178,7 +303,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .converse__note { color: var(--text-faint); font-size: 11px; line-height: 1.5; margin: 0; }
 .converse .msg { max-width: 100%; font-size: 13px; }
 .msg { max-width: 74ch; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; }
-.msg--user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.msg--user { align-self: flex-end; background: var(--invert-bg); color: var(--invert-text); border-bottom-right-radius: 4px; }
 .msg--aura { align-self: flex-start; background: var(--bg-panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .msg--status { align-self: center; color: var(--text-faint); font-size: 12px; padding: 0; }
 .msg--error { align-self: center; color: var(--err); font-size: 12.5px; padding: 0; }
@@ -217,7 +342,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .pill--live { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 
 .check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer; }
-.check input { accent-color: var(--accent); }
+.check input { accent-color: var(--sel); }
 
 .alert {
   background: var(--err-soft); border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
@@ -268,7 +393,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   padding: 8px 4px; border-top: 1px solid var(--border); font-size: 13px;
 }
 .op-row__method { font-family: var(--mono); font-size: 11.5px; width: 52px; color: var(--text-dim); }
-.op-row__id { font-family: var(--mono); color: var(--accent); min-width: 180px; }
+.op-row__id { font-family: var(--mono); color: var(--sel); min-width: 180px; }
 .op-row__path { color: var(--text-dim); font-family: var(--mono); font-size: 12px; flex: 1; }
 .op-row .select { width: 120px; }
 .form-grid { display: grid; gap: 12px; margin-top: 14px; }
@@ -284,7 +409,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 }
 .plan-step__ref { color: var(--text-faint); }
 .plan-step__arrow { color: var(--text-faint); }
-.plan-step__cap { color: var(--accent); }
+.plan-step__cap { color: var(--sel); }
 .section-label {
   font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--text-faint); margin: 18px 0 8px;
