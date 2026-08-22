@@ -3,6 +3,7 @@ package wasmrt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -103,6 +104,12 @@ func hostHTTPFetch(ctx context.Context, mod api.Module, reqPtr, reqLen, respBufP
 	}
 	resp, err := scope.client.Do(httpReq)
 	if err != nil {
+		// A redirect off the allowlist is a denial, not a transport failure,
+		// and the guest is told which — errRedirectOffAllowlist arrives here
+		// wrapped in *url.Error, hence errors.Is rather than ==.
+		if errors.Is(err, errRedirectOffAllowlist) {
+			return httpFetchDenied
+		}
 		return httpFetchFailed
 	}
 	defer resp.Body.Close()
@@ -124,6 +131,37 @@ func hostHTTPFetch(ctx context.Context, mod api.Module, reqPtr, reqLen, respBufP
 		return httpFetchFailed
 	}
 	return int32(n)
+}
+
+// errRedirectOffAllowlist is returned by the client's CheckRedirect when a
+// hop leaves permissions.egress_http.
+var errRedirectOffAllowlist = errors.New("redirect target is not in permissions.egress_http")
+
+// checkRedirect re-runs the allowlist on every hop.
+//
+// Without it `egress_http` bounds only the URL the guest typed, which is not
+// the property the permission claims. Go's http.Client follows up to ten
+// redirects on its own and re-checks nothing, so any allowlisted host — one
+// with an open redirect, one that got compromised, one the guest's author
+// controls outright — could answer `302 Location: http://169.254.169.254/…`
+// or point at the node's own loopback control surface, and the guest would
+// read a response body from an address its manifest never granted. The
+// declared permission would be advisory: true of the first request and of no
+// other.
+//
+// The scope is read back from the request's context rather than captured in a
+// closure, because one *http.Client is shared by every concurrent Invoke and
+// each carries its own grant — see withHTTPFetchContext. Go copies the
+// originating request's context onto each redirect it generates, so the hop
+// being checked is checked against the grant that started it. A request with
+// no scope on its context is refused: there is no grant to satisfy, and
+// failing open here would undo the whole check.
+func checkRedirect(req *http.Request, _ []*http.Request) error {
+	scope, _ := req.Context().Value(httpFetchScopeKey{}).(*httpFetchScope)
+	if scope == nil || !allowedHost(req.URL.Hostname(), scope.domains) {
+		return errRedirectOffAllowlist
+	}
+	return nil
 }
 
 func allowedHost(host string, domains []string) bool {

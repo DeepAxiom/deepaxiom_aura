@@ -1,8 +1,12 @@
 package gateway
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -231,20 +235,20 @@ func TestHashTokenIsStableAndPrefixed(t *testing.T) {
 func TestOperationalRoutesAreNotMistakenForAssets(t *testing.T) {
 	// Closed: they are routes, and metrics describes what the node is doing.
 	for _, p := range []string{"/metrics"} {
-		if openPath(p, false, registeredPaths) {
+		if openPath(p, false, registeredPathsForTest(t)) {
 			t.Errorf("%s is served without a credential", p)
 		}
 	}
 	// Open: a probe holds no credential, and refusing readiness keeps a healthy
 	// node out of rotation forever.
 	for _, p := range []string{"/healthz", "/readyz"} {
-		if !openPath(p, false, registeredPaths) {
+		if !openPath(p, false, registeredPathsForTest(t)) {
 			t.Errorf("%s needs a credential; an orchestrator has none", p)
 		}
 	}
 	// Still open: a browser must load the app shell before it can present a
 	// token, so a client-side route is not a route this node serves.
-	if !openPath("/sessions", false, registeredPaths) {
+	if !openPath("/sessions", false, registeredPathsForTest(t)) {
 		t.Error("a single-page-app route was refused; the shell could never load")
 	}
 }
@@ -259,5 +263,94 @@ func TestARouteInTheTableIsClosedWithoutBeingListedTwice(t *testing.T) {
 	if !openPath("/some-route-added-next-year", false, nil) {
 		t.Fatal("fixture check: without the table the path looks like an app route, " +
 			"which is exactly why the table has to come from the mux")
+	}
+}
+
+// routesFromSource is every path Handler() registers, read out of the source
+// of gateway.go with the go/ast parser.
+//
+// Parsing the file is deliberate, and the alternative is why: reading the map
+// back off the Gateway (g.Auth.APIRoutes) would check that map against itself,
+// and pass no matter what it contains — which is exactly how the missing-route
+// bug this file guards against would survive its own test. net/http.ServeMux
+// exposes no way to enumerate what was registered, so the registrations
+// themselves are the only independent source there is.
+func routesFromSource(t *testing.T) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "gateway.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse gateway.go: %v", err)
+	}
+	var paths []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		name, ok := call.Fun.(*ast.Ident)
+		if !ok || name.Name != "handle" {
+			return true
+		}
+		lit, ok := call.Args[0].(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		pattern, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			return true
+		}
+		if _, rest, found := strings.Cut(pattern, " "); found {
+			pattern = rest // patterns are "METHOD /path"
+		}
+		paths = append(paths, pattern)
+		return true
+	})
+	if len(paths) < 50 {
+		t.Fatalf("found only %d routes in gateway.go; the parser is not seeing the registrations", len(paths))
+	}
+	return paths
+}
+
+// registeredPathsForTest is the route set Handler() hands the authenticator.
+func registeredPathsForTest(t *testing.T) map[string]bool {
+	t.Helper()
+	g := &Gateway{Auth: &Auth{}}
+	_ = g.Handler()
+	if len(g.Auth.APIRoutes) == 0 {
+		t.Fatal("Handler() registered no routes")
+	}
+	return g.Auth.APIRoutes
+}
+
+// TestEveryRouteIsAuthenticated is the check that was missing.
+//
+// isUIAsset serves anything it does not recognise as a route without a bearer
+// token — it has to, because a browser must load the app shell before it can
+// present one. So every route this gateway serves must be something isUIAsset
+// refuses, whether by prefix or by appearing in the route table it is given. A
+// route that is neither is a control-plane endpoint open to the network,
+// silently, from the commit that added it.
+//
+// The four deliberate exceptions are named rather than skipped, so adding a
+// fifth is a visible edit here.
+func TestEveryRouteIsAuthenticated(t *testing.T) {
+	routes := registeredPathsForTest(t)
+	openByDesign := map[string]bool{
+		"/":             true, // the app shell
+		"/healthz":      true, // liveness, for probes holding no credential
+		"/readyz":       true, // readiness, same
+		"/hooks/{name}": true, // authenticates with the sender's own HMAC
+	}
+	for _, path := range routesFromSource(t) {
+		if openByDesign[path] {
+			continue
+		}
+		if isUIAsset(path, routes) {
+			t.Errorf("route %q is treated as a UI asset, so it is served without a token", path)
+		}
+		if openPath(path, false, routes) {
+			t.Errorf("route %q is reachable with no credential on a default node", path)
+		}
 	}
 }

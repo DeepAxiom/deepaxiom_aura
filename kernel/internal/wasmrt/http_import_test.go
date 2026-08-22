@@ -226,3 +226,84 @@ func TestHTTPFetchPermissionScopeDoesNotLeakAcrossConcurrentInvokes(t *testing.T
 		t.Error(msg)
 	}
 }
+
+// --- adversarial: a redirect may not leave the allowlist -------------------
+//
+// The check used to run once, on the URL the guest typed, and Go's client
+// follows redirects on its own without re-checking anything. So an
+// allowlisted host — one with an open redirect, one that was compromised,
+// or one the guest's own author runs — could answer `302 Location: <somewhere
+// else>` and the guest would read a body from a host its manifest never
+// granted. That makes `permissions.egress_http` a statement about the first
+// request only, which is not what it claims and not what SECURITY.md lists as
+// in scope.
+
+func TestHTTPFetchRedirectOffAllowlistIsDenied(t *testing.T) {
+	var secretHits int32
+	secret := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&secretHits, 1)
+		w.Write([]byte("data the guest was never granted"))
+	}))
+	defer secret.Close()
+
+	// httptest binds 127.0.0.1, so both servers would share a hostname and the
+	// allowlist (which matches on host, not host:port) would legitimately let
+	// the second through. Addressing the same listener as "localhost" gives the
+	// redirect target a hostname genuinely outside the grant, which is the case
+	// under test — and it still resolves, so a followed redirect really does
+	// reach it and increments secretHits.
+	secretOffAllowlist := strings.Replace(secret.URL, "127.0.0.1", "localhost", 1)
+
+	// Allowlisted, and hostile: it does nothing but point somewhere else.
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, secretOffAllowlist, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	mod := testHTTPModule(t)
+	perm := Permission{HTTPDomains: []string{hostOf(t, redirector.URL)}}
+	resp := invokeFetch(t, mod, perm, "GET", redirector.URL)
+
+	if n := atomic.LoadInt32(&secretHits); n != 0 {
+		t.Fatalf("the off-allowlist host was reached %d time(s); egress_http bounded only the first hop", n)
+	}
+	if resp.OK {
+		t.Fatalf("resp = %+v, want the fetch refused", resp)
+	}
+	if resp.Code != httpFetchDenied {
+		t.Fatalf("resp.Code = %d, want httpFetchDenied (%d): a refused hop is a denial, not a transport failure",
+			resp.Code, httpFetchDenied)
+	}
+}
+
+// A redirect that stays inside the grant is ordinary traffic and must still
+// work — otherwise the fix above is just "redirects are broken", and every
+// API that answers 302 to add a trailing slash would stop working.
+func TestHTTPFetchRedirectInsideAllowlistIsFollowed(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/final", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("arrived"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/final", http.StatusFound)
+	})
+
+	mod := testHTTPModule(t)
+	perm := Permission{HTTPDomains: []string{hostOf(t, srv.URL)}}
+	resp := invokeFetch(t, mod, perm, "GET", srv.URL+"/start")
+	if !resp.OK || resp.Text != "arrived" {
+		t.Fatalf("resp = %+v, want ok=true text=%q", resp, "arrived")
+	}
+}
+
+// checkRedirect must refuse a request carrying no grant at all. A nil scope
+// means something upstream is wrong, and the only safe reading of "I cannot
+// tell what this is allowed to reach" is "nothing".
+func TestCheckRedirectFailsClosedWithoutScope(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodGet, "https://example.com/", nil)
+	if err := checkRedirect(req, nil); err == nil {
+		t.Fatal("checkRedirect allowed a hop with no scope on the context")
+	}
+}

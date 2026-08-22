@@ -74,7 +74,16 @@ type Auth struct {
 	// somewhere else is refused.
 	AllowedOrigins []string
 	// TrustedProxy relaxes the origin check for deployments that terminate TLS
-	// upstream. Off by default.
+	// upstream, where Host no longer resembles what the browser saw. Off unless
+	// `aura up --trusted-proxy` says otherwise.
+	//
+	// It used to be inferred — set whenever the node bound a public address
+	// with no TLS — which is the deployment where an operator is *most* likely
+	// to be behind a proxy and also the one where nobody chose this. Inferring
+	// it meant the cross-site-WebSocket defence switched itself off as a side
+	// effect of a bind address, and the only record of that was this comment
+	// saying it was opt-in. Relaxing a security check is now something someone
+	// types.
 	TrustedProxy bool
 	// APIRoutes is every path registered on the mux. Populated by
 	// Gateway.Handler, so a route added there is authenticated by construction

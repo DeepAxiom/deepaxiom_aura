@@ -52,7 +52,11 @@ func New(ctx context.Context) (*Runtime, error) {
 		_ = rt.Close(ctx)
 		return nil, fmt.Errorf("link env.http_fetch: %w", err)
 	}
-	return &Runtime{rt: rt, httpClient: &http.Client{}}, nil
+	// CheckRedirect is what keeps permissions.egress_http true of every hop
+	// rather than only of the first — see checkRedirect in http_import.go.
+	// The per-invocation grant travels on the request context, so one client
+	// is still correct for every concurrent Invoke.
+	return &Runtime{rt: rt, httpClient: &http.Client{CheckRedirect: checkRedirect}}, nil
 }
 
 // Close releases the runtime and every module compiled against it.

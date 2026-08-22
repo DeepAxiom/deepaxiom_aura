@@ -240,6 +240,9 @@ func cmdUp(args []string) {
 	tlsKey := fs.String("tls-key", "", "TLS private key file")
 	var allowOrigins stringList
 	fs.Var(&allowOrigins, "allow-origin", "extra browser Origin allowed on the WebSocket upgrade (repeatable)")
+	trustedProxy := fs.Bool("trusted-proxy", false,
+		"accept a WebSocket upgrade whose Origin cannot be matched against Host "+
+			"(only behind a proxy that terminates TLS; see GUIDE.md#security-model)")
 	_ = fs.Parse(args)
 
 	budgetBytes, err := gateway.ParseMemory(*memBudget)
@@ -278,7 +281,7 @@ func cmdUp(args []string) {
 	n, err := buildNode(nodeOptions{
 		DataDir: *data, Port: *port, Mode: *mode, PolicyPath: *policyPath,
 		NoAuth: *noAuth, OpenWitness: *openWitness, TLS: *tlsCert != "",
-		AllowedOrigins: allowOrigins, TrustedProxy: *tlsCert == "" && public,
+		AllowedOrigins: allowOrigins, TrustedProxy: *trustedProxy,
 		MemoryBudget: budgetBytes, EventLogMaxBytes: eventLogMaxBytes,
 		MaxSessions: *maxSessions, SkillConfig: configFile.Skills, Log: log,
 	})
@@ -363,8 +366,9 @@ func cmdUp(args []string) {
 		scheme: scheme, wsScheme: wsScheme, data: *data,
 		budget: budgetBytes, policy: policy, ldg: ldg, token: token,
 		tokenCreated: tokenCreated, public: public, tls: *tlsCert != "",
-		quic:  quicEndpoint(wt),
-		evlog: st.EventLogStats(), eventLogMax: eventLogMaxBytes,
+		trustedProxy: *trustedProxy,
+		quic:         quicEndpoint(wt),
+		evlog:        st.EventLogStats(), eventLogMax: eventLogMaxBytes,
 	})
 
 	srv := &http.Server{
@@ -465,6 +469,7 @@ type bannerInfo struct {
 	token        string
 	tokenCreated bool
 	public       bool
+	trustedProxy bool
 	tls          bool
 }
 
@@ -546,8 +551,15 @@ func printBanner(b bannerInfo) {
 		fmt.Printf(`
   !! Bound to %s WITHOUT TLS. The token and every message cross the
      network in clear text. Use --tls-cert/--tls-key, or put a terminating
-     proxy in front and bind loopback.
+     proxy in front and bind loopback. If a proxy in front of this node
+     rewrites Host, browser sessions need --trusted-proxy as well.
 `, b.addr)
+	}
+	if b.trustedProxy {
+		fmt.Printf(`
+  !! --trusted-proxy: a WebSocket upgrade from ANY browser origin is accepted.
+     Only correct behind a proxy you control. Prefer --allow-origin <url>.
+`)
 	}
 	fmt.Println()
 }

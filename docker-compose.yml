@@ -30,8 +30,20 @@ services:
       # startup, so the one in force can be compared against the one in git.
       - ./deploy/aura.policy.yaml:/etc/aura/aura.policy.yaml:ro
     ports:
-      - "9080:9080/tcp"
-      - "9080:9080/udp" # QUIC/WebTransport, same port number, different protocol
+      # 127.0.0.1 on the LEFT, deliberately. `"9080:9080"` publishes on every
+      # host interface, so `docker compose up` on a laptop serves the control
+      # plane to the whole network — in clear text, since nothing here
+      # terminates TLS. The bearer token still stands in the way, but the
+      # default posture of the binary is loopback (see gateway.ResolveListen)
+      # and running it in a container should not quietly reverse that.
+      #
+      # The --listen=0.0.0.0 below is a different statement and still correct:
+      # inside the container, loopback means "reachable from nothing".
+      #
+      # To expose this node on purpose, drop the 127.0.0.1 prefix here AND put
+      # TLS in front of it. See GUIDE.md#security-model.
+      - "127.0.0.1:9080:9080/tcp"
+      - "127.0.0.1:9080:9080/udp" # QUIC/WebTransport, same port number, different protocol
     environment:
       # FULL costs latency and buys durability across a power cut. NORMAL — the
       # default — is crash-safe but may lose the last transactions to a hard

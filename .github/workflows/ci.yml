@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: kernel/go.mod
           cache-dependency-path: kernel/go.sum
 
       # gofmt is a hard gate; .gitattributes normalises line endings so this
@@ -55,6 +55,30 @@ jobs:
         env:
           CGO_ENABLED: '1'
         run: go test ./... -race
+
+  vulncheck:
+    name: known vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: kernel/go.mod
+          cache-dependency-path: kernel/go.sum
+
+      # govulncheck reports only vulnerabilities this code actually *reaches*,
+      # which is why it can be a hard gate rather than a report nobody reads: a
+      # CVE in a dependency's unused half does not fail the build, and one on a
+      # path the kernel calls does.
+      #
+      # Most of what it has ever found here lives in the standard library, so
+      # the fix is the toolchain rather than a dependency — which is exactly why
+      # the `go` directive in kernel/go.mod names a patch version and every job
+      # above reads its Go version from that file. Bumping one line is what
+      # closes them, and this job is what says when it is needed.
+      - name: govulncheck
+        working-directory: kernel
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   ui:
     name: control-plane UI
@@ -226,7 +250,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: kernel/go.mod
           cache-dependency-path: kernel/go.sum
       - uses: actions/setup-python@v5
         with:
@@ -276,7 +300,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: kernel/go.mod
           cache-dependency-path: kernel/go.sum
 
       - name: build the kernel
@@ -537,7 +561,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: kernel/go.mod
           cache-dependency-path: kernel/go.sum
 
       # The kernel is pure Go with a cgo-free SQLite driver, which is what
@@ -688,7 +712,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: kernel/go.mod
           cache-dependency-path: kernel/go.sum
       - uses: actions/setup-python@v5
         with:

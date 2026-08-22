@@ -121,76 +121,90 @@ func (g *Gateway) upgrader() websocket.Upgrader {
 
 func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", g.ui)
-	mux.HandleFunc("GET /.well-known/agent.json", g.agentCard)
-	mux.HandleFunc("GET /openenv/spec", g.openEnvSpec)
-	mux.HandleFunc("POST /openenv/reset", g.openEnvReset)
-	mux.HandleFunc("POST /openenv/step", g.openEnvStep)
-	mux.HandleFunc("GET /openenv/state", g.openEnvState)
-	mux.HandleFunc("GET /openenv/bundle", g.openEnvBundle)
-	if g.MCP != nil {
-		mux.HandleFunc("POST /mcp", g.MCP)
-		mux.HandleFunc("GET /mcp", g.MCP) // handler answers 405 (no SSE stream)
+
+	// routes is the set of paths this gateway actually serves, built by the
+	// same call that registers them. See the comment on APIRoutes below for
+	// why it has to be built this way rather than listed separately.
+	routes := map[string]bool{}
+	handle := func(pattern string, h http.HandlerFunc) {
+		mux.HandleFunc(pattern, h)
+		path := pattern
+		if _, rest, ok := strings.Cut(pattern, " "); ok {
+			path = rest // patterns are "METHOD /path"
+		}
+		routes[path] = true
 	}
-	mux.HandleFunc("GET /healthz", g.health)
-	mux.HandleFunc("GET /readyz", g.readiness)
-	mux.HandleFunc("GET /metrics", g.metrics)
-	mux.HandleFunc("GET /v1/approvals", g.listApprovals)
-	mux.HandleFunc("POST /v1/approvals/{id}", g.resolveApproval)
-	mux.HandleFunc("GET /v1/operators", g.listOperators)
-	mux.HandleFunc("POST /v1/operators", g.enrollOperator)
-	mux.HandleFunc("DELETE /v1/operators/{id}", g.revokeOperator)
-	mux.HandleFunc("GET /v1/secrets", g.listSecrets)
-	mux.HandleFunc("PUT /v1/secrets", g.putSecret)
-	mux.HandleFunc("DELETE /v1/secrets/{name}", g.deleteSecret)
-	mux.HandleFunc("POST /v1/secrets/resolve", g.resolveSecret)
-	mux.HandleFunc("GET /v1/skills", g.listSkills)
-	mux.HandleFunc("GET /v1/skills/config", g.getSkillConfig)
-	mux.HandleFunc("PUT /v1/skills/config", g.putSkillConfig)
-	mux.HandleFunc("GET /v1/graphs", g.listGraphs)
-	mux.HandleFunc("GET /v1/graphs/{id}", g.getGraph)
-	mux.HandleFunc("GET /v1/graphs/{id}/revisions", g.listGraphRevisions)
-	mux.HandleFunc("GET /v1/graphs/{id}/revisions/{n}", g.getGraphRevision)
-	mux.HandleFunc("POST /v1/graphs", g.registerGraph)
-	mux.HandleFunc("GET /v1/sessions", g.listSessions)
-	mux.HandleFunc("GET /v1/sessions/{id}", g.sessionMeta)
-	mux.HandleFunc("GET /v1/sessions/{id}/events", g.sessionEvents)
-	mux.HandleFunc("GET /v1/sessions/{id}/ledger", g.sessionLedger)
-	mux.HandleFunc("GET /v1/sessions/{id}/bundle", g.ledgerBundle)
-	mux.HandleFunc("POST /v1/projections", g.connectProjection)
-	mux.HandleFunc("GET /v1/projections", g.listProjections)
-	mux.HandleFunc("POST /v1/projections/{name}/promote", g.promoteOperation)
-	mux.HandleFunc("POST /v1/ingress", g.declareIngress)
-	mux.HandleFunc("GET /v1/ingress", g.listIngress)
-	mux.HandleFunc("DELETE /v1/ingress/{name}", g.deleteIngress)
-	mux.HandleFunc("GET /v1/schemas", g.listSchemas)
-	mux.HandleFunc("GET /v1/grammars/{ref...}", g.getGrammar)
-	mux.HandleFunc("GET /v1/schemas/{ref...}", g.getSchema)
-	mux.HandleFunc("GET /v1/ledger", g.listLedger)
-	mux.HandleFunc("GET /v1/ledger/verify", g.verifyLedger)
-	mux.HandleFunc("GET /v1/ledger/entries/{hash}", g.ledgerEntry)
-	mux.HandleFunc("GET /v1/ledger/head", g.ledgerHead)
-	mux.HandleFunc("GET /v1/ledger/statement", g.ledgerStatement)
-	mux.HandleFunc("POST /v1/ledger/witness", g.ledgerWitness)
-	mux.HandleFunc("GET /v1/ledger/witness/last-seen", g.ledgerWitnessLastSeen)
-	mux.HandleFunc("POST /v1/ledger/witness/record", g.ledgerRecordWitness)
+
+	handle("GET /", g.ui)
+	handle("GET /.well-known/agent.json", g.agentCard)
+	handle("GET /openenv/spec", g.openEnvSpec)
+	handle("POST /openenv/reset", g.openEnvReset)
+	handle("POST /openenv/step", g.openEnvStep)
+	handle("GET /openenv/state", g.openEnvState)
+	handle("GET /openenv/bundle", g.openEnvBundle)
+	if g.MCP != nil {
+		handle("POST /mcp", g.MCP)
+		handle("GET /mcp", g.MCP) // handler answers 405 (no SSE stream)
+	}
+	handle("GET /healthz", g.health)
+	handle("GET /readyz", g.readiness)
+	handle("GET /metrics", g.metrics)
+	handle("GET /v1/approvals", g.listApprovals)
+	handle("POST /v1/approvals/{id}", g.resolveApproval)
+	handle("GET /v1/operators", g.listOperators)
+	handle("POST /v1/operators", g.enrollOperator)
+	handle("DELETE /v1/operators/{id}", g.revokeOperator)
+	handle("GET /v1/secrets", g.listSecrets)
+	handle("PUT /v1/secrets", g.putSecret)
+	handle("DELETE /v1/secrets/{name}", g.deleteSecret)
+	handle("POST /v1/secrets/resolve", g.resolveSecret)
+	handle("GET /v1/skills", g.listSkills)
+	handle("GET /v1/skills/config", g.getSkillConfig)
+	handle("PUT /v1/skills/config", g.putSkillConfig)
+	handle("GET /v1/graphs", g.listGraphs)
+	handle("GET /v1/graphs/{id}", g.getGraph)
+	handle("GET /v1/graphs/{id}/revisions", g.listGraphRevisions)
+	handle("GET /v1/graphs/{id}/revisions/{n}", g.getGraphRevision)
+	handle("POST /v1/graphs", g.registerGraph)
+	handle("GET /v1/sessions", g.listSessions)
+	handle("GET /v1/sessions/{id}", g.sessionMeta)
+	handle("GET /v1/sessions/{id}/events", g.sessionEvents)
+	handle("GET /v1/sessions/{id}/ledger", g.sessionLedger)
+	handle("GET /v1/sessions/{id}/bundle", g.ledgerBundle)
+	handle("POST /v1/projections", g.connectProjection)
+	handle("GET /v1/projections", g.listProjections)
+	handle("POST /v1/projections/{name}/promote", g.promoteOperation)
+	handle("POST /v1/ingress", g.declareIngress)
+	handle("GET /v1/ingress", g.listIngress)
+	handle("DELETE /v1/ingress/{name}", g.deleteIngress)
+	handle("GET /v1/schemas", g.listSchemas)
+	handle("GET /v1/grammars/{ref...}", g.getGrammar)
+	handle("GET /v1/schemas/{ref...}", g.getSchema)
+	handle("GET /v1/ledger", g.listLedger)
+	handle("GET /v1/ledger/verify", g.verifyLedger)
+	handle("GET /v1/ledger/entries/{hash}", g.ledgerEntry)
+	handle("GET /v1/ledger/head", g.ledgerHead)
+	handle("GET /v1/ledger/statement", g.ledgerStatement)
+	handle("POST /v1/ledger/witness", g.ledgerWitness)
+	handle("GET /v1/ledger/witness/last-seen", g.ledgerWitnessLastSeen)
+	handle("POST /v1/ledger/witness/record", g.ledgerRecordWitness)
 	// The witness's own log (C4 v1.4) — read-only, and public on an open
 	// witness, because a log only its operator can read is not auditable.
-	mux.HandleFunc("GET /v1/witness/head", g.witnessLogHead)
-	mux.HandleFunc("GET /v1/witness/log", g.witnessLogEntries)
-	mux.HandleFunc("GET /v1/witness/consistency", g.witnessLogConsistency)
-	mux.HandleFunc("GET /v1/witness/proof/{seq}", g.witnessLogInclusion)
+	handle("GET /v1/witness/head", g.witnessLogHead)
+	handle("GET /v1/witness/log", g.witnessLogEntries)
+	handle("GET /v1/witness/consistency", g.witnessLogConsistency)
+	handle("GET /v1/witness/proof/{seq}", g.witnessLogInclusion)
 	// This node following someone else's witness. Authenticated: it is our own
 	// audit baseline, and a stranger who could lower it could erase the record
 	// that would convict a witness.
-	mux.HandleFunc("GET /v1/witness/seen", g.witnessSeen)
-	mux.HandleFunc("POST /v1/witness/seen", g.witnessRecordSeen)
-	mux.HandleFunc("GET /v1/ledger/receipt/{hash}", g.ledgerReceipt)
-	mux.HandleFunc("GET /v1/ledger/attestations/{hash}", g.ledgerAttestation)
-	mux.HandleFunc("POST /v1/skills/wasm", g.registerWasmSkill)
-	mux.HandleFunc("POST /hooks/{name}", g.receiveHook)
-	mux.HandleFunc("GET /ws/skill", g.skillWS)
-	mux.HandleFunc("GET /v1/stream", g.clientWS)
+	handle("GET /v1/witness/seen", g.witnessSeen)
+	handle("POST /v1/witness/seen", g.witnessRecordSeen)
+	handle("GET /v1/ledger/receipt/{hash}", g.ledgerReceipt)
+	handle("GET /v1/ledger/attestations/{hash}", g.ledgerAttestation)
+	handle("POST /v1/skills/wasm", g.registerWasmSkill)
+	handle("POST /hooks/{name}", g.receiveHook)
+	handle("GET /ws/skill", g.skillWS)
+	handle("GET /v1/stream", g.clientWS)
 
 	// Auth wraps the whole mux rather than decorating each route: a route
 	// added later is authenticated by default, which is the failure mode worth
@@ -208,27 +222,28 @@ func (g *Gateway) Handler() http.Handler {
 	if auth == nil {
 		auth = &Auth{}
 	}
-	// Tell the authenticator which paths are routes rather than app assets, from
-	// the registrations above rather than from a second hand-maintained list. A
-	// route added to this mux is closed to unauthenticated callers because it is
-	// on the mux — see isUIAsset for the bug that made this necessary.
-	auth.APIRoutes = registeredPaths
+	// Tell the authenticator which paths are routes rather than app assets.
+	//
+	// `routes` is populated by handle() above, so this really is the mux's own
+	// registrations and not a second list kept in step by hand. That
+	// distinction is the whole point: isUIAsset serves anything it does not
+	// recognise as a route without a token, because the browser has to be able
+	// to load the app shell before it can present one. A route this map does
+	// not know about is therefore a route with no authentication — which is
+	// exactly the bug isUIAsset's comment describes, in a new place.
+	//
+	// The previous version claimed this derivation in a comment while assigning
+	// a hand-written map of five paths sitting fifteen lines below, with
+	// nothing testing the two against each other. It happened to be correct,
+	// because every route added since lived under /v1/, /ws/, /openenv/ or
+	// /hooks/ and those prefixes are matched separately. The first top-level
+	// route added outside them would have been served to anyone.
+	//
+	// Wildcard patterns land here with their braces intact ("/v1/graphs/{id}"),
+	// which matches no real request path — harmless, because every wildcard
+	// route is under a prefix isUIAsset already refuses.
+	auth.APIRoutes = routes
 	return auth.Authenticate(mux)
-}
-
-// registeredPaths is every non-asset path this gateway serves.
-//
-// It exists because the authenticator has to distinguish "a route nobody has
-// authorised yet" from "a client-side route of the single-page app", and the
-// only honest source for that is the route table itself. Kept beside Handler so
-// the two are edited together; the ssot CI job would not catch a drift here, so
-// proximity is the mechanism.
-var registeredPaths = map[string]bool{
-	"/metrics":                true,
-	"/healthz":                true,
-	"/readyz":                 true,
-	"/mcp":                    true,
-	"/.well-known/agent.json": true,
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
