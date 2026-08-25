@@ -1360,6 +1360,13 @@ func (s *Store) AcquireWriteLease(ttl time.Duration) (*lease.Holder, error) {
 	return lease.Acquire(s.db, ttl)
 }
 
+// AcquireWriteLeaseWaiting is AcquireWriteLease for a replacement process,
+// which waits out a dead predecessor's claim rather than crash-looping against
+// it. See lease.AcquireWaiting.
+func (s *Store) AcquireWriteLeaseWaiting(ttl, maxWait time.Duration) (*lease.Holder, time.Duration, error) {
+	return lease.AcquireWaiting(s.db, ttl, maxWait)
+}
+
 // WriteLeaseHolder reports who currently holds this directory, without taking
 // it — what a diagnostic prints when a second node refuses to start.
 func (s *Store) WriteLeaseHolder() (lease.Info, error) { return lease.Current(s.db) }

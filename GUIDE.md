@@ -420,6 +420,7 @@ The `aura` binary is the kernel, the client, the registry, and the fleet tool.
 | `aura backup [--data <dir>] [--out <f>] [--include-registry]` | Write a restorable archive of the data directory: a consistent `VACUUM INTO` snapshot of `kernel.db`, the node identity, the causal event log, and a manifest carrying a SHA-256 per file plus the ledger's entry count and Merkle root. Refuses to write an archive missing `node-id`, either half of `identity/`, or `kernel.db` — a data directory restored without the private key cannot decrypt the credential broker's secrets, so such an archive would look like a backup and not be one. Safe to run against a live node; the ledger snapshot is exact and the event log may lag by the last few events. Written `0600`: it contains the node's private key and operator token. |
 | `aura backup --verify <f>` | Re-read an archive and check every digest against its manifest, without restoring. This is the one to run on a schedule — a backup nobody has ever read is a hypothesis. |
 | `aura restore --in <f> --data <dir> [--force]` | Extract an archive into a data directory, verifying each file's digest as it lands and refusing any path that escapes the directory. Then it recomputes the ledger from the restored files and compares entry count and Merkle root against the manifest, so "the files copied" and "the evidence chain survived" stay separate claims. Refuses a non-empty target without `--force`, because pairing one node's identity with another's ledger produces checkpoints that do not verify. |
+| `aura up --lease-ttl <d>` | How long this node's claim on the data directory survives without a renewal (default 10s). After an unclean stop this **is** the recovery time: a replacement waits it out before starting, while the node itself rebuilds in milliseconds. Lower it for faster recovery, at the risk of displacing a live-but-stalled node. |
 | — | **One writer per data directory.** `aura up` takes a lease on the data directory and renews it on a timer; a second node on the same directory refuses to start and names the holder. If the holder dies the lease expires within 10s and a replacement starts on its own; a clean shutdown releases it immediately, so a rolling deploy costs no downtime. A node that *loses* its lease — stalled long enough for another to take over — stops at once without draining, because finishing writes at that point is the corruption the lease exists to prevent. |
 | `aura rotate [--data <dir>] [--reason <text>] --yes` | Replace this node's signing key. Records a **key succession** (C4 v1.6) signed by both the outgoing key (authorization) and the incoming one (proof of possession), and re-encrypts every stored secret under the new key in the same transaction — the broker derives its box from the node's private key, so rotating without that step would leave every credential unopenable forever. The node must be stopped. Refuses to rotate a ledger that does not currently verify, and re-verifies afterwards. The retired private key is kept under `identity/retired/`: it signs nothing, and it is what opens a backup taken before the rotation. |
 | `aura rotate --history` | Print which signing key was in force over which range of sequences, reconstructed by walking the succession records backwards from the key in `identity/`. |
@@ -2373,6 +2374,60 @@ some agents will time out on before a human gets there.
 
 Everything above is about what a node does. This is about running one, which is a
 different set of questions and had different answers until recently.
+
+### What happens when a node dies, measured
+
+The honest answer used to be "sessions die with it", and the roadmap carried a
+Large item to fix that. Measuring it changed the shape of the problem.
+
+A node does not have to be rebuilt after a crash; it has to be *restarted*. The
+state that matters is already recoverable — `resumeFromLog` reconstructs a
+session's dedup window, causal indexes, pending gates and per-hop counters
+whether the client or the kernel was what died — and the SDK reconnects on its
+own. So recovery is process start plus the phases below, and here is what those
+actually cost (`go test ./cmd/aura/ -run Recovery -v` reproduces it):
+
+| | Total | Of which |
+|---|---|---|
+| Cold start, empty directory | **29 ms** | store 28 ms |
+| Warm start, 200 sealed effects | **9 ms** | ledger tree 1 ms |
+| Warm start, 4,000 sealed effects | **16 ms** | ledger tree 9 ms |
+| Restart after a clean shutdown | **10 ms** | lease wait 7 ms |
+| **Restart after a SIGKILL** | **10.04 s** | **lease wait 10.03 s** |
+
+The last row is the whole story. **After a crash, recovery is the lease TTL and
+almost nothing else** — the node itself is back in three milliseconds, and the
+rest is a replacement waiting for a dead holder's claim to expire, because
+starting sooner would mean two writers on one ledger.
+
+Two consequences worth being explicit about:
+
+- **`--lease-ttl` is the recovery-time knob**, not the architecture. If two
+  seconds of downtime is acceptable, `--lease-ttl 2s` gives you that today. The
+  cost is symmetric: a *live* node stalled longer than its TTL — a long GC
+  pause, a suspended host, a throttled container — will be presumed dead and
+  displaced. Ten seconds is the default because it clears ordinary scheduling
+  hiccups.
+- **A warm standby would buy very little.** It exists to skip a start-up cost
+  that measures in milliseconds; the seconds are in the lease, and a standby
+  waits for the same lease. The case for one is not speed.
+
+### The degradation contract
+
+What a node dying actually costs, so it can go in an SLA rather than be
+discovered:
+
+| | |
+|---|---|
+| **Reads** | Unaffected while the node is down *if your application reads its own stores directly*. AURA is on the effect path, not the read path. |
+| **Gated effects** | Stop. Anything requiring human approval and a sealed receipt cannot proceed until the node is back. |
+| **Live sessions** | Interrupt, then resume on reconnect with their state intact — pending gates included. Clients must reconnect with the same session id; the SDK does this on its own. |
+| **The ledger** | Never at risk. Entries already sealed are durable, and the lease guarantees no second process appends beside a live one. |
+| **Recovery time** | `--lease-ttl` after an unclean stop; effectively immediate after a clean one. |
+
+The question to answer before deploying is still the one at the top of the
+roadmap — *if AURA falls over, does your application degrade or stop?* — but it
+is now answerable with a number instead of a shrug.
 
 ### Shutdown is the part that had to be fixed first
 

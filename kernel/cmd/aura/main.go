@@ -25,6 +25,7 @@ import (
 	"aura/kernel/internal/executor"
 	"aura/kernel/internal/gateway"
 	"aura/kernel/internal/identity"
+	"aura/kernel/internal/lease"
 	"aura/kernel/internal/ledger"
 	"aura/kernel/internal/registry"
 	"aura/kernel/internal/seglog"
@@ -232,6 +233,11 @@ func cmdUp(args []string) {
 	configPath := fs.String("config", "", "optional skill-config file (skill defaults, git-friendly) — see README.md")
 	policyPath := fs.String("policy", "", "authorization policy file (default: built-in permissive policy)")
 	maxSessions := fs.Int("max-sessions", 1000, "cap on concurrent live sessions (0 = unlimited)")
+	leaseTTL := fs.Duration("lease-ttl", lease.DefaultTTL,
+		"how long this node's claim on the data directory survives without a renewal. "+
+			"After a crash this IS the recovery time: a replacement waits it out before starting, "+
+			"while the node itself rebuilds in milliseconds. Lower it for faster failover, at the "+
+			"risk of a live-but-stalled node being displaced")
 	noAuth := fs.Bool("no-auth", false, "disable the bearer token (single-user loopback nodes only)")
 	pprofAddr := fs.String("pprof", "", "expose Go profiling on this address (e.g. 127.0.0.1:6060); off by default")
 	withExamples := fs.Bool("with-examples", false,
@@ -289,7 +295,8 @@ func cmdUp(args []string) {
 	// One construction, shared with `aura guard --standalone`. See node.go.
 	n, err := buildNode(nodeOptions{
 		DataDir: *data, Port: *port, Mode: *mode, PolicyPath: *policyPath,
-		NoAuth: *noAuth, OpenWitness: *openWitness, TLS: *tlsCert != "",
+		LeaseTTL: *leaseTTL,
+		NoAuth:   *noAuth, OpenWitness: *openWitness, TLS: *tlsCert != "",
 		AllowedOrigins: allowOrigins, TrustedProxy: *trustedProxy,
 		MemoryBudget: budgetBytes, EventLogMaxBytes: eventLogMaxBytes,
 		MaxSessions: *maxSessions, SkillConfig: configFile.Skills, Log: log,
@@ -371,6 +378,7 @@ func cmdUp(args []string) {
 	}
 
 	printBanner(bannerInfo{
+		startup: n.Startup, leaseTTL: *leaseTTL, leaseHolder: n.WriteLease.ID(),
 		version: version, node: node, addr: addr, port: *port,
 		scheme: scheme, wsScheme: wsScheme, data: *data,
 		budget: budgetBytes, policy: policy, ldg: ldg, token: token,
@@ -476,6 +484,14 @@ func cmdUp(args []string) {
 const drainTimeout = 10 * time.Second
 
 type bannerInfo struct {
+	// startup is what building this node cost. Printed because after a crash
+	// the dominant term is the lease wait, not anything the node does, and an
+	// operator tuning --lease-ttl should be able to see both halves.
+	startup Startup
+	// leaseTTL is the claim's lifetime, which after a crash is the recovery time.
+	leaseTTL time.Duration
+	// leaseHolder identifies this process in the lease row.
+	leaseHolder  string
 	version      string
 	node         *identity.Node
 	addr         string

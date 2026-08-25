@@ -226,3 +226,47 @@ func ageHeartbeat(t *testing.T, db *sql.DB, by time.Duration) {
 		t.Fatalf("age the heartbeat: %v", err)
 	}
 }
+
+func TestAShortLeaseCannotDisplaceAHealthyHolderWithALongerOne(t *testing.T) {
+	db := testDB(t)
+
+	// The holder chose a generous grace period, and is renewing inside it.
+	patient, err := Acquire(db, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer patient.Release()
+
+	// A second process is started with an impatient TTL. Judging staleness by
+	// its own TTL would let it evict a perfectly healthy node — a live kernel
+	// killed by a flag on someone else's command line. The holder's declared
+	// grace period is what governs.
+	time.Sleep(300 * time.Millisecond)
+	if _, err := Acquire(db, 50*time.Millisecond); !errors.Is(err, ErrHeld) {
+		t.Fatalf("an impatient challenger evicted a healthy holder: %v", err)
+	}
+	select {
+	case <-patient.Lost():
+		t.Fatal("the healthy holder was displaced")
+	default:
+	}
+}
+
+func TestTheRefusalReportsTheHoldersGracePeriodNotTheChallengers(t *testing.T) {
+	db := testDB(t)
+	held, err := Acquire(db, 7*time.Second)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer held.Release()
+
+	_, err = Acquire(db, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	// An operator reading this has to learn how long to wait, which is the
+	// holder's number, not the one they happened to pass.
+	if !strings.Contains(err.Error(), "7s") {
+		t.Errorf("the refusal does not report the holder's grace period: %v", err)
+	}
+}

@@ -63,8 +63,39 @@ type nodeOptions struct {
 	MemoryBudget     int64
 	EventLogMaxBytes int64
 	MaxSessions      int
-	SkillConfig      map[string]map[string]any
-	Log              *slog.Logger
+	// LeaseTTL is how long this node's claim on the data directory stays valid
+	// without a renewal. Zero takes lease.DefaultTTL.
+	//
+	// Measured, not guessed: after a SIGKILL, recovery is ~100% this value.
+	// The node itself rebuilds in single-digit milliseconds even over a
+	// 4,000-entry ledger; the rest of the wall clock is a replacement waiting
+	// out the dead holder's claim. So this is the recovery-time knob, and
+	// lowering it trades against false takeovers when a live node stalls.
+	LeaseTTL time.Duration
+	// LeaseWait bounds how long to wait for a dead predecessor's claim to
+	// expire. Zero derives it from LeaseTTL. A supervisor restarting a crashed
+	// node needs this to exceed the TTL, or the replacement refuses.
+	LeaseWait   time.Duration
+	SkillConfig map[string]map[string]any
+	Log         *slog.Logger
+}
+
+// Startup is how long each phase of buildNode took.
+//
+// Recorded rather than guessed because it is the number that decides whether
+// this runtime needs failover at all. Recovery from a crash is process start
+// plus these phases plus the client's reconnect, and until somebody measured
+// it the roadmap was arguing about failover without knowing whether the answer
+// was two seconds or two minutes.
+//
+// The two that grow with the data are worth watching separately: Store covers
+// the causal event log's recovery scan, and Ledger covers rebuilding the RFC
+// 6962 tree over every sealed entry.
+type Startup struct {
+	Total     time.Duration
+	LeaseWait time.Duration
+	Store     time.Duration
+	Ledger    time.Duration
 }
 
 // node is a constructed kernel, with everything a caller might need to serve it
@@ -82,6 +113,9 @@ type node struct {
 	// channel is a shutdown signal, not advice: another process taking over
 	// means this one must stop writing at once.
 	WriteLease *lease.Holder
+
+	// Startup is what building this node cost, phase by phase.
+	Startup Startup
 
 	// Token is the operator's bearer token, empty when NoAuth. Created reports
 	// whether this run is the one that minted it.
@@ -132,24 +166,43 @@ func buildNode(opt nodeOptions) (*node, error) {
 	if err != nil {
 		return nil, err
 	}
+	buildStarted := time.Now()
+	storeStarted := time.Now()
 	st, err := store.OpenWith(opt.DataDir, store.Options{EventLogMaxBytes: opt.EventLogMaxBytes})
 	if err != nil {
 		return nil, err
 	}
+	timing := Startup{Store: time.Since(storeStarted)}
 
 	// One writer per data directory. Two kernels appending to the same effect
 	// ledger would interleave sequences and hash-chain links that each
 	// believed it owned — not a crash, but a ledger that fails to verify with
 	// no way to tell which process wrote what. Taken here, before anything
 	// else can write.
-	writeLease, err := st.AcquireWriteLease(lease.DefaultTTL)
+	//
+	// It *waits* rather than failing on a held lease. A node that was
+	// SIGKILLed does not release its claim, so for up to a TTL afterwards the
+	// row still names a process that no longer exists — and a replacement that
+	// refused would be restarted into a crash loop that ends only when the
+	// supervisor's backoff happens to exceed the TTL. Waiting is bounded: if
+	// the holder is genuinely alive, this must not start.
+	leaseTTL := opt.LeaseTTL
+	if leaseTTL <= 0 {
+		leaseTTL = lease.DefaultTTL
+	}
+	leaseWait := opt.LeaseWait
+	if leaseWait == 0 {
+		leaseWait = leaseTTL + 5*time.Second
+	}
+	writeLease, waited, err := st.AcquireWriteLeaseWaiting(leaseTTL, leaseWait)
+	timing.LeaseWait = waited
 	if err != nil {
 		st.Close()
 		if errors.Is(err, lease.ErrHeld) {
 			return nil, fmt.Errorf("%w\n\n"+
 				"  Stop that node first, or point --data at a different directory.\n"+
 				"  If it crashed, its lease expires within %s and this starts on its own.",
-				err, lease.DefaultTTL)
+				err, leaseTTL)
 		}
 		return nil, err
 	}
@@ -167,10 +220,12 @@ func buildNode(opt nodeOptions) (*node, error) {
 	// The ledger is not optional. An attestation issued by a node that failed
 	// to open its own ledger would be worse than no ledger — it would be
 	// silently absent while everything else ran normally.
+	ledgerStarted := time.Now()
 	ldg, err := ledger.Open(st, ident.ID, ident.Keys)
 	if err != nil {
 		return fail(fmt.Errorf("open effect ledger: %w", err))
 	}
+	timing.Ledger = time.Since(ledgerStarted)
 
 	// The wasm sandbox. Unlike the ledger this is allowed to fail soft: a node
 	// that cannot link WASI preview1 still runs every other primitive fine.
@@ -256,8 +311,10 @@ func buildNode(opt nodeOptions) (*node, error) {
 		ConfigFile: opt.SkillConfig,
 	}
 
+	timing.Total = time.Since(buildStarted)
 	return &node{
 		WriteLease: writeLease,
+		Startup:    timing,
 		Gateway:    gw, Identity: ident, Store: st, Ledger: ldg, Policy: policy,
 		Registry: reg, Manager: mgr,
 		Token: token, Created: created,

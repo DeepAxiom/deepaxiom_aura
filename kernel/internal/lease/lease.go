@@ -44,6 +44,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -87,6 +88,10 @@ type Info struct {
 	Holder    string
 	Since     time.Time
 	Heartbeat time.Time
+	// TTL is the grace period the holder declared. A challenger honours this
+	// rather than its own, so a node cannot be displaced by someone else's
+	// impatience.
+	TTL time.Duration
 }
 
 // Age is how long since the holder last proved it was alive.
@@ -101,9 +106,29 @@ CREATE TABLE IF NOT EXISTS node_lease (
   id        INTEGER PRIMARY KEY CHECK (id = 1),
   holder    TEXT NOT NULL,
   since     INTEGER NOT NULL,
-  heartbeat INTEGER NOT NULL
+  heartbeat INTEGER NOT NULL,
+  ttl_ms    INTEGER NOT NULL DEFAULT 10000
 );`)
-	return err
+	if err != nil {
+		return err
+	}
+	// CREATE TABLE IF NOT EXISTS is a no-op against a directory written by an
+	// earlier build, so the column has to be added separately or a node that
+	// upgrades in place reports "no such column" and refuses to start. The
+	// default matches DefaultTTL, which is what those rows were written under.
+	_, err = db.Exec(`ALTER TABLE node_lease ADD COLUMN ttl_ms INTEGER NOT NULL DEFAULT 10000`)
+	if err != nil && !isDuplicateColumn(err) {
+		return fmt.Errorf("migrate node_lease.ttl_ms: %w", err)
+	}
+	return nil
+}
+
+// isDuplicateColumn recognises the "already migrated" case. Matched on the
+// message because modernc's driver does not expose a typed code for it, and
+// the alternative — reading the schema first — is a second round trip to learn
+// something the ALTER already tells us.
+func isDuplicateColumn(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate column name")
 }
 
 // Acquire takes the lease for this process, or reports who holds it.
@@ -126,16 +151,23 @@ func Acquire(db *sql.DB, ttl time.Duration) (*Holder, error) {
 		return nil, err
 	}
 	now := time.Now()
-	nowMS, staleBefore := now.UnixMilli(), now.Add(-ttl).UnixMilli()
+	nowMS := now.UnixMilli()
 
 	// Insert if the row has never existed; on conflict, take it only from a
 	// holder whose heartbeat has gone stale. One statement, so there is no
 	// window between the check and the take.
+	//
+	// Staleness is judged against `node_lease.ttl_ms` — the TTL the *holder*
+	// declared — not against the challenger's. Using the challenger's would
+	// let a node started with a short TTL displace a perfectly healthy one
+	// that had chosen a longer grace period, which is a live node being killed
+	// by a flag on a different command line. Found by running it.
 	res, err := db.Exec(`
-INSERT INTO node_lease (id, holder, since, heartbeat) VALUES (1, ?, ?, ?)
+INSERT INTO node_lease (id, holder, since, heartbeat, ttl_ms) VALUES (1, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET holder = excluded.holder, since = excluded.since,
-                              heartbeat = excluded.heartbeat
-WHERE node_lease.heartbeat < ?`, id, nowMS, nowMS, staleBefore)
+                              heartbeat = excluded.heartbeat, ttl_ms = excluded.ttl_ms
+WHERE ? - node_lease.heartbeat >= node_lease.ttl_ms`,
+		id, nowMS, nowMS, ttl.Milliseconds(), nowMS)
 	if err != nil {
 		return nil, fmt.Errorf("acquire the lease: %w", err)
 	}
@@ -144,9 +176,9 @@ WHERE node_lease.heartbeat < ?`, id, nowMS, nowMS, staleBefore)
 		if readErr != nil {
 			return nil, fmt.Errorf("%w (and its details could not be read: %v)", ErrHeld, readErr)
 		}
-		return nil, fmt.Errorf("%w — holder %s, alive %s ago, since %s",
+		return nil, fmt.Errorf("%w — holder %s, alive %s ago (its lease grants %s), since %s",
 			ErrHeld, current.Holder, current.Age().Round(time.Millisecond),
-			current.Since.Format(time.RFC3339))
+			current.TTL, current.Since.Format(time.RFC3339))
 	}
 
 	h := &Holder{
@@ -158,12 +190,55 @@ WHERE node_lease.heartbeat < ?`, id, nowMS, nowMS, staleBefore)
 	return h, nil
 }
 
+// AcquireWaiting is Acquire for a process that expects to be a *replacement*:
+// it waits for a stale claim to expire instead of failing on it.
+//
+// This is what a supervised restart needs, and leaving it out would have made
+// the restart path quietly useless. A node that is SIGKILLed does not release
+// its lease, so for up to a full TTL afterwards the row still names a process
+// that no longer exists. A replacement started by systemd or a container
+// runtime a second later would refuse, exit, and be restarted again — a crash
+// loop that ends only when the supervisor's backoff happens to exceed the TTL,
+// which is a recovery time nobody chose.
+//
+// Waiting is bounded, and the bound is not a formality: if the lease never
+// frees, the holder is alive and this process must not start. Waiting forever
+// would turn "another node is already running" from an error into a hang.
+//
+// It returns the time spent waiting, because that number is most of a crash
+// recovery and an operator tuning it needs to see it rather than infer it.
+func AcquireWaiting(db *sql.DB, ttl, maxWait time.Duration) (*Holder, time.Duration, error) {
+	if ttl <= 0 {
+		ttl = DefaultTTL
+	}
+	started := time.Now()
+
+	// Poll rather than sleep the whole TTL: the common case is a clean
+	// shutdown that released the lease, where the first attempt succeeds and
+	// nothing waits at all.
+	const poll = 250 * time.Millisecond
+	for {
+		h, err := Acquire(db, ttl)
+		if err == nil {
+			return h, time.Since(started), nil
+		}
+		if !errors.Is(err, ErrHeld) {
+			return nil, time.Since(started), err
+		}
+		if time.Since(started) >= maxWait {
+			return nil, time.Since(started), fmt.Errorf(
+				"%w — still held after waiting %s", err, maxWait)
+		}
+		time.Sleep(poll)
+	}
+}
+
 // Current reads whoever holds the lease, without taking it.
 func Current(db *sql.DB) (Info, error) {
 	var holder string
-	var since, heartbeat int64
-	err := db.QueryRow(`SELECT holder, since, heartbeat FROM node_lease WHERE id = 1`).
-		Scan(&holder, &since, &heartbeat)
+	var since, heartbeat, ttlMS int64
+	err := db.QueryRow(`SELECT holder, since, heartbeat, ttl_ms FROM node_lease WHERE id = 1`).
+		Scan(&holder, &since, &heartbeat, &ttlMS)
 	if err == sql.ErrNoRows {
 		return Info{}, nil
 	}
@@ -174,6 +249,7 @@ func Current(db *sql.DB) (Info, error) {
 		Holder:    holder,
 		Since:     time.UnixMilli(since),
 		Heartbeat: time.UnixMilli(heartbeat),
+		TTL:       time.Duration(ttlMS) * time.Millisecond,
 	}, nil
 }
 
