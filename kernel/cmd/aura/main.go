@@ -436,6 +436,20 @@ func cmdUp(args []string) {
 		if err != nil && err != http.ErrServerClosed {
 			fatal(err)
 		}
+	case <-n.WriteLease.Lost():
+		// Another process took this data directory. That can only happen if
+		// this one was stopped, paused or partitioned long enough for its
+		// heartbeat to go stale — and from the moment the takeover succeeded,
+		// every write this node makes races the new writer over the same
+		// ledger. Stopping is not a policy choice; continuing is the split
+		// brain the lease exists to prevent.
+		//
+		// The drain is deliberately skipped: draining means finishing writes,
+		// and finishing writes is the thing that must not happen now.
+		fmt.Fprintf(os.Stderr, "\n  LOST THE WRITE LEASE on %s — another process is now the writer.\n"+
+			"  Stopping immediately without draining: finishing writes now would corrupt the ledger.\n",
+			*data)
+		os.Exit(1)
 	case sig := <-stop:
 		fmt.Printf("\n  %s — draining\n", sig)
 		// Refuse new connections and give in-flight requests a bounded window.

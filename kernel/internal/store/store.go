@@ -18,6 +18,7 @@ import (
 
 	_ "modernc.org/sqlite" // pure-Go driver: no CGO, single-binary friendly
 
+	"aura/kernel/internal/lease"
 	"aura/kernel/internal/seglog"
 )
 
@@ -1347,6 +1348,22 @@ func (s *Store) Operators() ([]OperatorRow, error) {
 // secret is only ever released against a sealed receipt.
 
 // SaveSecret stores (or replaces) one encrypted secret.
+// AcquireWriteLease claims this data directory for the calling process.
+//
+// Only a *writing* node takes it. `aura verify`, `aura backup` and `aura audit`
+// open the same store and deliberately do not, because reading is safe
+// alongside a running node and requiring the lease would make evidence
+// unreadable exactly when someone needs it most — while the node is up.
+//
+// The holder must treat Lost() as a shutdown signal. See internal/lease.
+func (s *Store) AcquireWriteLease(ttl time.Duration) (*lease.Holder, error) {
+	return lease.Acquire(s.db, ttl)
+}
+
+// WriteLeaseHolder reports who currently holds this directory, without taking
+// it — what a diagnostic prints when a second node refuses to start.
+func (s *Store) WriteLeaseHolder() (lease.Info, error) { return lease.Current(s.db) }
+
 // SuccessionRow records one node signing key handing over to its replacement
 // (C4 v1.6). Seq is the last entry sealed under FromPubkey, so the ranges the
 // two keys cover meet without a gap and without an overlap.

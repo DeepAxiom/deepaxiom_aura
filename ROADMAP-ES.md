@@ -17,7 +17,7 @@ Nada de lo de abajo es un problema de investigación. Es la diferencia entre
 
 | | Por qué bloquea | Forma del trabajo |
 |---|---|---|
-| **Failover de nodo** | Un nodo es un proceso. Si muere, las sesiones vivas mueren con él — el log de eventos sobrevive, el estado de ruteo no. Contesta esto primero y con honestidad: si AURA se cae, ¿tu app degrada o se detiene? Si degrada, ya es desplegable. | Grande. El estado de sesión tiene que volverse recuperable por un segundo proceso, lo que toca los índices en memoria del executor y el modelo de admisión. |
+| **Failover de nodo** | Un nodo es un proceso, y nada arranca un reemplazo. El hueco es más estrecho de lo que decía: el estado de sesión *sí* es recuperable — `resumeFromLog` reconstruye la ventana de deduplicación, los índices causales, los gates pendientes y los contadores por salto, muera el cliente o el kernel — y el SDK reconecta solo. Un único escritor ya está garantizado por un arrendamiento, así que un standby no puede corromper el ledger arrancando junto a un nodo vivo. Falta la orquestación: algo que note que el líder murió y arranque el reemplazo, y decidir si ese reemplazo vive en la misma máquina u otra. | Medio en una máquina — un standby que espera el arrendamiento y toma el relevo al expirar. Grande entre máquinas, porque el directorio de datos tendría que ser alcanzable desde ambas, lo primero en este runtime que necesitaría almacenamiento que no trae. |
 
 ## Bloquea adopción
 

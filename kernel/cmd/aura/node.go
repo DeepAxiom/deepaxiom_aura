@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -28,6 +29,7 @@ import (
 	"aura/kernel/internal/gateway"
 	"aura/kernel/internal/grammar"
 	"aura/kernel/internal/identity"
+	"aura/kernel/internal/lease"
 	"aura/kernel/internal/ledger"
 	"aura/kernel/internal/mcpsrv"
 	"aura/kernel/internal/projection"
@@ -76,6 +78,11 @@ type node struct {
 	Registry *registry.Registry
 	Manager  *executor.Manager
 
+	// WriteLease is this process's claim on the data directory. Its Lost()
+	// channel is a shutdown signal, not advice: another process taking over
+	// means this one must stop writing at once.
+	WriteLease *lease.Holder
+
 	// Token is the operator's bearer token, empty when NoAuth. Created reports
 	// whether this run is the one that minted it.
 	Token   string
@@ -85,9 +92,17 @@ type node struct {
 	port             int
 }
 
-// Close releases what buildNode opened, in the order that keeps the ledger
-// intact — see store.Close.
-func (n *node) Close() error { return n.Store.Close() }
+// Close releases the write lease before closing the store, so a replacement
+// node can start immediately instead of waiting out the TTL. Order matters:
+// the lease row lives in the database the store is about to close.
+func (n *node) Close() error {
+	if n.WriteLease != nil {
+		if err := n.WriteLease.Release(); err != nil {
+			return errors.Join(err, n.Store.Close())
+		}
+	}
+	return n.Store.Close()
+}
 
 // BaseURL is where this node answers HTTP.
 func (n *node) BaseURL() string { return fmt.Sprintf("%s://localhost:%d", n.scheme, n.Port()) }
@@ -122,10 +137,29 @@ func buildNode(opt nodeOptions) (*node, error) {
 		return nil, err
 	}
 
-	// Anything that fails past this point has to close the store, or a failed
-	// build leaves a locked database behind and the next attempt reports
-	// something unrelated.
+	// One writer per data directory. Two kernels appending to the same effect
+	// ledger would interleave sequences and hash-chain links that each
+	// believed it owned — not a crash, but a ledger that fails to verify with
+	// no way to tell which process wrote what. Taken here, before anything
+	// else can write.
+	writeLease, err := st.AcquireWriteLease(lease.DefaultTTL)
+	if err != nil {
+		st.Close()
+		if errors.Is(err, lease.ErrHeld) {
+			return nil, fmt.Errorf("%w\n\n"+
+				"  Stop that node first, or point --data at a different directory.\n"+
+				"  If it crashed, its lease expires within %s and this starts on its own.",
+				err, lease.DefaultTTL)
+		}
+		return nil, err
+	}
+
+	// Anything that fails past this point has to release the lease and close
+	// the store, or a failed build leaves the directory claimed and the next
+	// attempt reports something unrelated — for up to a full TTL, which is a
+	// deeply confusing way to learn that a policy file had a typo.
 	fail := func(err error) (*node, error) {
+		_ = writeLease.Release()
 		st.Close()
 		return nil, err
 	}
@@ -223,7 +257,8 @@ func buildNode(opt nodeOptions) (*node, error) {
 	}
 
 	return &node{
-		Gateway: gw, Identity: ident, Store: st, Ledger: ldg, Policy: policy,
+		WriteLease: writeLease,
+		Gateway:    gw, Identity: ident, Store: st, Ledger: ldg, Policy: policy,
 		Registry: reg, Manager: mgr,
 		Token: token, Created: created,
 		scheme: scheme, wsScheme: wsScheme, port: opt.Port,

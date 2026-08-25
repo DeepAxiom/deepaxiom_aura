@@ -16,7 +16,7 @@ as an auxiliary service" and "deployable as something with an SLA".
 
 | | Why it blocks | Shape of the work |
 |---|---|---|
-| **Node failover** | A node is one process. If it dies, live sessions die with it — the event log survives, the routing state does not. Answer honestly first: if AURA falls over, does your app degrade or does it stop? If it degrades, this is already deployable. | Large. Session state has to become recoverable by a second process, which touches the executor's in-memory indexes and the admission model. |
+| **Node failover** | A node is one process, and nothing starts a replacement. The gap is narrower than it used to read: a session's state *is* recoverable — `resumeFromLog` rebuilds the dedup window, causal indexes, pending gates and per-hop counters whether the client or the kernel was what died — and the SDK reconnects on its own. A single writer is now enforced by a lease, so a standby cannot corrupt the ledger by starting beside a live node. What is left is the orchestration: something that notices the leader is gone and starts the replacement, and a decision about whether that replacement lives on the same machine or another one. | Medium on one machine — a standby that waits on the lease and takes over when it expires. Large across machines, because the data directory has to be reachable from both, which is the first thing in this runtime that would need storage it does not ship. |
 
 ## Blocking adoption
 
