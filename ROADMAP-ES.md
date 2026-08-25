@@ -18,7 +18,6 @@ Nada de lo de abajo es un problema de investigación. Es la diferencia entre
 | | Por qué bloquea | Forma del trabajo |
 |---|---|---|
 | **Failover de nodo** | Un nodo es un proceso. Si muere, las sesiones vivas mueren con él — el log de eventos sobrevive, el estado de ruteo no. Contesta esto primero y con honestidad: si AURA se cae, ¿tu app degrada o se detiene? Si degrada, ya es desplegable. | Grande. El estado de sesión tiene que volverse recuperable por un segundo proceso, lo que toca los índices en memoria del executor y el modelo de admisión. |
-| **Backup y restore, documentados** | El directorio de datos tiene la identidad del nodo, el ledger de efectos y los secretos cifrados del broker — y la clave del broker se *deriva* de la identidad, así que un restore sin `identity/` produce texto cifrado que nadie puede abrir. No hay procedimiento escrito, lo que significa que la primera persona que lo necesite lo va a escribir durante un incidente. | Pequeño. Un procedimiento documentado, un par `aura backup`/`aura restore`, y un test que restaure en un nodo limpio y verifique el ledger. |
 | **Rotación de la clave del nodo** | La clave de firma es para siempre. Un operador que sospeche compromiso no tiene ninguna jugada que no invalide todos los checkpoints. | Medio. Necesita un registro de sucesión de claves en C4 para que los checkpoints viejos sigan verificando con la clave vieja. |
 
 ## Bloquea adopción

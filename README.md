@@ -254,7 +254,7 @@ other people's code.
 |---|---|
 | **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry** · **scoped skill credentials** · **the credential broker** · **the witness's own published log, and a monitor that catches one rewriting it** · cancellation · session resume · deterministic replay · **effect-level regression** · **period audit reports that verify standalone** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC · event-log rotation and recovery |
 | **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · OpenTelemetry export · ML-BOM |
-| **Not there yet** | No multi-device view of one live session · **no failover if the node dies** — one process, and the live routing state goes with it · TEE evidence reaches `bound`, never `verified` — vendor chain verification is declared and refused rather than stubbed · the SDKs are packaged but unpublished · no documented backup/restore procedure, and none for rotating the node key |
+| **Not there yet** | No multi-device view of one live session · **no failover if the node dies** — one process, and the live routing state goes with it · TEE evidence reaches `bound`, never `verified` — vendor chain verification is declared and refused rather than stubbed · the SDKs are packaged but unpublished · no procedure for rotating the node key |
 
 **The gap that matters most for what follows: a `format: source` skill is not
 contained.** `--sandbox process` scrubs its environment, jails its working
@@ -349,7 +349,10 @@ bounded window and says so.
 **The data directory is not a cache.** It holds the node identity, the effect
 ledger and the broker's encrypted secrets — and the broker's key is *derived*
 from the identity, so a restore without `identity/` yields ciphertext nobody can
-open. Back it up like a database.
+open. Back it up like a database — `aura backup` writes the whole directory as
+one archive and refuses to produce one missing the identity; `aura restore`
+recomputes the ledger from what it extracted and compares it against what the
+archive claimed, so a restore that half-worked fails loudly instead of quietly.
 
 Two endpoints an orchestrator needs:
 

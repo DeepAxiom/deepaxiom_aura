@@ -17,7 +17,6 @@ as an auxiliary service" and "deployable as something with an SLA".
 | | Why it blocks | Shape of the work |
 |---|---|---|
 | **Node failover** | A node is one process. If it dies, live sessions die with it — the event log survives, the routing state does not. Answer honestly first: if AURA falls over, does your app degrade or does it stop? If it degrades, this is already deployable. | Large. Session state has to become recoverable by a second process, which touches the executor's in-memory indexes and the admission model. |
-| **Backup and restore, documented** | The data directory holds the node identity, the effect ledger and the broker's encrypted secrets — and the broker's key is *derived* from the identity, so a restore without `identity/` yields ciphertext nobody can open. There is no written procedure for this, which means the first person to need one will be writing it during an incident. | Small. A documented procedure, a `aura backup`/`aura restore` pair, and a test that restores into a fresh node and verifies the ledger. |
 | **Node key rotation** | The signing key is forever. An operator who suspects compromise has no move that does not invalidate every checkpoint. | Medium. Needs a key-succession record in C4 so old checkpoints still verify under the old key. |
 
 ## Blocking adoption

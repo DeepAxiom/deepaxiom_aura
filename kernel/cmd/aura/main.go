@@ -89,6 +89,10 @@ func main() {
 		cmdReady(os.Args[2:])
 	case "verify":
 		cmdVerify(os.Args[2:])
+	case "backup":
+		cmdBackup(os.Args[2:])
+	case "restore":
+		cmdRestore(os.Args[2:])
 	case "audit":
 		cmdAudit(os.Args[2:])
 	case "witness":
@@ -142,6 +146,8 @@ Usage:
   aura status [--port 9080]
   aura ready [--port 9080] [--quiet] [--timeout 3s]
   aura verify [--data <dir>]
+  aura backup [--data <dir>] [--out <f>] [--include-registry] | --verify <f>
+  aura restore --in <f> --data <dir> [--force]
   aura audit [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out <f>] | --verify <f>
   aura witness <witness-url> [--token <t>] [--port 9080]
   aura receipt <effect-hash> [--out <f>] | --verify <f>
