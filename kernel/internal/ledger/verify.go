@@ -62,6 +62,22 @@ type Report struct {
 	Approvals        int    `json:"approvals"`
 	ApprovalsInvalid int    `json:"approvals_invalid"`
 	ApprovalFailure  string `json:"approval_failure,omitempty"`
+
+	// KeyTimeline is the reconstructed key history (C4 v1.6): which signing
+	// key was in force over which range of sequences, derived by walking the
+	// succession records backwards from the public key this verification was
+	// given. A node that never rotated has exactly one segment.
+	KeyTimeline []KeySegment `json:"key_timeline,omitempty"`
+	// KeyRotations is how many times this node handed its signing key over.
+	KeyRotations int `json:"key_rotations"`
+	// SuccessionFailure is set when the succession records do not describe a
+	// history reachable from the given key: a forged or unverifiable handover,
+	// a fork, a cycle, or orphaned rows.
+	//
+	// This is a hard failure, not a note. The succession chain is what decides
+	// which key each checkpoint is checked against, so a verifier that shrugged
+	// at a broken one would be choosing the attacker's answer to that question.
+	SuccessionFailure string `json:"succession_failure,omitempty"`
 }
 
 // Sound reports whether the ledger passed every check this report ran.
@@ -90,6 +106,7 @@ type Report struct {
 func (r Report) Sound() bool {
 	return r.ChainIntact &&
 		r.MerkleMismatches == 0 &&
+		r.SuccessionFailure == "" &&
 		(!r.KeyAvailable || r.CheckpointsValid == r.Checkpoints) &&
 		r.WitnessesValid == r.Witnesses &&
 		r.ApprovalsInvalid == 0
@@ -179,6 +196,26 @@ func Verify(st *store.Store, pubkeyB64 string) (Report, error) {
 		return report, nil
 	}
 
+	// Which key signed what. Before rotation existed this was the constant
+	// pubkeyB64; now it is a function of the sequence, reconstructed from the
+	// succession records by walking back from the one key we were given. See
+	// succession.go for why the walk goes backwards.
+	successions, err := st.LedgerSuccessions()
+	if err != nil {
+		return report, fmt.Errorf("read key successions: %w", err)
+	}
+	timeline, err := BuildKeyTimeline(successions, pubkeyB64)
+	if err != nil {
+		// Not fatal to the call — the caller still gets a report, and the
+		// report says the ledger is unsound and why. An error return here
+		// would look to a CLI like "could not check" rather than "checked,
+		// and it failed".
+		report.SuccessionFailure = err.Error()
+		return report, nil
+	}
+	report.KeyTimeline = timeline.Segments
+	report.KeyRotations = timeline.Rotations
+
 	for _, cp := range checkpoints {
 		entry, ok := byHash[cp.HeadHash]
 		if !ok || entry.Seq != cp.Seq {
@@ -187,7 +224,11 @@ func Verify(st *store.Store, pubkeyB64 string) (Report, error) {
 			// the checkpoint itself was forged. Either way it does not verify.
 			continue
 		}
-		if err := signing.Verify(pubkeyB64, cp.Signature,
+		// Against the key that was in force when this checkpoint was signed,
+		// not against whatever key the node holds today. On a node that never
+		// rotated these are the same value; on one that did, this is the line
+		// that lets its whole history keep verifying.
+		if err := signing.Verify(timeline.KeyAt(cp.Seq), cp.Signature,
 			checkpointPayload(cp.Seq, cp.HeadHash, cp.MerkleRoot)); err != nil {
 			continue
 		}

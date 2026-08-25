@@ -96,11 +96,26 @@ var SecretRef = regexp.MustCompile(`\$\{secret:([A-Za-z0-9_.-]+)\}`)
 
 // Broker holds this node's secrets and rations them against receipts.
 type Broker struct {
-	st   *store.Store
-	aead cipher.AEAD
+	st *store.Store
+
+	// keyMu guards aead, which is not constant for the life of the process:
+	// `aura rotate` replaces it after re-encrypting every stored secret under
+	// the incoming key. It is its own lock rather than the mutex below because
+	// the two protect unrelated things — every Set and every decrypt takes
+	// this one to read, and receipt bookkeeping should not queue behind them.
+	keyMu sync.RWMutex
+	aead  cipher.AEAD
 
 	mu   sync.Mutex
 	used map[string]int // receipt -> redemptions so far
+}
+
+// box returns the current secret box. Every use of the AEAD goes through here
+// so that a rotation in flight cannot be observed half-applied.
+func (b *Broker) box() cipher.AEAD {
+	b.keyMu.RLock()
+	defer b.keyMu.RUnlock()
+	return b.aead
 }
 
 // Open prepares the broker, deriving its encryption key from the node's own
@@ -121,6 +136,19 @@ func Open(st *store.Store, keys *signing.Keypair) (*Broker, error) {
 	if keys == nil {
 		return nil, errors.New("the credential broker needs the node identity keypair")
 	}
+	aead, err := deriveBox(keys)
+	if err != nil {
+		return nil, err
+	}
+	return &Broker{st: st, aead: aead, used: map[string]int{}}, nil
+}
+
+// deriveBox is the one place the secret-box key is computed from a signing
+// key. Open and Rekey both go through it so the two can never disagree about
+// the derivation — a rotation that derived the incoming key even slightly
+// differently would re-encrypt every secret into something the next start-up
+// could not open.
+func deriveBox(keys *signing.Keypair) (cipher.AEAD, error) {
 	sum := sha256.Sum256(append([]byte("aura-secret-box-v1:"), keys.Private...))
 	block, err := aes.NewCipher(sum[:])
 	if err != nil {
@@ -130,7 +158,64 @@ func Open(st *store.Store, keys *signing.Keypair) (*Broker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("derive secret box: %w", err)
 	}
-	return &Broker{st: st, aead: aead, used: map[string]int{}}, nil
+	return aead, nil
+}
+
+// Rekey records a key succession and re-encrypts every stored secret under the
+// incoming key, atomically, then swaps this broker over to it.
+//
+// The re-encryption is the half of rotation that has nothing to do with
+// signatures and everything to do with not destroying data. The secret-box key
+// is derived from the node's private key, so replacing the key without this
+// step leaves every credential on the node unopenable — by anyone, forever.
+// That failure is silent at rotation time and total at the next effect that
+// needs a credential, which is the worst possible arrangement.
+//
+// Ordering inside is deliberate: the store commits the succession and the
+// re-encrypted rows in one transaction, and only once that has returned does
+// this broker start using the new box. A crash before the commit leaves a node
+// that never rotated; a crash after it leaves a node that fully did. There is
+// no state in between for an operator to have to diagnose.
+func (b *Broker) Rekey(rec store.SuccessionRow, incoming *signing.Keypair) (secrets int, err error) {
+	if incoming == nil {
+		return 0, errors.New("rotation needs the incoming keypair")
+	}
+	next, err := deriveBox(incoming)
+	if err != nil {
+		return 0, err
+	}
+
+	current := b.box()
+	rekeyed, err := b.st.CommitSuccession(rec, func(name, ciphertext string) (string, error) {
+		raw, err := base64.StdEncoding.DecodeString(ciphertext)
+		if err != nil || len(raw) < current.NonceSize() {
+			return "", fmt.Errorf("stored ciphertext is corrupt")
+		}
+		nonce, body := raw[:current.NonceSize()], raw[current.NonceSize():]
+		plain, err := current.Open(nil, nonce, body, []byte(name))
+		if err != nil {
+			return "", fmt.Errorf("cannot be decrypted with the outgoing key — " +
+				"this data directory and its identity/ do not belong together")
+		}
+		freshNonce := make([]byte, next.NonceSize())
+		if _, err := io.ReadFull(rand.Reader, freshNonce); err != nil {
+			return "", err
+		}
+		// A fresh nonce, and the name still authenticated as additional data,
+		// exactly as Set does. Re-using the old nonce under a new key would be
+		// safe for GCM here, and doing it anyway is the kind of shortcut that
+		// stops being safe the day someone changes the cipher.
+		sealed := next.Seal(freshNonce, freshNonce, plain, []byte(name))
+		return base64.StdEncoding.EncodeToString(sealed), nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	b.keyMu.Lock()
+	b.aead = next
+	b.keyMu.Unlock()
+	return rekeyed, nil
 }
 
 // Set stores a secret, replacing any previous value.
@@ -143,7 +228,8 @@ func (b *Broker) Set(name, value string) error {
 		return fmt.Errorf("secret name %q must be letters, digits, dot, dash or underscore — "+
 			"it has to be referenceable as ${secret:%s}", name, name)
 	}
-	nonce := make([]byte, b.aead.NonceSize())
+	box := b.box()
+	nonce := make([]byte, box.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return err
 	}
@@ -151,7 +237,7 @@ func (b *Broker) Set(name, value string) error {
 	// moved from one secret's row to another's — swapping the read-only token
 	// into the row the write path reads would otherwise be an undetectable
 	// privilege change made entirely with a text editor.
-	sealed := b.aead.Seal(nonce, nonce, []byte(value), []byte(name))
+	sealed := box.Seal(nonce, nonce, []byte(value), []byte(name))
 	return b.st.SaveSecret(name, base64.StdEncoding.EncodeToString(sealed), time.Now().UnixMilli())
 }
 
@@ -178,11 +264,12 @@ func (b *Broker) decrypt(name string) (string, error) {
 			"(`aura secret set %s`)", name, name)
 	}
 	raw, err := base64.StdEncoding.DecodeString(ct)
-	if err != nil || len(raw) < b.aead.NonceSize() {
+	box := b.box()
+	if err != nil || len(raw) < box.NonceSize() {
 		return "", fmt.Errorf("secret %q is corrupt", name)
 	}
-	nonce, body := raw[:b.aead.NonceSize()], raw[b.aead.NonceSize():]
-	plain, err := b.aead.Open(nil, nonce, body, []byte(name))
+	nonce, body := raw[:box.NonceSize()], raw[box.NonceSize():]
+	plain, err := box.Open(nil, nonce, body, []byte(name))
 	if err != nil {
 		return "", fmt.Errorf("secret %q cannot be decrypted with this node's identity key — "+
 			"the data directory and the identity/ subdirectory do not belong together", name)

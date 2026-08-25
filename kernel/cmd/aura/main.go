@@ -93,6 +93,8 @@ func main() {
 		cmdBackup(os.Args[2:])
 	case "restore":
 		cmdRestore(os.Args[2:])
+	case "rotate":
+		cmdRotate(os.Args[2:])
 	case "audit":
 		cmdAudit(os.Args[2:])
 	case "witness":
@@ -148,6 +150,7 @@ Usage:
   aura verify [--data <dir>]
   aura backup [--data <dir>] [--out <f>] [--include-registry] | --verify <f>
   aura restore --in <f> --data <dir> [--force]
+  aura rotate [--data <dir>] [--reason <text>] --yes | --history
   aura audit [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out <f>] | --verify <f>
   aura witness <witness-url> [--token <t>] [--port 9080]
   aura receipt <effect-hash> [--out <f>] | --verify <f>

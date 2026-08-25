@@ -1,6 +1,6 @@
 # C4 — Effect Ledger & Policy (frozen contract)
 
-**Protocol major: 1 · Status: v1.5 — FROZEN (2026-08-16: the `waived` flag, distinguishing a gate the node cleared from one a graph excused — additive; v1.4 2026-08-16 added the witness's own published log, signed `last-seen`, and `log_seq` on a countersignature — all additive; v1.3 2026-08-16 added the `approver` signature — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.6 — FROZEN (2026-08-25: key succession, so a node can replace its signing key without orphaning what the old one signed — additive; v1.5 2026-08-16 added the `waived` flag, distinguishing a gate the node cleared from one a graph excused — additive; v1.4 2026-08-16 added the witness's own published log, signed `last-seen`, and `log_seq` on a countersignature — all additive; v1.3 2026-08-16 added the `approver` signature — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
 
 C1, C2 and C3 answer *what a skill is*, *how a graph is wired*, and *how
 envelopes flow*. None of them answer the question a node actually has to
@@ -434,6 +434,80 @@ checks that every checkpoint present *does* verify, not that checkpoints arrive
 at any particular cadence. A reference value (100 entries or 60 seconds) is
 documented in [`GUIDE.md`](../GUIDE.md#milestone-status) for context, not
 normatively here.
+
+## Key succession (v1.6)
+
+A node's signing key was previously permanent. Replacing it made every
+checkpoint it had ever written fail to verify, so an operator who suspected
+compromise had to choose between keeping a key they no longer trusted and
+discarding their evidence. In practice that means nobody rotates, which is the
+worst of the two.
+
+A **succession record** is one key handing over to the next at a named
+sequence:
+
+```json
+{ "seq": 412, "from_pubkey": "base64…", "to_pubkey": "base64…",
+  "from_sig": "base64…", "to_sig": "base64…",
+  "reason": "suspected compromise", "ts": 1754083260000 }
+```
+
+`seq` is the last entry sealed under `from_pubkey`, so the two keys' ranges
+meet with no gap and no overlap.
+
+The signed payload is domain-separated like every other signature in this
+contract, and **both** signatures cover it:
+
+```
+"aura-ledger-succession-v1:" + seq + ":" + from_pubkey + ":" + to_pubkey + ":" + ts
+```
+
+- `from_sig` is **authorization**. Without it, anyone able to append a record
+  could name their own key and inherit the chain.
+- `to_sig` is **proof of possession**. Without it, a node's future could be
+  bound to a key nobody holds — discovered at the next checkpoint, when
+  nothing can sign one.
+
+A conforming implementation MUST refuse a record where `from_pubkey` equals
+`to_pubkey`, and MUST refuse a second record handing over *from* a key that
+already has one: a key hands over exactly once, and two handovers out of one
+key fork the chain of custody into two histories that both look valid.
+
+### Reconstructing the key history
+
+A verifier is given exactly one public key — the node's **current** one. It
+MUST NOT be given, or require, a roster of retired keys; that roster would be
+one more thing to trust.
+
+It reconstructs the history by walking **backwards**: find the record whose
+`to_pubkey` is the key in hand, verify both signatures, and trust its
+`from_pubkey` for everything at or before its `seq`. Repeat until no record
+points at the key in hand. Each step is an implication from a key already
+trusted to one that was.
+
+The direction is normative and load-bearing. Walking forwards from the oldest
+key would let anyone holding *any* key in the chain extend it into a key of
+their own; walking backwards from the key the verifier independently holds
+means a forger would need a signature from a key they do not have.
+
+A conforming verifier MUST report the ledger unsound if the records do not
+describe a single chain reaching the key it was given — an unverifiable
+handover, a fork, a cycle, sequences that do not increase, or records no chain
+from that key reaches. It MUST NOT ignore such records and verify what remains.
+
+Rule 2 of Verification below is then evaluated against **the key in force at
+that checkpoint's `seq`**, not against the key the node holds today.
+
+### What rotation does and does not establish
+
+It bounds future damage. It does not undo past damage: every checkpoint the
+retired key signed still verifies, because it really did sign it. If that key
+leaked at time T, everything it signed after T is suspect and no succession
+changes that — only a witness countersignature obtained before T narrows the
+window. An implementation SHOULD say this where an operator will read it,
+rather than letting a clean report after a rotation be over-read as a clean
+history.
+
 
 ## Verification
 

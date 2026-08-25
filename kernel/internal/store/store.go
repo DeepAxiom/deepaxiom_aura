@@ -268,6 +268,22 @@ CREATE TABLE IF NOT EXISTS ledger_checkpoints (
   signature TEXT NOT NULL,
   ts        INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ledger_successions (
+  seq         INTEGER PRIMARY KEY,
+  from_pubkey TEXT NOT NULL,
+  to_pubkey   TEXT NOT NULL,
+  from_sig    TEXT NOT NULL,
+  to_sig      TEXT NOT NULL,
+  reason      TEXT NOT NULL DEFAULT '',
+  ts          INTEGER NOT NULL
+);
+-- A key hands over exactly once. Two successions out of one key would fork the
+-- chain of custody into two histories that both look valid, which is precisely
+-- what an attacker holding a stolen key would try to write. The constraint is
+-- here rather than in Go because it has to hold against anything that opens
+-- this file, not only against the kernel.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_succession_from ON ledger_successions(from_pubkey);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_succession_to ON ledger_successions(to_pubkey);
 CREATE TABLE IF NOT EXISTS inference_attestations (
   hash   TEXT PRIMARY KEY,
   record TEXT NOT NULL,
@@ -1331,6 +1347,119 @@ func (s *Store) Operators() ([]OperatorRow, error) {
 // secret is only ever released against a sealed receipt.
 
 // SaveSecret stores (or replaces) one encrypted secret.
+// SuccessionRow records one node signing key handing over to its replacement
+// (C4 v1.6). Seq is the last entry sealed under FromPubkey, so the ranges the
+// two keys cover meet without a gap and without an overlap.
+//
+// Both signatures cover the same payload and neither is redundant. FromSig is
+// authorization: without it, anybody who can write to this table could append
+// a row naming their own key and inherit the chain. ToSig is proof of
+// possession: without it, an operator could bind the ledger's future to a key
+// nobody holds — a node that can no longer sign anything, discovered at the
+// next checkpoint.
+type SuccessionRow struct {
+	Seq        uint64 `json:"seq"`
+	FromPubkey string `json:"from_pubkey"`
+	ToPubkey   string `json:"to_pubkey"`
+	FromSig    string `json:"from_sig"`
+	ToSig      string `json:"to_sig"`
+	Reason     string `json:"reason,omitempty"`
+	TS         int64  `json:"ts"`
+}
+
+const successionCols = `seq, from_pubkey, to_pubkey, from_sig, to_sig, reason, ts`
+
+// LedgerSuccessions returns every recorded handover in seq order.
+func (s *Store) LedgerSuccessions() ([]SuccessionRow, error) {
+	rows, err := s.db.Query(`SELECT ` + successionCols + ` FROM ledger_successions ORDER BY seq`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SuccessionRow
+	for rows.Next() {
+		var r SuccessionRow
+		if err := rows.Scan(&r.Seq, &r.FromPubkey, &r.ToPubkey,
+			&r.FromSig, &r.ToSig, &r.Reason, &r.TS); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// CommitSuccession writes the handover and re-encrypts every stored secret
+// under the incoming key, in one transaction.
+//
+// One transaction because they are one fact. The broker derives its
+// secret-box key from the node's private key, so a succession recorded
+// without the re-encryption leaves a node whose ledger says the new key is in
+// force and whose secrets can only be opened by the old one — and a
+// re-encryption committed without the succession leaves the opposite. Either
+// half alone is worse than neither, and the window between two separate writes
+// is exactly where a crash puts an operator who is already rotating because
+// something went wrong.
+//
+// reseal receives each secret's name and current ciphertext and returns the
+// ciphertext under the new key. It runs inside the transaction; returning an
+// error rolls the whole thing back, leaving the node exactly as it was.
+func (s *Store) CommitSuccession(rec SuccessionRow, reseal func(name, ciphertext string) (string, error)) (rekeyed int, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.Exec(
+		`INSERT INTO ledger_successions (`+successionCols+`) VALUES (?,?,?,?,?,?,?)`,
+		rec.Seq, rec.FromPubkey, rec.ToPubkey, rec.FromSig, rec.ToSig, rec.Reason, rec.TS,
+	); err != nil {
+		return 0, fmt.Errorf("record succession: %w", err)
+	}
+
+	rows, err := tx.Query(`SELECT name, ciphertext FROM node_secrets ORDER BY name`)
+	if err != nil {
+		return 0, fmt.Errorf("read secrets: %w", err)
+	}
+	type secret struct{ name, ciphertext string }
+	var secrets []secret
+	for rows.Next() {
+		var sec secret
+		if err = rows.Scan(&sec.name, &sec.ciphertext); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		secrets = append(secrets, sec)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	for _, sec := range secrets {
+		var next string
+		if next, err = reseal(sec.name, sec.ciphertext); err != nil {
+			return 0, fmt.Errorf("re-encrypt secret %q: %w", sec.name, err)
+		}
+		if _, err = tx.Exec(
+			`UPDATE node_secrets SET ciphertext = ?, updated = ? WHERE name = ?`,
+			next, rec.TS, sec.name,
+		); err != nil {
+			return 0, fmt.Errorf("store re-encrypted secret %q: %w", sec.name, err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(secrets), nil
+}
+
 func (s *Store) SaveSecret(name, ciphertext string, ts int64) error {
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO node_secrets (name, ciphertext, updated) VALUES (?,?,?)`,
