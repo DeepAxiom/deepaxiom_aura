@@ -634,13 +634,23 @@ func (w *wsWriter) Ping() {
 // the deadline, so an actively streaming peer is never killed for not ponging
 // promptly. Returns a func the caller defers to stop the ticker.
 func keepAlive(conn *websocket.Conn, w *wsWriter) func() {
-	extend := func() error { return conn.SetReadDeadline(time.Now().Add(pongWait)) }
+	// Read once, here, and never again for the life of this connection.
+	//
+	// A connection whose deadline could change under it while it is being
+	// served is one whose timing depends on when a frame happened to arrive.
+	// The two values are package variables rather than constants only so a
+	// test can shrink them, and re-reading them from the pong handler — which
+	// runs on the reader goroutine, for as long as the peer keeps talking —
+	// is what let a test's cleanup restore them underneath a live connection.
+	ping, pong := pingPeriod, pongWait
+
+	extend := func() error { return conn.SetReadDeadline(time.Now().Add(pong)) }
 	_ = extend()
 	conn.SetPongHandler(func(string) error { return extend() })
 
 	stop := make(chan struct{})
 	go func() {
-		t := time.NewTicker(pingPeriod)
+		t := time.NewTicker(ping)
 		defer t.Stop()
 		for {
 			select {
@@ -719,7 +729,7 @@ func (g *Gateway) skillWS(w http.ResponseWriter, r *http.Request) {
 	writer := newWSWriter(conn)
 	defer writer.Close()
 	defer keepAlive(conn, writer)()
-	g.ServeSkill(&wsWire{conn: conn, writer: writer}, PrincipalOf(r))
+	g.ServeSkill(&wsWire{conn: conn, writer: writer, pong: pongWait}, PrincipalOf(r))
 }
 
 // ServeSkillOver serves a skill connection that did not arrive through the HTTP
@@ -782,6 +792,10 @@ type wire interface {
 type wsWire struct {
 	conn   *websocket.Conn
 	writer *wsWriter
+	// pong is this connection's read deadline window, captured when it was
+	// accepted. Same reason as keepAlive: it belongs to the connection, not to
+	// whatever the package variable says at the moment a frame lands.
+	pong time.Duration
 }
 
 func (w *wsWire) Recv() ([]byte, error) {
@@ -789,7 +803,7 @@ func (w *wsWire) Recv() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = w.conn.SetReadDeadline(time.Now().Add(pongWait))
+	_ = w.conn.SetReadDeadline(time.Now().Add(w.pong))
 	return raw, nil
 }
 
@@ -961,6 +975,8 @@ func (g *Gateway) clientWS(w http.ResponseWriter, r *http.Request) {
 	_ = writer.Send(rawHello, channel.QoSReliable)
 
 	var seq uint64
+	// This connection's deadline window, read once. See keepAlive.
+	pong := pongWait
 	// Once data has flowed, the pin set is closed. See applyPins.
 	pinned := false
 	for {
@@ -969,7 +985,7 @@ func (g *Gateway) clientWS(w http.ResponseWriter, r *http.Request) {
 			g.Log.Info("client disconnected", "session", sessionID, "err", err)
 			return
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+		_ = conn.SetReadDeadline(time.Now().Add(pong))
 		env, perr := parseClientFrame(raw, sessionID, &seq)
 		if perr != nil {
 			payload, _ := json.Marshal(map[string]string{"state": "error", "detail": perr.Error()})
