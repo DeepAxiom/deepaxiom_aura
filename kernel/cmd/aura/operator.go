@@ -1,11 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"aura/kernel/internal/approvals"
@@ -171,7 +174,7 @@ func cmdOperatorWhoami(args []string) {
 // be tricked into signing a statement about a delivery other than the one they
 // were shown, because the only delivery they can sign is the one the node says
 // it is holding.
-func signApprovalFor(port int, approvalID, operator string, approve bool) (*ledger.Approval, error) {
+func signApprovalFor(port int, approvalID, operator string, approve bool, shown []ledger.ContextEntry) (*ledger.Approval, error) {
 	code, raw := getRaw(port, "/v1/approvals")
 	if code != 200 {
 		return nil, fmt.Errorf("this node has no approval queue to sign against")
@@ -205,8 +208,84 @@ func signApprovalFor(port int, approvalID, operator string, approve bool) (*ledg
 	if !approve {
 		decision = ledger.ApprovalDeny
 	}
+	// Refused here rather than by the node, because here the operator can still
+	// do something about it: the artifacts are on their machine and the question
+	// is still on screen. A round trip to be told the same thing spends a gate.
+	if missing := missingLabels(p.ContextRequired, shown); len(missing) > 0 {
+		return nil, fmt.Errorf("this node requires the answer to bind %s, and %s missing — "+
+			"pass it with --shown %s=<the file you were shown>",
+			strings.Join(p.ContextRequired, ", "), plural(missing), missing[0])
+	}
 	return ledger.SignApproval(operator, keys.Private,
-		p.Node, p.Session, p.Envelope, decision, time.Now().UnixMilli())
+		p.Node, p.Session, p.Envelope, decision, time.Now().UnixMilli(), shown)
+}
+
+// gatherShown turns the --shown and --shown-digest flags into the context an
+// approval binds.
+//
+// The hashing happens here, on the operator's machine, over a file the operator
+// chose. That is the whole point of the field and not an implementation detail:
+// a digest the node computed would be a digest of whatever the node wished it
+// had displayed, and the record would prove nothing it did not already prove.
+func gatherShown(files, digests []string) ([]ledger.ContextEntry, error) {
+	var out []ledger.ContextEntry
+	for _, spec := range files {
+		label, path, ok := strings.Cut(spec, "=")
+		if !ok || strings.TrimSpace(path) == "" {
+			return nil, fmt.Errorf("--shown %q: expected <label>=<path>, e.g. --shown screen=./note.html", spec)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("--shown %s: %w", label, err)
+		}
+		sum := sha256.Sum256(raw)
+		out = append(out, ledger.ContextEntry{
+			Label:  strings.TrimSpace(label),
+			Digest: "sha256:" + hex.EncodeToString(sum[:]),
+		})
+	}
+	for _, spec := range digests {
+		label, digest, ok := strings.Cut(spec, "=")
+		if !ok || strings.TrimSpace(digest) == "" {
+			return nil, fmt.Errorf("--shown-digest %q: expected <label>=<alg>:<hex>, "+
+				"e.g. --shown-digest screen=sha256:4b8c...", spec)
+		}
+		out = append(out, ledger.ContextEntry{
+			Label:  strings.TrimSpace(label),
+			Digest: strings.TrimSpace(digest),
+		})
+	}
+	// Validated before anything is signed, so a malformed label is a message
+	// about a flag rather than a signature that will be refused on arrival.
+	if _, err := ledger.CanonicalContext(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// missingLabels reports which required labels the gathered context does not cover.
+func missingLabels(required []string, shown []ledger.ContextEntry) []string {
+	var missing []string
+	for _, want := range required {
+		found := false
+		for _, e := range shown {
+			if e.Label == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, want)
+		}
+	}
+	return missing
+}
+
+func plural(missing []string) string {
+	if len(missing) == 1 {
+		return strings.Join(missing, ", ") + " is"
+	}
+	return strings.Join(missing, ", ") + " are"
 }
 
 // ── secrets ─────────────────────────────────────────────────────────

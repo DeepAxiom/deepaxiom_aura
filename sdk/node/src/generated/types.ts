@@ -18,6 +18,24 @@ export interface Envelope {
   kind: "data" | "done" | "error" | "status" | "register" | "confirm_request" | "confirm_response" | "cancel" | "config_update";
   payload?: unknown;
   receipt?: string;
+  attest?: {
+    engine: string;
+    engine_version?: string;
+    model: string;
+    model_revision?: string;
+    model_file?: string;
+    model_sha256?: string;
+    quantization?: string;
+    params?: Record<string, unknown>;
+    prompt_sha256?: string;
+    output_sha256?: string;
+    energy?: {
+      millijoules: number;
+      source: "nvml" | "rapl" | "powermetrics" | "estimated";
+      basis?: string;
+    };
+    tee?: unknown;
+  };
 }
 
 /** C1 Skill Manifest — aura:spec:manifest@1 */
@@ -93,6 +111,13 @@ export interface GraphIR {
     qos?: "reliable" | "realtime" | "bulk";
   }[];
   waves?: string[][];
+  context_budget?: number;
+}
+
+export interface Edge {
+  speculative?: boolean;
+  deadline_ms?: number;
+  priority?: number;
 }
 
 export type EnvelopeKind = Envelope["kind"];

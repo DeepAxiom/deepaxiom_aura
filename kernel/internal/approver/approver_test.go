@@ -33,7 +33,7 @@ func newKey(t *testing.T) (ed25519.PrivateKey, string) {
 
 func sign(t *testing.T, id string, priv ed25519.PrivateKey, node, sess, env, decision string) *ledger.Approval {
 	t.Helper()
-	a, err := ledger.SignApproval(id, priv, node, sess, env, decision, time.Now().UnixMilli())
+	a, err := ledger.SignApproval(id, priv, node, sess, env, decision, time.Now().UnixMilli(), nil)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}

@@ -179,8 +179,12 @@ Esto es lo que produce, y nada de ello vive en tu grafo:
   supervisión de una persona física; un log que dice "un humano aprobó" no la
   evidencia. El operador firma una declaración atada a esa entrega concreta con
   una clave que el nodo nunca ha tenido, así que el aprobador no puede negarlo
-  después y el nodo no puede fabricarla. Esa es la mitad de *"quién autorizó
-  esto"* que todo audit trail se salta — incluido el propio
+  después y el nodo no puede fabricarla. Esa firma también puede cubrir **lo que
+  tenía enfrente** — digests del documento renderizado, hasheados en la máquina de
+  quien aprueba —, para que el registro diga que una persona consintió *este*
+  texto y no sólo que alguien hizo clic sobre un identificador. Con
+  `require_approval_context`, una respuesta que no ata nada es una denegación.
+  Esa es la mitad de *"quién autorizó esto"* que todo audit trail se salta — incluido el propio
   [draft de audit trail para agentes](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/)
   de la IETF, que registra un id de operador pseudónimo sin firma y firma los
   registros con la clave del *agente*. Escribimos el arreglo como un
@@ -266,7 +270,7 @@ correr código de otras personas.
 
 | | |
 |---|---|
-| **Con pruebas** | Envelopes en streaming con QoS por arista sobre WebSocket y QUIC · el ledger y la verificación sin conexión · el gate como invariante del kernel · **identidad firmada del aprobador sellada en la entry** · **credenciales de skill con alcance** · **el broker de credenciales** · **el log propio del witness, y un monitor que atrapa a uno reescribiéndolo** · cancelación · reanudación de sesión · replay determinista · **regresión a nivel de efectos** · **reportes de auditoría por periodo que se verifican solos** · puertos tipados con gramáticas compiladas · la frontera MCP en ambos sentidos · `aura guard` · skills Wasm en un sandbox real · CDC de Postgres · rotación y recuperación del log de eventos · **respaldo y restauración verificables** · **rotación de la clave de firma, con los checkpoints de la clave retirada aún verificando** |
+| **Con pruebas** | Envelopes en streaming con QoS por arista sobre WebSocket y QUIC · el ledger y la verificación sin conexión · el gate como invariante del kernel · **identidad firmada del aprobador sellada en la entry, con lo que tenía enfrente dentro de la firma** · **credenciales de skill con alcance** · **el broker de credenciales** · **el log propio del witness, y un monitor que atrapa a uno reescribiéndolo** · cancelación · reanudación de sesión · replay determinista · **regresión a nivel de efectos** · **reportes de auditoría por periodo que se verifican solos** · puertos tipados con gramáticas compiladas · la frontera MCP en ambos sentidos · `aura guard` · skills Wasm en un sandbox real · CDC de Postgres · rotación y recuperación del log de eventos · **respaldo y restauración verificables** · **rotación de la clave de firma, con los checkpoints de la clave retirada aún verificando** |
 | **Verificado a mano** | Voz con barge-in · el planner (`aura do`) · `aura why` · exportación OpenTelemetry · ML-BOM |
 | **Todavía no** | Sin vista multidispositivo de una misma sesión viva · **sin failover si el nodo muere** — un proceso, y nada arranca un reemplazo (un nodo reiniciado *sí* reconstruye el estado de sesión desde el log de eventos, y un arrendamiento impide que otro arranque junto a uno vivo) · la evidencia TEE llega a `bound`, nunca a `verified` — la verificación de cadena del fabricante está declarada y rechazada, no stubbeada · los SDKs están empaquetados pero sin publicar |
 

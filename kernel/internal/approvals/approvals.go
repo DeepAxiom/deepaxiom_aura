@@ -67,6 +67,17 @@ type Pending struct {
 	// values it must cover are published alongside the question itself.
 	Node     string `json:"node,omitempty"`
 	Envelope string `json:"envelope,omitempty"`
+	// ContextRequired lists the labels this node's policy makes an approval
+	// bind (C4 v1.7): the artifacts a person has to have been shown. Published
+	// with the question for the same reason Node and Envelope are — a client
+	// that has to discover the requirement by being refused will discover it
+	// after a human has already read the question and answered it.
+	//
+	// It says which artifacts, never their digests. Those are the operator's to
+	// compute from what they were actually shown; a node that supplied them
+	// would be attesting to its own rendering, which is the one thing this
+	// field exists to stop it doing.
+	ContextRequired []string `json:"context_required,omitempty"`
 }
 
 // Answer is one resolution, as the blocked caller receives it.
@@ -94,9 +105,22 @@ type Registry struct {
 	mu    sync.Mutex
 	items map[string]*waiter
 	ttl   time.Duration
+	// required is the node's ApprovalContextRequired, stamped onto every
+	// question. Held here rather than passed by each caller because it is a
+	// property of the node's policy, and a surface that forgot to pass it would
+	// publish a question that understates what answering it takes.
+	required []string
 }
 
 func New() *Registry { return &Registry{items: map[string]*waiter{}, ttl: DefaultTTL} }
+
+// Require sets the context labels every question will advertise (C4 v1.7).
+// Called once at node build from the policy in force.
+func (r *Registry) Require(labels []string) {
+	r.mu.Lock()
+	r.required = append([]string(nil), labels...)
+	r.mu.Unlock()
+}
 
 // WithTTL returns a registry that expires questions after d. Used by tests to
 // avoid waiting out the real timeout.
@@ -118,6 +142,7 @@ func (r *Registry) Open(p Pending) (id string, decision <-chan Answer, release f
 
 	w := &waiter{p: p, ch: make(chan Answer, 1)}
 	r.mu.Lock()
+	w.p.ContextRequired = append([]string(nil), r.required...)
 	r.items[p.ID] = w
 	r.mu.Unlock()
 

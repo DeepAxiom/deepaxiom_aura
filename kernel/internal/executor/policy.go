@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"aura/kernel/internal/ledger"
 )
 
 // Node-level authorization policy.
@@ -165,6 +167,28 @@ type Policy struct {
 	// not a warning, since a gate that degrades to trusting whoever holds the
 	// socket is the gate this flag exists to replace.
 	RequireSignedApproval bool `yaml:"require_signed_approval,omitempty"`
+	// RequireApprovalContext names the labels an approval must bind before it
+	// releases an effect (C4 v1.7) — "screen", "invoice", "diff", whatever the
+	// artifact is that this deployment says a person has to have in front of
+	// them. An answer whose signature does not cover every label listed here is
+	// a denial.
+	//
+	// This is the difference between "somebody with the right key said yes" and
+	// "somebody with the right key said yes to *this document*". Without it, a
+	// surface that renders a reassuring summary over an effect that does
+	// something else produces an approval no auditor can tell from an honest
+	// one, because there is nothing in the record about what was rendered.
+	//
+	// Labels and not a count. Requiring "at least one artifact" is satisfied by
+	// binding any artifact, including a constant, so it would be an enforcement
+	// that enforces nothing — the same failure this contract already refuses on
+	// the unsigned path.
+	//
+	// Setting this implies RequireSignedApproval, because a context lives inside
+	// the operator's signature and an unsigned answer therefore cannot carry
+	// one. A node that asked for bound approvals and kept accepting unsigned
+	// answers would be asking for nothing at all.
+	RequireApprovalContext []string `yaml:"require_approval_context,omitempty"`
 	// OnSealFailure decides what happens to an effect the ledger could not seal.
 	// Empty means SealFailureDeliver. See SealFailure.
 	OnSealFailure SealFailure `yaml:"on_seal_failure,omitempty"`
@@ -199,6 +223,26 @@ func DefaultPolicy() *Policy {
 	}
 	p.finalize(nil)
 	return p
+}
+
+// validateRequiredContext checks that a configured list of labels is one an
+// approval could actually carry, by running it past the same function that will
+// judge the real thing. A separate copy of the rules here is how the two come
+// to disagree, and the disagreement would surface as a node that denies every
+// gated effect for reasons its logs blame on the client.
+func validateRequiredContext(labels []string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	// The digest is a placeholder: only the labels are under test, and every
+	// entry needs a well-formed one to get that far.
+	const wellFormed = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	entries := make([]ledger.ContextEntry, 0, len(labels))
+	for _, label := range labels {
+		entries = append(entries, ledger.ContextEntry{Label: label, Digest: wellFormed})
+	}
+	_, err := ledger.CanonicalContext(entries)
+	return err
 }
 
 // LoadPolicy reads a policy document. An empty path yields DefaultPolicy.
@@ -239,6 +283,15 @@ func LoadPolicy(path string) (*Policy, error) {
 			return nil, fmt.Errorf("policy %q: rule %d (%s): per_minute cannot be negative",
 				path, i+1, r.Match)
 		}
+	}
+	// A requirement nothing could satisfy would deny every gated effect on this
+	// node, and the operator would read the refusal as a broken client. It is
+	// caught here, where the file that caused it can be named, and it is caught
+	// by the validator a real approval goes through rather than by a second copy
+	// of the rules — a bad label, a repeated one and a list longer than an
+	// approval may carry all come back from that one call.
+	if err := validateRequiredContext(p.RequireApprovalContext); err != nil {
+		return nil, fmt.Errorf("policy %q: require_approval_context: %w", path, err)
 	}
 	// Absent in a file means false: a node handed a policy is a node that
 	// wants to be the authority on what may act.
@@ -284,7 +337,17 @@ func (p *Policy) SpeculationAllowed() bool {
 
 // SignedApprovalRequired reports whether a gate may only be answered by an
 // enrolled operator's signature (C4 v1.3).
-func (p *Policy) SignedApprovalRequired() bool { return p.RequireSignedApproval }
+//
+// True when the policy asks for a context as well, since a context is carried
+// inside the signature: requiring one while accepting unsigned answers would
+// leave the unsigned path as the cheaper route around it.
+func (p *Policy) SignedApprovalRequired() bool {
+	return p.RequireSignedApproval || len(p.RequireApprovalContext) > 0
+}
+
+// ApprovalContextRequired lists the labels an approval must bind (C4 v1.7).
+// Empty means an approval may bind anything, or nothing.
+func (p *Policy) ApprovalContextRequired() []string { return p.RequireApprovalContext }
 
 // SealFailureRefuses reports whether an effect that could not be sealed must be
 // stopped rather than delivered unattested. See SealFailure.

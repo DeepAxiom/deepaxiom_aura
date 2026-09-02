@@ -30,6 +30,13 @@
     "to_port": {
       "type": "string",
       "description": "Ingress port of the held delivery's destination (Phase 2, session resume)."
+    },
+    "context_required": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Labels an approval must bind for this node to accept it (C4 v1.7). Labels only, never digests: those are computed by whoever rendered the material, which is not this node."
     }
   }
 }

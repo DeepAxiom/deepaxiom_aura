@@ -49,7 +49,7 @@ hitos](GUIDE-ES.md#estado-de-los-hitos).
 
 | | Estado |
 |---|---|
-| **[Aprobación humana firmada](spec/proposals/draft-signed-human-approval.md)** | Escrito como Internet-Draft, sin enviar. El hueco que llena es real: el draft de audit trail para agentes que ya existe en la IETF registra un id de operador pseudónimo sin firma. Enviarlo es lo que convierte un diseño local en una reclamación sobre la categoría. |
+| **[Aprobación humana firmada](spec/proposals/draft-signed-human-approval.md)** | En `-01`, sin enviar. El hueco que llena es real: el draft de audit trail para agentes que ya existe en la IETF registra un id de operador pseudónimo sin firma. `-01` agrega el miembro `context` — digests de lo que se le mostró a quien aprueba —, que es la mitad que convierte "una persona con nombre hizo clic" en "una persona con nombre consintió este documento", y que el kernel implementa como C4 v1.7. Enviarlo es lo que convierte un diseño local en una reclamación sobre la categoría. |
 | **[Recibos de efecto para MCP](spec/proposals/mcp-effect-receipts.md)** | Escrito, sin proponer aguas arriba. |
 
 ## Cobertura de tests, dónde es delgada y por qué importa

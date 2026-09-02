@@ -13,7 +13,7 @@ export { AuraNode, createNode } from "./node.js";
 export type { ExposeOptions, Handler, HandlerContext, NodeOptions } from "./node.js";
 
 export { Session, openSession } from "./session.js";
-export type { SessionOptions } from "./session.js";
+export type { Approval, ApprovalContextEntry, SessionOptions } from "./session.js";
 
 export { envelope, newId, newSessionId, PROTOCOL_MAJOR } from "./envelope.js";
 

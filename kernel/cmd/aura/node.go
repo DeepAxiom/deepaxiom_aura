@@ -271,9 +271,16 @@ func buildNode(opt nodeOptions) (*node, error) {
 	// requires signed approval with nobody enrolled can answer no gate at all,
 	// so it would come up healthy and then deny its first write minutes later.
 	if policy.SignedApprovalRequired() && roster.Empty() {
-		return fail(fmt.Errorf("policy %s sets require_signed_approval but no operator is enrolled — "+
+		asked := "require_signed_approval"
+		if len(policy.ApprovalContextRequired()) > 0 {
+			// Naming the setting the operator actually wrote. require_approval_context
+			// implies the other one, so reporting the implied name would send them
+			// looking for a line their file does not contain.
+			asked = "require_approval_context"
+		}
+		return fail(fmt.Errorf("policy %s sets %s but no operator is enrolled — "+
 			"nobody could answer a gate, so every gated effect would be denied; "+
-			"enrol someone with `aura operator enroll <id>`", policy.Source()))
+			"enrol someone with `aura operator enroll <id>`", policy.Source(), asked))
 	}
 
 	reg := registry.New()
@@ -290,6 +297,7 @@ func buildNode(opt nodeOptions) (*node, error) {
 	// /v1/approvals routes answer them. Without a shared instance a gate raised
 	// over MCP would be invisible to the surface meant to resolve it.
 	appr := approvals.New()
+	appr.Require(policy.ApprovalContextRequired())
 	mcp := &mcpsrv.Server{
 		BaseURL: fmt.Sprintf("%s://localhost:%d", scheme, opt.Port),
 		Version: version, Token: token, Log: log, Approvals: appr,

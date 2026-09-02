@@ -259,6 +259,9 @@ func cmdApprovals(args []string) {
 		if len(p.Arguments) > 0 && string(p.Arguments) != "{}" && string(p.Arguments) != "null" {
 			fmt.Printf("      args     %s\n", truncate(string(p.Arguments), 160))
 		}
+		if len(p.ContextRequired) > 0 {
+			fmt.Printf("      binds    %s (--shown <label>=<file>)\n", strings.Join(p.ContextRequired, ", "))
+		}
 		fmt.Printf("      expires  %s\n\n", p.Expires.Format("15:04:05"))
 	}
 	fmt.Println("  aura approve <id>            allow it")
@@ -270,18 +273,38 @@ func cmdApprove(args []string) {
 	port := fs.Int("port", 9080, "kernel port")
 	deny := fs.Bool("deny", false, "refuse the call instead of allowing it")
 	as := fs.String("as", "", "sign the answer as this enrolled operator (C4 v1.3)")
+	var shownFiles, shownDigests stringList
+	fs.Var(&shownFiles, "shown", "<label>=<path>: hash this file and bind it into the signature (C4 v1.7); repeatable")
+	fs.Var(&shownDigests, "shown-digest", "<label>=<alg>:<hex>: bind a digest computed elsewhere; repeatable")
 	ops := parseWithOperands(fs, args, 1)
 	if len(ops) == 0 {
-		fatal(fmt.Errorf("usage: aura approve <approval-id> [--as <operator>] [--deny] [--port 9080]\n\n" +
+		fatal(fmt.Errorf("usage: aura approve <approval-id> [--as <operator>] [--deny]\n" +
+			"                    [--shown <label>=<path>] [--shown-digest <label>=<alg>:<hex>] [--port 9080]\n\n" +
 			"List what is waiting with `aura approvals`.\n" +
 			"With --as, the answer is signed with that operator's key and sealed into\n" +
 			"the ledger entry, so the record says who allowed it and not merely that\n" +
-			"somebody did."))
+			"somebody did.\n\n" +
+			"With --shown, the signature also covers what you were looking at:\n\n" +
+			"  aura approve 01J9… --as grace --shown screen=./note.html\n\n" +
+			"The file is hashed here, on your side, and only the hash is sent. A node\n" +
+			"whose policy lists require_approval_context refuses an answer that binds\n" +
+			"nothing; `aura approvals` prints which labels it wants."))
 	}
 
 	answer := map[string]any{"approve": !*deny}
+	shown, err := gatherShown(shownFiles, shownDigests)
+	if err != nil {
+		fatal(err)
+	}
+	if *as == "" && len(shown) > 0 {
+		// An unsigned answer has nowhere to put a context: it is carried inside
+		// the operator's signature. Accepting the flag and dropping it would
+		// leave someone believing they had bound what they read.
+		fatal(fmt.Errorf("--shown needs --as: what you were shown is carried inside your signature, " +
+			"and an unsigned answer has no signature to carry it"))
+	}
 	if *as != "" {
-		signed, err := signApprovalFor(*port, ops[0], *as, !*deny)
+		signed, err := signApprovalFor(*port, ops[0], *as, !*deny, shown)
 		if err != nil {
 			fatal(err)
 		}
@@ -298,7 +321,15 @@ func cmdApprove(args []string) {
 		verb = "denied"
 	}
 	if *as != "" {
-		fmt.Printf("  %s %s — signed as %s\n", verb, ops[0], *as)
+		line := fmt.Sprintf("  %s %s — signed as %s", verb, ops[0], *as)
+		if len(shown) > 0 {
+			labels := make([]string, 0, len(shown))
+			for _, e := range shown {
+				labels = append(labels, e.Label)
+			}
+			line += ", binding " + strings.Join(labels, ", ")
+		}
+		fmt.Println(line)
 		return
 	}
 	fmt.Printf("  %s %s\n", verb, ops[0])

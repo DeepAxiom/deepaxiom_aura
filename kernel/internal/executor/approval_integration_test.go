@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +53,7 @@ func enrolledOperator(t *testing.T, st *store.Store, id string) (*approver.Regis
 // answerGate sends a confirm_response, optionally carrying a signed approval
 // over the delivery the gate is actually holding.
 func answerGate(t *testing.T, sess *Session, req channel.Envelope, sessionID string,
-	approve bool, op *testOperator, decisionOverride string) {
+	approve bool, op *testOperator, decisionOverride string, shown ...ledger.ContextEntry) {
 	t.Helper()
 
 	body := map[string]any{"approve": approve}
@@ -70,7 +72,7 @@ func answerGate(t *testing.T, sess *Session, req channel.Envelope, sessionID str
 			decision = decisionOverride
 		}
 		a, err := ledger.SignApproval(op.id, op.priv, "node-test", sessionID,
-			held.Held, decision, time.Now().UnixMilli())
+			held.Held, decision, time.Now().UnixMilli(), shown)
 		if err != nil {
 			t.Fatalf("sign: %v", err)
 		}
@@ -290,7 +292,7 @@ func TestGateRefusesAnApprovalForAnotherDelivery(t *testing.T) {
 	req := lastConfirmRequest(t, *toClient)
 
 	wrong, err := ledger.SignApproval(op.id, op.priv, "node-test", sid,
-		"env-something-else", ledger.ApprovalApprove, time.Now().UnixMilli())
+		"env-something-else", ledger.ApprovalApprove, time.Now().UnixMilli(), nil)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -410,4 +412,218 @@ require_signed_approval: true
 	if !strings.Contains(errText, "signed approval") {
 		t.Errorf("the client was not told why it was refused: %s", errText)
 	}
+}
+
+// C4 v1.7 — an approval that binds what the operator was shown.
+//
+// The gate is where the requirement has to bite. Everything the ledger package
+// proves about the signature is true of an approval sitting in a variable; what
+// these ask is whether an effect can still reach a skill when the person who
+// released it never committed to a document.
+
+func shownNote(hexDigit string) ledger.ContextEntry {
+	return ledger.ContextEntry{Label: "screen", Digest: "sha256:" + strings.Repeat(hexDigit, 64)}
+}
+
+func requiringScreen(t *testing.T) *Policy {
+	t.Helper()
+	return mustLoadPolicy(t, `
+policy: 1
+default_effect: gate
+require_approval_context: [screen]
+`)
+}
+
+func TestRequiringContextImpliesRequiringASignature(t *testing.T) {
+	pol := requiringScreen(t)
+	if !pol.SignedApprovalRequired() {
+		t.Error("a policy that requires a bound approval still accepts unsigned answers, " +
+			"which is the cheaper route around it")
+	}
+	if got := pol.ApprovalContextRequired(); len(got) != 1 || got[0] != "screen" {
+		t.Errorf("ApprovalContextRequired = %v, want [screen]", got)
+	}
+	if len(DefaultPolicy().ApprovalContextRequired()) != 0 {
+		t.Error("the built-in default requires context — a fresh node would deny its first write")
+	}
+	if pol.Hash() == DefaultPolicy().Hash() {
+		t.Error("require_approval_context does not change the policy hash, so two policies " +
+			"that differ on it cite the same document in the ledger")
+	}
+}
+
+func TestPolicyRefusesARequirementNothingCouldSatisfy(t *testing.T) {
+	// Each of these denies every gated effect on the node while looking, in the
+	// logs, like a client that will not send what it is asked for. They are
+	// refused at load, where the file that caused it can be named.
+	cases := map[string]string{
+		"a label no approval could carry":       `["Screen Hash"]`,
+		"the same label twice":                  `[screen, screen]`,
+		"more labels than an approval may bind": `[a, b, c, d, e, f, g, h, i]`,
+	}
+	for name, list := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "policy.yaml")
+			doc := "policy: 1\ndefault_effect: gate\nrequire_approval_context: " + list + "\n"
+			if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadPolicy(path); err == nil {
+				t.Fatal("loaded without complaint")
+			}
+		})
+	}
+
+	// And the ordinary case still loads.
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(path, []byte("policy: 1\ndefault_effect: gate\nrequire_approval_context: [screen]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pol, err := LoadPolicy(path)
+	if err != nil {
+		t.Fatalf("a policy naming one ordinary label was refused: %v", err)
+	}
+	if got := pol.ApprovalContextRequired(); len(got) != 1 || got[0] != "screen" {
+		t.Errorf("ApprovalContextRequired = %v, want [screen]", got)
+	}
+}
+
+func TestTheQuestionSaysWhatAnsweringItWillTake(t *testing.T) {
+	const sid = "sess-ctx-0"
+	st0 := testStore(t)
+	roster, _ := enrolledOperator(t, st0, "grace")
+	sess, _, _, toClient := gatedSession(t, sid, requiringScreen(t), roster)
+
+	sess.Route(clientData(sid))
+	req := lastConfirmRequest(t, *toClient)
+
+	var body struct {
+		ContextRequired []string `json:"context_required"`
+	}
+	if err := json.Unmarshal(req.Payload, &body); err != nil {
+		t.Fatalf("confirm_request payload: %v", err)
+	}
+	// Without this a client learns the requirement by being refused, which is
+	// after a human has already read the question and answered it.
+	if len(body.ContextRequired) != 1 || body.ContextRequired[0] != "screen" {
+		t.Fatalf("context_required = %v, want [screen]", body.ContextRequired)
+	}
+	// And it must be labels, never digests: a digest this node supplied would
+	// be a digest of whatever it wished it had displayed.
+	if strings.Contains(string(req.Payload), "sha256:") {
+		t.Errorf("the question carries a digest, which the node has no business computing: %s", req.Payload)
+	}
+}
+
+func TestAGateThatRequiresNothingSaysNothing(t *testing.T) {
+	const sid = "sess-ctx-0b"
+	st0 := testStore(t)
+	roster, _ := enrolledOperator(t, st0, "grace")
+	sess, _, _, toClient := gatedSession(t, sid, DefaultPolicy(), roster)
+
+	sess.Route(clientData(sid))
+	req := lastConfirmRequest(t, *toClient)
+	if strings.Contains(string(req.Payload), "context_required") {
+		t.Errorf("a node requiring nothing still advertises a requirement: %s", req.Payload)
+	}
+}
+
+func TestAnApprovalThatBindsNothingDoesNotReleaseTheEffect(t *testing.T) {
+	const sid = "sess-ctx-1"
+	st0 := testStore(t)
+	roster, op := enrolledOperator(t, st0, "grace")
+	sess, st, delivered, toClient := gatedSession(t, sid, requiringScreen(t), roster)
+
+	sess.Route(clientData(sid))
+	answerGate(t, sess, lastConfirmRequest(t, *toClient), sid, true, &op, "")
+
+	if len(*delivered) != 0 {
+		t.Fatal("a signed approval that binds no document released the effect anyway")
+	}
+	entries := allEntries(t, st)
+	if len(entries) != 1 || entries[0].Outcome != "denied" {
+		t.Fatalf("want one sealed denial, got %d entries", len(entries))
+	}
+	// The refusal has to name the label, or the operator has no way to comply.
+	if !mentionsScreen(*toClient) {
+		t.Error("the refusal does not say which artifact the answer had to bind")
+	}
+}
+
+func TestAnApprovalThatBindsTheScreenReleasesItAndIsSealed(t *testing.T) {
+	const sid = "sess-ctx-2"
+	st0 := testStore(t)
+	roster, op := enrolledOperator(t, st0, "grace")
+	sess, st, delivered, toClient := gatedSession(t, sid, requiringScreen(t), roster)
+
+	sess.Route(clientData(sid))
+	answerGate(t, sess, lastConfirmRequest(t, *toClient), sid, true, &op, "", shownNote("a"))
+
+	if len(*delivered) != 1 {
+		t.Fatalf("got %d deliveries, want 1", len(*delivered))
+	}
+	entries := allEntries(t, st)
+	if len(entries) != 1 {
+		t.Fatalf("ledger has %d entries, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.Approver == nil || len(e.Approver.Context) != 1 {
+		t.Fatalf("the sealed entry does not record what the approver was shown: %+v", e.Approver)
+	}
+	if e.Approver.Context[0].Label != "screen" {
+		t.Errorf("sealed context = %+v, want the screen", e.Approver.Context)
+	}
+	// Still checkable from the entry alone, which is what an auditor will have.
+	if err := e.Approver.Verify(e.Node, e.Session); err != nil {
+		t.Errorf("the sealed context-bound approval does not verify offline: %v", err)
+	}
+	// And what was sealed is what was signed: editing the digest in the stored
+	// entry has to break it, or the binding is a note rather than evidence.
+	e.Approver.Context[0].Digest = "sha256:" + strings.Repeat("b", 64)
+	if err := e.Approver.Verify(e.Node, e.Session); err == nil {
+		t.Error("the sealed document can be swapped and the approval still verifies")
+	}
+}
+
+func TestBindingTheWrongArtifactIsNotBindingTheRightOne(t *testing.T) {
+	const sid = "sess-ctx-3"
+	st0 := testStore(t)
+	roster, op := enrolledOperator(t, st0, "grace")
+	sess, _, delivered, toClient := gatedSession(t, sid, requiringScreen(t), roster)
+
+	sess.Route(clientData(sid))
+	answerGate(t, sess, lastConfirmRequest(t, *toClient), sid, true, &op, "",
+		ledger.ContextEntry{Label: "invoice", Digest: "sha256:" + strings.Repeat("c", 64)})
+
+	if len(*delivered) != 0 {
+		t.Fatal("binding some other artifact satisfied a requirement for the screen")
+	}
+}
+
+func TestAnUnsignedAnswerUnderContextPolicySaysWhatIsMissing(t *testing.T) {
+	const sid = "sess-ctx-4"
+	st0 := testStore(t)
+	roster, _ := enrolledOperator(t, st0, "grace")
+	sess, _, delivered, toClient := gatedSession(t, sid, requiringScreen(t), roster)
+
+	sess.Route(clientData(sid))
+	answerGate(t, sess, lastConfirmRequest(t, *toClient), sid, true, nil, "")
+
+	if len(*delivered) != 0 {
+		t.Fatal("an unsigned answer released an effect on a node that requires a bound approval")
+	}
+	if !mentionsScreen(*toClient) {
+		t.Error("the refusal does not tell an unsigned client what this node wants")
+	}
+}
+
+// mentionsScreen reports whether any error sent back to the client names the
+// label the node required. The message is the only thing the operator has.
+func mentionsScreen(toClient []channel.Envelope) bool {
+	for _, env := range toClient {
+		if env.Kind == channel.KindError && strings.Contains(string(env.Payload), "screen") {
+			return true
+		}
+	}
+	return false
 }

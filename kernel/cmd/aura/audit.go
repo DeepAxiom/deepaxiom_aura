@@ -136,6 +136,13 @@ func printAudit(rep ledger.AuditReport) {
 		s.Effects, s.Delivered, s.Denied)
 	fmt.Printf("  %d passed a human gate (%d signed, %d unsigned) · %d cleared by policy\n",
 		s.Gated, s.Signed, s.UnsignedGated, s.Allowed)
+	if s.Signed > 0 {
+		// Reported beside the signed count rather than folded into it. "Somebody
+		// answered this delivery" and "somebody consented to this document" are
+		// different claims, and a reader who cannot see which one they have will
+		// assume the stronger.
+		fmt.Printf("  of the signed, %d also bind what the approver was shown\n", s.BoundApprovals)
+	}
 	fmt.Printf("  across %d session(s) and %d package version(s)\n", s.Sessions, s.DistinctActors)
 	if s.Waived > 0 {
 		fmt.Printf("  %d excused from their gate by the graph rather than by policy\n", s.Waived)

@@ -130,8 +130,14 @@ type AuditSummary struct {
 	// Signed is how many gated effects carry a verified operator signature.
 	// Unsigned gated effects are the gap a reviewer should look at: somebody
 	// answered, and the node's own word is the only evidence of who.
-	Signed         int `json:"signed_approvals"`
-	UnsignedGated  int `json:"unsigned_gated"`
+	Signed        int `json:"signed_approvals"`
+	UnsignedGated int `json:"unsigned_gated"`
+	// BoundApprovals is how many signed approvals also bind what the approver
+	// was shown (C4 v1.7). The difference between this and Signed is the
+	// difference between "this person answered this delivery" and "this person
+	// consented to this document" — both are real, and only the second is what
+	// a regulator asking about informed consent is asking about.
+	BoundApprovals int `json:"bound_approvals"`
 	Waived         int `json:"waived"`
 	Reversed       int `json:"reversed"`
 	WithInference  int `json:"with_inference"`
@@ -267,6 +273,9 @@ func BuildAuditWith(st *store.Store, nodeID, pubkeyB64 string, from, until time.
 			gatedHashes = append(gatedHashes, e.Hash())
 			if e.Approver != nil {
 				s.Signed++
+				if len(e.Approver.Context) > 0 {
+					s.BoundApprovals++
+				}
 			} else {
 				s.UnsignedGated++
 			}
@@ -510,6 +519,12 @@ func VerifyAudit(rep AuditReport) AuditVerdict {
 			Detail: fmt.Sprintf("%d gated effect(s) carry no operator signature — a human answered, "+
 				"and the node's own word is the only record of who. Set `require_signed_approval` "+
 				"in policy to make this impossible", rep.Summary.UnsignedGated)})
+	}
+	if unbound := rep.Summary.Signed - rep.Summary.BoundApprovals; unbound > 0 {
+		v.Findings = append(v.Findings, AuditFinding{Severity: "note",
+			Detail: fmt.Sprintf("%d signed approval(s) bind the delivery but not what the approver "+
+				"was shown, so the record establishes who answered and not what they consented "+
+				"to. Set `require_approval_context` in policy to make this impossible", unbound)})
 	}
 	if rep.Summary.Waived > 0 {
 		v.Findings = append(v.Findings, AuditFinding{Severity: "note",

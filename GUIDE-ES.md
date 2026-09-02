@@ -468,7 +468,7 @@ no `aura chat "test" --graph echo` (esto último manda los flags como parte del 
 |---|---|
 | `aura guard --config <mcp-servers.json> [--dry-run] [--trust-annotations] [--port 9080]` | Pone por delante los servidores MCP que un agente ya usa, de modo que cada tool call pase por la policy, el gate y el ledger de este nodo. `--dry-run` informa qué se registraría y no cambia nada. Ver [Proteger las tools de un agente](#proteger-las-tools-de-un-agente). |
 | `aura approvals [--json] [--port 9080]` | Lista las llamadas que están esperando a un humano. |
-| `aura approve <id> [--deny] [--port 9080]` | Responde una de ellas. |
+| `aura approve <id> [--as <operador>] [--deny] [--shown <label>=<ruta>] [--shown-digest <label>=<alg>:<hex>] [--port 9080]` | Responde una de ellas. Con `--as`, la respuesta se firma con la llave de ese operador y se sella en la entry. Con `--shown`, el archivo se hashea aquí y el digest entra dentro de esa firma, para que el registro diga qué tenía enfrente quien aprobó. |
 
 ---
 
@@ -1774,6 +1774,49 @@ enforcement de nada. Un nodo con esto activado y sin nadie enrolado **se niega a
 arrancar**, en vez de levantarse sano y denegar su primera escritura minutos
 después con la causa a varias capas del síntoma.
 
+#### Qué tenían enfrente
+
+Una firma sobre el id de una entrega prueba que una persona con nombre respondió
+*ese* efecto. No dice qué había en su pantalla cuando lo hizo — así que una
+superficie que mostró un resumen tranquilizador sobre un efecto que hacía otra
+cosa produjo una aprobación que se lee igual que una honesta.
+
+C4 v1.7 cierra eso. Quien aprueba firma digests de lo que se le mostró, y esos
+digests van dentro de la misma firma que la decisión:
+
+```
+aura approve 01J9ZK… --as grace --shown screen=./lo-que-lei.html
+```
+
+El archivo se hashea **en tu máquina**, y sólo viaja el hash. Ese es el diseño
+entero y no una comodidad: un digest calculado por el nodo sería el digest de lo
+que el nodo desearía haber mostrado, y no probaría nada que el id de la entrega
+no probara ya.
+
+Repite `--shown` por cada artefacto, o pasa `--shown-digest <label>=<alg>:<hex>`
+si tu cliente ya calculó uno. Las etiquetas son tuyas — `screen`, `invoice`,
+`diff`, `certificate`. Para hacer obligatorio el vínculo, lista las que tienen
+que estar:
+
+```yaml
+# aura.policy.yaml
+policy: 1
+default_effect: gate
+require_approval_context: [screen]
+```
+
+Entonces una respuesta que no ata ningún `screen` es una denegación, igual que
+una sin firma — y este ajuste implica `require_signed_approval`, porque el
+contexto vive dentro de la firma. `aura approvals` imprime las etiquetas que
+pide cada pregunta, para que un cliente conozca el requisito antes de que un
+humano responda y no después.
+
+Lo que esto prueba es que quien firmó tenía un artefacto cuyo hash es ese digest
+y se comprometió con él. Lo que no prueba es que el artefacto fuera una
+representación fiel del efecto: ningún nodo puede comprobarlo, porque el nodo no
+lo dibujó. El valor es que un auditor con el artefacto en la mano puede
+demostrar que es el que se aprobó — y demostrar cuándo no lo es.
+
 `aura verify` chequea las firmas de aprobador en el mismo recorrido offline que
 usa para la cadena. Una aprobación que ya no verifica deja el ledger
 **unsound**: es evidencia directa de que una entry fue editada tras sellarse, o
@@ -2948,7 +2991,7 @@ regresión.
 | Hito | Qué entregó | Verificación |
 |---|---|---|
 | Kernel de binario único + SDK + distro | `aura up` → UI + chat con LLM local, sin servicios externos | Con tests |
-| Spec + conformidad | Contratos congelados — C1 v1.5, C2 v1.2, C3 v1.6, C4 v1.2, C5 v1.0; suite de caja negra de 59 comprobaciones | Con tests |
+| Spec + conformidad | Contratos congelados — C1 v1.5, C2 v1.2, C3 v1.6, C4 v1.7, C5 v1.1; suite de caja negra de 59 comprobaciones | Con tests |
 | Voz multicanal en streaming | Grafo `voice` + cliente de navegador: transcripciones parciales, respuestas habladas, barge-in funcionando | Kernel con tests; cliente verificado a mano |
 | Conectividad sin OpenAPI | Patrón de conector declarativo, SDK TypeScript, ingreso de webhooks, observación de tráfico | Ingreso y generador con tests; patrón de conector verificado a mano (no se incluye ningún skill de conector de primera parte) |
 | Drivers de modelos + admisión | Skills de ASR / TTS; `--memory-budget` | Admisión y ASR/chunker con tests; drivers a mano |

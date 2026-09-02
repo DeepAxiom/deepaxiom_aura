@@ -48,7 +48,7 @@ status](GUIDE.md#milestone-status).
 
 | | Status |
 |---|---|
-| **[Signed human approval](spec/proposals/draft-signed-human-approval.md)** | Written as an Internet-Draft, not submitted. The gap it fills is real: the existing IETF agent audit-trail draft records a pseudonymous operator id with no signature. Submitting is what turns a local design into a claim on the category. |
+| **[Signed human approval](spec/proposals/draft-signed-human-approval.md)** | At `-01`, not submitted. The gap it fills is real: the existing IETF agent audit-trail draft records a pseudonymous operator id with no signature. `-01` adds the `context` member — digests of what the approver was shown — which is the half that turns "a named person clicked" into "a named person consented to this document", and which the kernel implements as C4 v1.7. Submitting is what turns a local design into a claim on the category. |
 | **[MCP effect receipts](spec/proposals/mcp-effect-receipts.md)** | Written, not proposed upstream. |
 
 ## Test coverage, where it is thin and why it matters

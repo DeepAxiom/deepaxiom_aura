@@ -835,7 +835,7 @@ func (s *Session) holdForApproval(env channel.Envelope, d dest) {
 	s.pending[reqID] = pendingGate{env: env, to: d}
 	s.pendMu.Unlock()
 
-	payload, _ := json.Marshal(map[string]any{
+	question := map[string]any{
 		"question": fmt.Sprintf("Approve delivery to %s.%s?", d.ref, d.port),
 		"options":  []string{"approve", "deny"},
 		"held":     env.ID,
@@ -847,7 +847,19 @@ func (s *Session) holdForApproval(env channel.Envelope, d dest) {
 		// from it.
 		"to_ref":  d.ref,
 		"to_port": d.port,
-	})
+	}
+	// What answering this will take, published with the question (C4 v1.7).
+	// A client that has to discover the requirement by being refused discovers
+	// it after a human has already read the question and answered it, and the
+	// second answer is the one nobody reads carefully.
+	//
+	// Labels only. The digests are the approver's to compute from what they
+	// were actually shown; a node that supplied them would be attesting to its
+	// own rendering.
+	if labels := s.approvalContextRequired(); len(labels) > 0 {
+		question["context_required"] = labels
+	}
+	payload, _ := json.Marshal(question)
 	req := channel.Envelope{
 		V: channel.ProtocolMajor, ID: reqID, CauseID: env.ID, Session: s.ID,
 		Node: ClientRef, Port: "confirm_in", Kind: channel.KindConfirmRequest,
@@ -922,11 +934,23 @@ func (s *Session) resolveGate(resp channel.Envelope) {
 //     boolean beside it, is what decides. The boolean is unauthenticated; the
 //     signature covers the decision precisely so that an intercepted "deny"
 //     cannot be forwarded as an "approve" by flipping a JSON field.
+//
+// A fourth, once a policy names required context (C4 v1.7): a signature that
+// verifies but does not cover what the operator had to be shown. Refused for
+// the same reason as case 2 — the requirement is that a person consented to a
+// document, and an answer that binds no document has not evidenced that
+// however well it is signed.
 func (s *Session) authorizeGate(held pendingGate, approve bool, a *ledger.Approval) (bool, *ledger.Approval, error) {
 	required := s.policy != nil && s.policy.SignedApprovalRequired()
 
 	if a == nil {
 		if required {
+			if labels := s.approvalContextRequired(); len(labels) > 0 {
+				return false, nil, fmt.Errorf("this node requires a signed approval binding what the "+
+					"operator was shown (%s) and the answer carried no signature at all "+
+					"(`aura approve --as <operator> --shown <label>=<file>`)",
+					strings.Join(labels, ", "))
+			}
 			return false, nil, fmt.Errorf("this node requires a signed approval and the answer carried none " +
 				"(`aura approve --as <operator>`)")
 		}
@@ -941,6 +965,17 @@ func (s *Session) authorizeGate(held pendingGate, approve bool, a *ledger.Approv
 	if err := s.approvers.Check(a, s.nodeID, s.ID, held.env.ID); err != nil {
 		return false, nil, err
 	}
+	// Checked after the signature, never before: what an unverified approval
+	// claims to have been shown is not evidence of anything, and reporting a
+	// missing label on a forgery would answer the forger's question for them.
+	if labels := s.approvalContextRequired(); len(labels) > 0 {
+		if missing := a.Unbound(labels); len(missing) > 0 {
+			return false, nil, fmt.Errorf("this node requires an approval to bind what the operator "+
+				"was shown (%s) and %s's answer binds no %s "+
+				"(`aura approve --shown <label>=<file>`)",
+				strings.Join(labels, ", "), a.Operator, strings.Join(missing, ", "))
+		}
+	}
 	signed := a.Decision == ledger.ApprovalApprove
 	if signed != approve {
 		return false, nil, fmt.Errorf("the answer says %q but %s signed %q — refusing a resolution "+
@@ -948,6 +983,15 @@ func (s *Session) authorizeGate(held pendingGate, approve bool, a *ledger.Approv
 			approveWord(approve), a.Operator, a.Decision)
 	}
 	return signed, a, nil
+}
+
+// approvalContextRequired is the policy's list, or nothing when this session
+// has no policy — the same shape as every other policy read in this file.
+func (s *Session) approvalContextRequired() []string {
+	if s.policy == nil {
+		return nil
+	}
+	return s.policy.ApprovalContextRequired()
 }
 
 func approveWord(b bool) string {

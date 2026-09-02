@@ -11,6 +11,39 @@ import type { Envelope } from "./generated/types.js";
  * wrap it in a React hook, a Svelte store, or nothing at all.
  */
 
+/**
+ * One artifact the approver was shown, named and hashed (C4 v1.7).
+ *
+ * The digest is computed where the artifact was rendered — the approver's side.
+ * A digest produced by the node under audit would be a digest of whatever that
+ * node wished it had displayed.
+ */
+export interface ApprovalContextEntry {
+  /** What kind of artifact this is: "screen", "invoice", "diff", "certificate". */
+  label: string;
+  /** `<algorithm>:<lowercase hex>`, e.g. "sha256:4b8c...". */
+  digest: string;
+}
+
+/**
+ * An operator's signed answer to one gate (C4). Constructed wherever the
+ * operator's private key lives, never here — see `Session.respondGate`.
+ */
+export interface Approval {
+  operator: string;
+  /** Base64 Ed25519 public key whose private half produced `sig`. */
+  pubkey: string;
+  /** The held delivery this answers, from the `confirm_request`. */
+  envelope: string;
+  decision: "approve" | "deny";
+  /** Unix milliseconds at signing. */
+  ts: number;
+  /** What the approver was shown, if anything (C4 v1.7). */
+  context?: ApprovalContextEntry[];
+  /** Base64 Ed25519 over the C4 approval payload. */
+  sig: string;
+}
+
 export interface SessionOptions {
   /** Kernel base URL, e.g. "http://localhost:9080" or "https://node.internal". */
   baseUrl?: string;
@@ -111,11 +144,29 @@ export class Session {
     this.socket?.send(JSON.stringify(envelope({ kind: "cancel", cause_id: envelopeId })));
   }
 
-  /** Answer a human-approval gate, using the `confirm_request`'s id. */
-  respondGate(requestId: string, approve: boolean): void {
+  /**
+   * Answer a human-approval gate, using the `confirm_request`'s id.
+   *
+   * `approval` is the operator's signed statement (C4). It is optional and
+   * passed through untouched — this SDK does not sign, and must not: a
+   * signature this library could produce is one the app could produce without a
+   * person present, which is the property the whole mechanism exists to have.
+   * Produce it in a hardware token, a platform keystore or a native helper that
+   * holds the key, and hand the result here.
+   *
+   * A node whose policy sets `require_signed_approval` refuses an answer with no
+   * `approval`, and one that sets `require_approval_context` refuses an approval
+   * whose `context` does not cover the labels it named. The refusal names them;
+   * `confirm_request` payloads that carry them let you find out first.
+   */
+  respondGate(requestId: string, approve: boolean, approval?: Approval): void {
     this.socket?.send(
       JSON.stringify(
-        envelope({ kind: "confirm_response", cause_id: requestId, payload: { approve } }),
+        envelope({
+          kind: "confirm_response",
+          cause_id: requestId,
+          payload: approval ? { approve, approval } : { approve },
+        }),
       ),
     );
   }

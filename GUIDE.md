@@ -495,7 +495,7 @@ Flags must precede the positional message — `aura chat --graph echo "test"`, n
 |---|---|
 | `aura guard --config <mcp-servers.json> [--dry-run] [--trust-annotations] [--port 9080]` | Front the MCP servers an agent already uses, so every tool call passes this node's policy, gate and ledger. `--dry-run` reports what would be registered and changes nothing. See [Guarding an agent's tools](#guarding-an-agents-tools). |
 | `aura approvals [--json] [--port 9080]` | List the calls currently waiting for a human. |
-| `aura approve <id> [--as <operator>] [--deny] [--port 9080]` | Answer one of them. With `--as`, the answer is signed with that operator's key and sealed into the entry — see [Signed approval](#signed-approval--who-allowed-it). |
+| `aura approve <id> [--as <operator>] [--deny] [--shown <label>=<path>] [--shown-digest <label>=<alg>:<hex>] [--port 9080]` | Answer one of them. With `--as`, the answer is signed with that operator's key and sealed into the entry. With `--shown`, the file is hashed here and the digest goes inside that signature, so the record says what the approver was looking at — see [Signed approval](#signed-approval--who-allowed-it). |
 
 ### Who may approve
 
@@ -1798,6 +1798,48 @@ enforcement you can skip by omitting a field enforces nothing. A node with this
 set and nobody enrolled **refuses to start**, rather than coming up healthy and
 denying its first write minutes later with the cause several layers away from
 the symptom.
+
+#### What they were looking at
+
+A signature over a delivery id proves a named person answered *that* effect. It
+does not say what was on their screen when they did — so a surface that showed
+a reassuring summary over an effect that did something else produced an approval
+that reads exactly like an honest one.
+
+C4 v1.7 closes that. The approver signs digests of what they were shown, and
+those digests are inside the same signature as the decision:
+
+```
+aura approve 01J9ZK… --as grace --shown screen=./what-i-read.html
+```
+
+The file is hashed **on your machine**, and only the hash is sent. That is the
+whole design and not a convenience: a digest the node computed would be a digest
+of whatever the node wished it had displayed, and would prove nothing the
+envelope id did not already prove.
+
+Repeat `--shown` for each artifact, or pass `--shown-digest <label>=<alg>:<hex>`
+when your client already computed one. The labels are yours — `screen`,
+`invoice`, `diff`, `certificate`. To make the binding mandatory, list the ones
+that must be present:
+
+```yaml
+# aura.policy.yaml
+policy: 1
+default_effect: gate
+require_approval_context: [screen]
+```
+
+Then an answer that binds no `screen` is a denial, exactly like an unsigned one
+— and this setting implies `require_signed_approval`, because a context lives
+inside the signature. `aura approvals` prints the labels a question wants, so a
+client learns the requirement before a human answers rather than after.
+
+What this proves is that the signer held an artifact hashing to that digest and
+committed to it. What it does not prove is that the artifact was a faithful
+rendering of the effect: no node can check that, since the node did not draw it.
+The value is that an auditor holding the artifact can show it is the one that
+was approved — and show when it is not.
 
 `aura verify` checks approver signatures in the same offline walk it uses for
 the chain. An approval that no longer verifies makes the ledger **unsound**: it
@@ -3130,7 +3172,7 @@ was exercised manually and works, but nothing stops a regression.
 | Milestone | What it delivered | Verification |
 |---|---|---|
 | Single-binary kernel + SDK + distro | `aura up` → UI + local LLM chat, no external services | Tested |
-| Spec + conformance | Contracts frozen — C1 v1.5, C2 v1.2, C3 v1.6, C4 v1.2, C5 v1.0; 59-check black-box suite | Tested |
+| Spec + conformance | Contracts frozen — C1 v1.5, C2 v1.2, C3 v1.6, C4 v1.7, C5 v1.1; 59-check black-box suite | Tested |
 | Streaming multi-channel voice | `voice` graph + browser client: partial transcripts, spoken replies, working barge-in | Kernel tested; client hand-verified |
 | Connectivity without OpenAPI | Declarative connector pattern, TypeScript SDK, webhook ingress, traffic observation | Ingress + generator tested; connector pattern hand-verified (no first-party connector skill is bundled) |
 | Model drivers + admission | ASR / TTS skills; `--memory-budget` | Admission + ASR/chunker tested; drivers hand-verified |

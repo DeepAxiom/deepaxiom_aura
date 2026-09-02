@@ -28,7 +28,7 @@ func testOperator(t *testing.T) (ed25519.PrivateKey, string) {
 
 func TestApprovalRoundTrips(t *testing.T) {
 	priv, pub := testOperator(t)
-	a, err := SignApproval("grace", priv, "node-a", "sess-1", "env-1", ApprovalApprove, 1700000000000)
+	a, err := SignApproval("grace", priv, "node-a", "sess-1", "env-1", ApprovalApprove, 1700000000000, nil)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestApprovalIsNotTransplantable(t *testing.T) {
 		env  = "env-1"
 		ts   = int64(1700000000000)
 	)
-	good, err := SignApproval("grace", priv, node, sess, env, ApprovalApprove, ts)
+	good, err := SignApproval("grace", priv, node, sess, env, ApprovalApprove, ts, nil)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestApprovalBySomeoneElsesKeyStillVerifiesAsItsOwnAuthor(t *testing.T) {
 	_, realPub := testOperator(t)
 
 	forged, err := SignApproval("grace", attacker, "node-a", "sess-1", "env-1",
-		ApprovalApprove, time.Now().UnixMilli())
+		ApprovalApprove, time.Now().UnixMilli(), nil)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestApprovalBySomeoneElsesKeyStillVerifiesAsItsOwnAuthor(t *testing.T) {
 
 func TestApprovalRejectsMalformedInput(t *testing.T) {
 	priv, _ := testOperator(t)
-	good, _ := SignApproval("grace", priv, "n", "s", "e", ApprovalApprove, 1)
+	good, _ := SignApproval("grace", priv, "n", "s", "e", ApprovalApprove, 1, nil)
 
 	cases := map[string]func(*Approval){
 		"no operator":  func(a *Approval) { a.Operator = "" },
@@ -161,16 +161,16 @@ func TestApprovalRejectsMalformedInput(t *testing.T) {
 // than producing one that fails mysteriously at the gate.
 func TestSignApprovalRefusesIncompleteStatements(t *testing.T) {
 	priv, _ := testOperator(t)
-	if _, err := SignApproval("", priv, "n", "s", "e", ApprovalApprove, 1); err == nil {
+	if _, err := SignApproval("", priv, "n", "s", "e", ApprovalApprove, 1, nil); err == nil {
 		t.Error("signed an approval with no operator")
 	}
-	if _, err := SignApproval("g", priv, "n", "s", "", ApprovalApprove, 1); err == nil {
+	if _, err := SignApproval("g", priv, "n", "s", "", ApprovalApprove, 1, nil); err == nil {
 		t.Error("signed an approval naming no delivery")
 	}
-	if _, err := SignApproval("g", priv, "n", "s", "e", "maybe", 1); err == nil {
+	if _, err := SignApproval("g", priv, "n", "s", "e", "maybe", 1, nil); err == nil {
 		t.Error("signed an approval with a decision outside the vocabulary")
 	}
-	if _, err := SignApproval("g", nil, "n", "s", "e", ApprovalApprove, 1); err == nil {
+	if _, err := SignApproval("g", nil, "n", "s", "e", ApprovalApprove, 1, nil); err == nil {
 		t.Error("signed an approval with no key")
 	}
 }
@@ -179,7 +179,11 @@ func TestSignApprovalRefusesIncompleteStatements(t *testing.T) {
 // other signer in this codebase. Cheap to assert, and the failure it prevents
 // (a checkpoint signature replayed as an approval) is unrecoverable.
 func TestApprovalPayloadIsDomainSeparated(t *testing.T) {
-	p := string(ApprovalPayload("n", "s", "e", ApprovalApprove, 1))
+	raw, err := ApprovalPayload("n", "s", "e", ApprovalApprove, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := string(raw)
 	if !strings.HasPrefix(p, ApprovalDomain+":") {
 		t.Fatalf("approval payload %q is not domain-separated", p)
 	}
@@ -191,5 +195,166 @@ func TestApprovalPayloadIsDomainSeparated(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Errorf("approval payload does not cover %q: %s", want, p)
 		}
+	}
+}
+
+// C4 v1.7 — what the approver was shown.
+//
+// The property under test is not "the field round-trips". It is that the field
+// cannot be *edited*: an approval that bound a document must not still verify
+// once someone swaps the document, drops the binding, or adds one that was
+// never signed. A context that can be edited after the fact is decoration, and
+// worse than none, because it reads as evidence.
+
+func shownScreen(hex string) []ContextEntry {
+	return []ContextEntry{{Label: "screen", Digest: "sha256:" + strings.Repeat(hex, 64)}}
+}
+
+func TestABareApprovalStillSignsExactlyTheV13Payload(t *testing.T) {
+	// The frozen construction, written out rather than referenced, so a change
+	// to ApprovalPayload that happens to be self-consistent still fails here.
+	want := ApprovalDomain + ":node-a:sess-1:env-1:" + ApprovalApprove + ":1700000000000"
+	raw, err := ApprovalPayload("node-a", "sess-1", "env-1", ApprovalApprove, 1700000000000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != want {
+		t.Fatalf("a context-free approval no longer signs the v1.3 payload:\n got  %s\n want %s",
+			raw, want)
+	}
+}
+
+func TestAContextIsInsideTheSignature(t *testing.T) {
+	priv, _ := testOperator(t)
+	a, err := SignApproval("grace", priv, "node-a", "sess-1", "env-1",
+		ApprovalApprove, 1700000000000, shownScreen("a"))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if err := a.Verify("node-a", "sess-1"); err != nil {
+		t.Fatalf("a freshly signed context-bound approval must verify: %v", err)
+	}
+
+	// Swapped: the same label, a different document.
+	swapped := *a
+	swapped.Context = shownScreen("b")
+	if err := swapped.Verify("node-a", "sess-1"); err == nil {
+		t.Error("an approval still verifies after the document it bound was swapped")
+	}
+
+	// Stripped: someone removes the binding and presents it as a plain answer.
+	stripped := *a
+	stripped.Context = nil
+	if err := stripped.Verify("node-a", "sess-1"); err == nil {
+		t.Error("dropping the context leaves a verifiable approval — the binding is optional in practice")
+	}
+
+	// Added: someone attaches a document to an approval that bound none.
+	bare, err := SignApproval("grace", priv, "node-a", "sess-1", "env-1",
+		ApprovalApprove, 1700000000000, nil)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	bare.Context = shownScreen("a")
+	if err := bare.Verify("node-a", "sess-1"); err == nil {
+		t.Error("a context can be attached after signing, which would let anyone claim consent")
+	}
+}
+
+func TestTheOrderTheClientSentIsNotWhatWasSigned(t *testing.T) {
+	priv, _ := testOperator(t)
+	shown := []ContextEntry{
+		{Label: "screen", Digest: "sha256:" + strings.Repeat("a", 64)},
+		{Label: "certificate", Digest: "sha256:" + strings.Repeat("b", 64)},
+	}
+	a, err := SignApproval("grace", priv, "n", "s", "e", ApprovalApprove, 1, shown)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	// Handed back the other way round, as a client or a relay may well do.
+	a.Context = []ContextEntry{shown[0], shown[1]}
+	if err := a.Verify("n", "s"); err != nil {
+		t.Fatalf("array order changed what was signed: %v", err)
+	}
+	// And what is left behind is canonical, so the entry hash is a function of
+	// the set rather than of whatever order arrived.
+	if a.Context[0].Label != "certificate" {
+		t.Errorf("Verify left the context unsorted: %v", a.Context)
+	}
+}
+
+func TestCanonicalContextCannotBeForgedByPunctuation(t *testing.T) {
+	// The canonical form is "label=digest" joined by newlines, so the one way
+	// two different contexts could collide is a label or digest that contains a
+	// separator. Both charsets exclude them, and this is the assertion that
+	// keeps them excluded.
+	bad := [][]ContextEntry{
+		{{Label: "a=b", Digest: "sha256:" + strings.Repeat("0", 64)}},
+		{{Label: "a" + "\n" + "b", Digest: "sha256:" + strings.Repeat("0", 64)}},
+		{{Label: "screen", Digest: "sha256:" + strings.Repeat("0", 64) + "\nx=y"}},
+		{{Label: "screen", Digest: "sha256:" + strings.Repeat("0", 64) + "=z"}},
+		{{Label: "Screen", Digest: "sha256:" + strings.Repeat("0", 64)}},
+		{{Label: "9screen", Digest: "sha256:" + strings.Repeat("0", 64)}},
+	}
+	for _, entries := range bad {
+		if _, err := CanonicalContext(entries); err == nil {
+			t.Errorf("%q=%q was accepted, so two contexts can render to one string",
+				entries[0].Label, entries[0].Digest)
+		}
+	}
+}
+
+func TestAContextCarriesDigestsAndNeverContent(t *testing.T) {
+	// The ledger already refuses to store payloads. A context that accepted free
+	// text would be a way around that rule, and the artifacts most worth binding
+	// are exactly the ones most likely to carry personal data.
+	for _, digest := range []string{
+		"the note the doctor read",
+		"sha256:NOTHEX",
+		"sha256:" + strings.Repeat("a", 8),
+		// 128 bits. Long enough to look like a hash, short enough that an
+		// attacker can build two documents sharing it — and this field's whole
+		// claim is that the artifact the signer held is the one now in hand.
+		"md5:" + strings.Repeat("a", 32),
+		"sha256:" + strings.Repeat("A", 64),
+		"",
+	} {
+		if _, err := CanonicalContext([]ContextEntry{{Label: "screen", Digest: digest}}); err == nil {
+			t.Errorf("%q was accepted as a digest", digest)
+		}
+	}
+}
+
+func TestOneLabelCannotMeanTwoThings(t *testing.T) {
+	if _, err := CanonicalContext([]ContextEntry{
+		{Label: "screen", Digest: "sha256:" + strings.Repeat("a", 64)},
+		{Label: "screen", Digest: "sha256:" + strings.Repeat("b", 64)},
+	}); err == nil {
+		t.Error("a duplicated label was accepted, so an approval can claim one thing was two")
+	}
+	too := make([]ContextEntry, MaxContextEntries+1)
+	for i := range too {
+		too[i] = ContextEntry{
+			Label:  "a" + strings.Repeat("b", i),
+			Digest: "sha256:" + strings.Repeat("c", 64),
+		}
+	}
+	if _, err := CanonicalContext(too); err == nil {
+		t.Errorf("an approval may bind more than %d artifacts", MaxContextEntries)
+	}
+}
+
+func TestUnboundNamesWhatIsMissing(t *testing.T) {
+	a := &Approval{Context: shownScreen("a")}
+	if got := a.Unbound([]string{"screen"}); len(got) != 0 {
+		t.Errorf("Unbound reported %v for a label that is bound", got)
+	}
+	got := a.Unbound([]string{"screen", "certificate", "consent"})
+	if len(got) != 2 || got[0] != "certificate" || got[1] != "consent" {
+		t.Errorf("Unbound = %v, want [certificate consent]", got)
+	}
+	var none *Approval
+	if got := none.Unbound([]string{"screen"}); len(got) != 1 {
+		t.Error("a nil approval must count as binding nothing, not as binding everything")
 	}
 }

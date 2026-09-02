@@ -1,7 +1,7 @@
 ---
 title: "Signed Human Approval Records for AI Agent Audit Trails"
 abbrev: "Signed Human Approval"
-docname: draft-belen-signed-human-approval-00
+docname: draft-belen-signed-human-approval-01
 category: info
 submissiontype: independent
 ipr: trust200902
@@ -39,9 +39,10 @@ review, so it establishes only that the system asserts an approval occurred.
 
 This document defines a **signed human approval record**: a small structure,
 produced with a key the recording system never holds, that binds one named
-approver to one specific agent action. It is transport-independent and
-format-independent, and is intended to occupy the place existing agent audit
-formats reserve for human intervention.
+approver to one specific agent action, and optionally to digests of the material
+that approver was shown. It is transport-independent and format-independent, and
+is intended to occupy the place existing agent audit formats reserve for human
+intervention.
 
 --- middle
 
@@ -134,6 +135,23 @@ a session is replayable against every action in it. The payload defined in
 {{signed-payload}} therefore includes an action identifier, and a verifier
 checks it against the action the record is attached to.
 
+## Binding to an action does not say what was displayed
+
+An identifier binds a record to one action. It does not describe how that action
+was put to the person, and the two can differ without any component
+malfunctioning: the system renders a summary, the person reads the summary, and
+the identifier in the record is the same either way.
+
+This is not a hypothetical failure of an honest deployment so much as the
+cheapest available attack on an audited one. A record that binds only an
+identifier is satisfied by a rendering that says anything at all, which makes
+the display the unaudited part of an otherwise audited path.
+
+{{shown}} therefore defines an optional member carrying digests of the material
+the approver was shown. It is optional because a deployment whose actions are
+self-describing does not need it, and because a record made before this member
+existed remains valid and unchanged.
+
 # The Approval Record {#the-record}
 
 An approval record is a JSON object with the following members.
@@ -147,6 +165,7 @@ An approval record is a JSON object with the following members.
   "pubkey":   "MCowBQYDK2VwAyEA…",
   "decision": "approve",
   "ts":       1754083200000,
+  "context":  [{ "label": "screen", "digest": "sha256:4b8c…" }],
   "alg":      "Ed25519",
   "sig":      "3n1Wq…"
 }
@@ -161,6 +180,7 @@ An approval record is a JSON object with the following members.
 | `pubkey` | string | REQUIRED. The approver's public key, base64 {{RFC4648}} Section 4. |
 | `decision` | string | REQUIRED. `"approve"` or `"deny"`. |
 | `ts` | number | REQUIRED. Time of signing, milliseconds since the UNIX epoch. |
+| `context` | array | OPTIONAL. Digests of the material the approver was shown. See {{shown}}. |
 | `alg` | string | OPTIONAL. Signature algorithm; absent means `"Ed25519"`. |
 | `sig` | string | REQUIRED. Signature over {{signed-payload}}, base64. |
 
@@ -174,6 +194,65 @@ Implementations MUST support Ed25519 {{RFC8032}}. Implementations MAY support
 other signature algorithms, indicated by `alg`. A verifier that does not
 recognise `alg` MUST treat the record as unverified rather than as valid.
 
+# What the Approver Was Shown {#shown}
+
+The `context` member is an array of at most 8 objects, each with two string
+members:
+
+| Member | Requirement |
+|---|---|
+| `label` | REQUIRED. What kind of material this is. MUST match `^[a-z][a-z0-9_]{0,31}$`. |
+| `digest` | REQUIRED. `<algorithm>:<lowercase hex>`, of a digest of at least 256 bits. MUST match `^[a-z0-9][a-z0-9-]{0,15}:[0-9a-f]{64,128}$`. |
+
+Labels MUST be unique within one record. A verifier encountering a duplicated
+label MUST treat the record as unverified rather than resolving it: a record
+asserting that one thing was two things has no meaning, and choosing between
+them would be the verifier deciding what a person approved.
+
+The label vocabulary is deliberately not enumerated. What a person must be shown
+before authorising an act is specific to the deployment — a rendered document, a
+diff, a beneficiary, a consent form — and an enumeration here would be this
+document guessing at domains it does not know. What is fixed is the shape, so
+that one tool can read records from unrelated deployments.
+
+## Collision resistance is the property
+
+The member asserts that material the signer held hashes to the given value, so
+its worth is bounded by the difficulty of producing a second artifact with the
+same digest. An attacker who can do that can display the acceptable one and act
+on the other, and every signature in the record still verifies.
+
+Implementations MUST NOT accept a digest shorter than 256 bits, and SHOULD
+prefer an algorithm with no published collision. The length bound above enforces
+the first; the second cannot be enforced by a pattern, since an algorithm's
+standing changes after its identifier is chosen.
+
+## Digests, never content
+
+`digest` MUST be a cryptographic digest of the material, and the material itself
+MUST NOT appear in the record. {{signed-payload}} already forbids the action's
+payload in the signed string; the same reasoning applies here and one more does
+besides. An approval record is durable by design and frequently unerasable
+({{privacy}}), and the material most worth binding — a clinical document, a
+statement, a photograph — is the material most likely to carry personal data. A
+digest binds it without republishing it.
+
+The bound of 8 entries is not a size limit. It is a limit on how much one person
+can be said to have examined in a single decision; a record binding forty
+artifacts to one act describes a review that did not take place.
+
+## The recording system MUST NOT supply it
+
+A digest produced by the system under review is a digest of whatever that system
+wished it had displayed, and adds nothing an action identifier did not already
+establish. Implementations MUST compute `context` on the approver's side, from
+the material actually rendered to them, and MUST NOT accept it from, or generate
+it within, the recording system.
+
+This follows the same logic as key custody ({{security-considerations}}): the
+value of the record comes entirely from what the audited party could not have
+produced alone.
+
 # The Signed Payload {#signed-payload}
 
 The signature is computed over the UTF-8 encoding of the following string,
@@ -186,7 +265,25 @@ with no trailing newline:
 where `ts` is the decimal representation of the `ts` member with no leading
 zeros or sign.
 
-Three properties of this construction are deliberate.
+When `context` is present and non-empty, the string continues:
+
+~~~
+... ":" ts ":" context-digest
+~~~
+
+where
+
+~~~
+context-digest = "sha256:" lowercase-hex(SHA-256(canonical))
+canonical      = entries sorted by label, each rendered as label "=" digest,
+                 joined by LF (U+000A), with no trailing newline
+~~~
+
+An absent or empty `context` produces the shorter string exactly, so a record
+made before this member existed verifies unchanged, and an implementation that
+never emits it is unaffected.
+
+Four properties of this construction are deliberate.
 
 **It is domain-separated.** The `aura-approval-v1:` prefix ensures a signature
 made for this purpose cannot be presented as one made for another. An approver
@@ -197,6 +294,21 @@ here, and vice versa.
 every implementation to agree on canonical encoding, which is a well-known
 source of interoperability failure and of signature-bypass vulnerabilities. A
 concatenation of five values whose formats are fixed above has one encoding.
+
+**The context enters it as a single value, reduced injectively.** `context` is a
+structure, and admitting it directly would reintroduce exactly the canonical
+encoding problem the previous paragraph avoids. Reducing it to one digest keeps
+the signed input a flat string, and the reduction has one encoding of its own:
+the charsets in {{shown}} exclude `=` from labels and LF from both members, so
+`canonical` splits back into exactly one list of pairs. Those charsets are
+normative for that reason and not as input hygiene. Sorting is part of the
+reduction, so the array order a record happens to carry is not part of what was
+signed; an implementation SHOULD store the entries in that order once verified.
+
+The result is not strippable in either direction. Removing `context` from a
+record that carried one leaves a signature made over the longer string, which
+then fails to verify; attaching one to a record that carried none fails the same
+way. Both directions fail closed.
 
 **It excludes `pubkey` and `sig`.** Including the key would be circular.
 Excluding it means the key travels beside the signature and is checked against
@@ -239,14 +351,23 @@ any fails:
 1. `action` equals the identifier of the action the record is attached to.
 2. `decision` is `"approve"` or `"deny"`.
 3. `alg` is recognised, or absent.
-4. `sig` verifies over {{signed-payload}} using `pubkey`.
-5. `system` and `session` match the context the record is presented in.
+4. `context`, if present, is well-formed under {{shown}}: every `label` and
+   `digest` matches its pattern, no label repeats, and there are at most 8
+   entries.
+5. `sig` verifies over {{signed-payload}} using `pubkey`.
+6. `system` and `session` match the circumstances the record is presented in.
 
 A verifier with access to the system's roster SHOULD additionally check that
 `pubkey` is the key that system enrolled for `operator`. Without this check, an
 attacker who can write to the log can record an approval attributed to `grace`
 signed by a key they generated themselves, and every cryptographic check above
 passes. This check is what makes the `operator` member meaningful.
+
+A verifier that holds the material the record claims was shown SHOULD recompute
+its digest and compare. A verifier that does not hold it MUST NOT treat the
+record as unverified on that account: `context` establishes what the signer
+committed to, and whether the deployment can still produce that material is a
+property of the deployment's storage, not of the record.
 
 Verifiers MUST NOT infer anything from the absence of an approval record. A
 record's absence is consistent with an action that required no approval, an
@@ -269,7 +390,7 @@ the other: the chain establishes that the record has not been altered since it
 was written, and the signature establishes that the system did not write it
 alone.
 
-# Security Considerations
+# Security Considerations {#security-considerations}
 
 **Key custody is the whole security boundary.** An approver whose private key is
 held by, accessible to, or recoverable by the recording system provides no
@@ -284,6 +405,19 @@ key already enrolled for a different operator.
 **Coercion and delegation are out of scope.** This record establishes that the
 holder of a key signed a statement. It does not establish that they understood
 it, were free to refuse, or were the person the key was issued to.
+
+**`context` binds the material, not its fidelity.** A digest establishes that the
+signer held material hashing to that value and committed to it. It does not
+establish that the material was a faithful rendering of the action: no verifier
+can check that, because the rendering is produced outside the record. What the
+member changes is that a discrepancy becomes demonstrable — a verifier holding
+both the action and the material can show they disagree — where previously
+there was nothing in the record to disagree with.
+
+**A required context must be required, not requested.** A deployment that needs
+this evidence MUST reject an approval that omits the labels it requires, rather
+than accepting it and noting the omission. An implementation that can be
+satisfied by leaving a member out is satisfied by leaving it out.
 
 **Timestamps are asserted by the signer.** `ts` is part of the signed payload
 and so cannot be altered afterwards, but a signer may state any value. Where
@@ -300,7 +434,7 @@ it dislikes produces a log with a gap. This document does not address that; it
 is the property an append-only, externally witnessed log provides, and is the
 reason {{RFC6962}}-style publication is recommended above.
 
-# Privacy Considerations
+# Privacy Considerations {#privacy}
 
 An approval record links a natural person to a specific act at a specific time,
 and is durable by design. Two consequences follow.
@@ -313,7 +447,9 @@ record that may be shared with third parties.
 A record is not erasable without breaking whatever integrity mechanism encloses
 it. Deployments subject to erasure obligations SHOULD ensure that the record
 contains no personal data beyond the identifier and key, which is why this
-document places no free-text member in the signed structure.
+document places no free-text member in the signed structure — including in
+`context`, whose values are constrained to digests for exactly this reason
+({{shown}}).
 
 # IANA Considerations
 
@@ -325,10 +461,13 @@ This document has no IANA actions.
 
 An implementation of this record exists in the Deep Axiom kernel, where it is
 sealed into a hash-chained effect ledger and verified both at the moment of
-approval and by an offline verifier reading the stored log alone. The
-`aura-approval-v1` domain prefix in {{signed-payload}} is that implementation's;
-a version of this document adopted by a working group would be expected to
-change it.
+approval and by an offline verifier reading the stored log alone. `context`
+({{shown}}) is implemented there as of contract version C4 v1.7, including the
+deployment-side requirement described in {{security-considerations}}: a node may
+name the labels an approval must bind, after which an answer that omits one is a
+refusal rather than a downgrade. The `aura-approval-v1` domain prefix in
+{{signed-payload}} is that implementation's; a version of this document adopted
+by a working group would be expected to change it.
 
 # Acknowledgments
 {:numbered="false"}

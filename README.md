@@ -169,8 +169,12 @@ Here is what that produces, and none of it lives in your graph:
   asks for oversight by a natural person; a log saying "a human approved" does
   not evidence one. The operator signs a statement bound to that one delivery
   with a key the node has never held, so the approver cannot deny it afterward
-  and the node cannot fabricate one. That is the half of *"who authorized this"*
-  every audit trail skips — including the IETF's own
+  and the node cannot fabricate one. That signature can also cover **what they
+  were shown** — digests of the rendered document, hashed on the approver's
+  machine, so the record says a person consented to *this* text and not merely
+  that somebody clicked yes on an identifier. Set `require_approval_context` and
+  an answer that binds nothing is a denial. That is the half of
+  *"who authorized this"* every audit trail skips — including the IETF's own
   [agent audit-trail draft](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/),
   which records a pseudonymous operator id with no signature and signs records
   with the *agent's* key. We wrote the fix up as an
@@ -252,7 +256,7 @@ other people's code.
 
 | | |
 |---|---|
-| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry** · **scoped skill credentials** · **the credential broker** · **the witness's own published log, and a monitor that catches one rewriting it** · cancellation · session resume · deterministic replay · **effect-level regression** · **period audit reports that verify standalone** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC · event-log rotation and recovery · **verifiable backup and restore** · **signing-key rotation, with the retired key's checkpoints still verifying** |
+| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry, with what they were shown inside the signature** · **scoped skill credentials** · **the credential broker** · **the witness's own published log, and a monitor that catches one rewriting it** · cancellation · session resume · deterministic replay · **effect-level regression** · **period audit reports that verify standalone** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC · event-log rotation and recovery · **verifiable backup and restore** · **signing-key rotation, with the retired key's checkpoints still verifying** |
 | **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · OpenTelemetry export · ML-BOM |
 | **Not there yet** | No multi-device view of one live session · **no failover if the node dies** — one process, and nothing starts a replacement (a restarted node *does* rebuild session state from the event log, and a lease keeps a second one from starting beside a live one) · TEE evidence reaches `bound`, never `verified` — vendor chain verification is declared and refused rather than stubbed · the SDKs are packaged but unpublished |
 

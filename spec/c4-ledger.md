@@ -1,6 +1,6 @@
 # C4 — Effect Ledger & Policy (frozen contract)
 
-**Protocol major: 1 · Status: v1.6 — FROZEN (2026-08-25: key succession, so a node can replace its signing key without orphaning what the old one signed — additive; v1.5 2026-08-16 added the `waived` flag, distinguishing a gate the node cleared from one a graph excused — additive; v1.4 2026-08-16 added the witness's own published log, signed `last-seen`, and `log_seq` on a countersignature — all additive; v1.3 2026-08-16 added the `approver` signature — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.7 — FROZEN (2026-09-02: the approval `context`, so a signature covers what the approver was shown and not only which delivery they answered — additive; v1.6 2026-08-25 added key succession, so a node can replace its signing key without orphaning what the old one signed — additive; v1.5 2026-08-16 added the `waived` flag, distinguishing a gate the node cleared from one a graph excused — additive; v1.4 2026-08-16 added the witness's own published log, signed `last-seen`, and `log_seq` on a countersignature — all additive; v1.3 2026-08-16 added the `approver` signature — additive; v1.2 2026-08-15 added the Merkle tree head, portable receipts, external witnessing and the `inference` citation — all additive, Phase 4; v1.1 2026-08-02 added `compensates` — additive, Phase 2, `aura undo`; base v1.0 frozen 2026-08-01, initial release, Phase 1). Changes: additive only; breaking = new major via RFC.**
 
 C1, C2 and C3 answer *what a skill is*, *how a graph is wired*, and *how
 envelopes flow*. None of them answer the question a node actually has to
@@ -126,6 +126,7 @@ node cannot forge *on someone else's behalf*; approval had none.
   "envelope": "01J9ZK2M1P…",
   "decision": "approve",
   "ts":       1754083200000,
+  "context":  [{ "label": "screen", "digest": "sha256:4b8c…" }],
   "sig":      "base64…"
 }
 ```
@@ -137,6 +138,9 @@ contract:
 "aura-approval-v1:" + node + ":" + session + ":" + envelope + ":" + decision + ":" + ts
 ```
 
+with `":" + context_digest` appended when `context` is present — see "What the
+approver was shown" below.
+
 | Field | Norm |
 |---|---|
 | `operator` | The enrolled identity that answered. A **claim**, not what verification trusts — see the roster rule below. |
@@ -144,11 +148,143 @@ contract:
 | `envelope` | The delivery the operator was shown — the envelope the executor held at the gate. Recorded rather than inferred because the entry's own `envelope` field is not the same id on both paths: a delivered effect seals the outbound envelope the gate released (whose `cause` is the held one), a denied effect seals the held envelope itself. |
 | `decision` | `approve` \| `deny`. Deliberately not the `policy_decisions` vocabulary: that is what a *policy* ruled about a class of effect, this is what a *person* answered about one delivery. |
 | `ts` | Unix millis at signing, inside the signed bytes so an approval cannot be backdated without invalidating itself. |
+| `context` | v1.7, additive. What the approver was shown, as labelled digests. Omitted — not null-valued — when the approval binds only the delivery, which is every approval made before v1.7. See below. |
 | `sig` | Base64 Ed25519 over the payload above. |
 
 Every component is inside the signature, so a valid approval cannot be
 transplanted: not to another node, another session, another delivery, another
 decision, or another time.
+
+### What the approver was shown (v1.7)
+
+v1.3 answered *which human*. It left open the question a review asks next, and
+the one a regulator asking about informed consent is actually asking: **what was
+in front of them?**
+
+A signature over an envelope id proves a named person answered *that* delivery.
+It says nothing about what they were reading when they did, so a surface that
+rendered a reassuring summary over an effect that did something else produced an
+approval indistinguishable from an honest one. Nothing in the record disagreed,
+because nothing in the record described the rendering at all.
+
+`context` closes that. The approver signs digests of the artifacts they were
+shown, so the record commits to the material as well as to the act.
+
+```json
+"context": [
+  { "label": "screen",      "digest": "sha256:4b8c…" },
+  { "label": "certificate", "digest": "sha256:9f2a…" }
+]
+```
+
+| Member | Norm |
+|---|---|
+| `label` | What kind of artifact this is. MUST match `^[a-z][a-z0-9_]{0,31}$`. The vocabulary is open: what a person must be shown before authorising an act is a question each deployment answers, and a fixed enumeration here would be this contract guessing at domains it does not know. |
+| `digest` | `<algorithm>:<lowercase hex>`. MUST match `^[a-z0-9][a-z0-9-]{0,15}:[0-9a-f]{64,128}$` — at least 256 bits. |
+
+**At least 256 bits.** The claim this member makes is that the artifact the
+signer held is the artifact an auditor now holds, so collision resistance is the
+property it rests on: an attacker able to produce two documents with one digest
+can show a person the harmless one and act on the other. The floor rules out the
+algorithms where that is a published result rather than a theory.
+
+**Digests, never content.** The value is a hash of the artifact and MUST NOT be
+the artifact. `payload_sha256` already carries that rule for the effect itself
+— "a payload carrying personal data must not become permanently undeletable" —
+and the artifacts most worth binding are exactly the ones most likely to carry
+such data. A digest binds them without republishing them.
+
+**At most 8 entries.** Not a storage limit; eight digests are a few hundred bytes. It is a
+limit on how much a person can be said to have examined in one decision. A
+client that binds forty artifacts to one click is describing a review that did
+not happen.
+
+#### The signed payload
+
+The payload above is a flat string on purpose — agreeing on the canonical
+encoding of a structure is a known source of both interoperability failure and
+signature bypass. So the context enters it as **one digest**:
+
+```
+context_digest = "sha256:" + lowercase_hex(SHA256(canonical))
+canonical      = entries sorted by label, each rendered as label "=" digest,
+                 joined by LF (U+000A), with no trailing newline
+```
+
+and the signed string becomes
+
+```
+"aura-approval-v1:" + node + ":" + session + ":" + envelope + ":" + decision
+                    + ":" + ts + ":" + context_digest
+```
+
+The reduction is injective, which is what makes it safe to stand in for the
+structure: a label cannot contain `=` and neither field can contain a newline,
+so the canonical string splits back into exactly one list of pairs. That is why
+the charsets above are normative rather than hygiene. A conforming
+implementation MUST refuse a duplicated label rather than resolving it — "the
+screen was this, and also that" has no meaning, and choosing either would be the
+implementation deciding what a person approved.
+
+Sorting is part of the canonical form, so the array order a client happened to
+send is not part of what was signed. An implementation SHOULD store the entries
+in canonical order once verified, so the entry hash is a function of the set
+rather than of transport ordering — the same reason `inference` is sorted.
+
+**An empty context is not a context.** Zero entries produce the pre-v1.7 payload
+exactly, so every signature made before this version still verifies and an
+implementation that never sends the field is unaffected.
+
+**It is not strippable.** Removing `context` from a signed approval leaves a
+signature made over the longer string, which then fails; adding one to an
+approval that had none fails the same way. Both directions fail closed.
+
+#### What it proves, and what it does not
+
+It proves the signer held, at signing time, an artifact hashing to that digest,
+and committed to it under their own key. An auditor holding the artifact can
+show it is the one that was approved — and, just as usefully, show when it is
+not.
+
+It does **not** prove the artifact was a faithful rendering of the effect. No
+node can check that: the node did not render it, and a node that produced the
+digest itself would be attesting to whatever it wished it had displayed. A
+conforming implementation MUST NOT supply the context. It comes from the side
+that did the rendering, and what it carries is the approver's own signature
+saying "this is what I read" — which is precisely the claim a person can be
+held to.
+
+The binding to the *effect* remains `envelope`; the binding to the *material* is
+this. Both sit inside one signature, so neither can be moved to another
+approval.
+
+#### Requiring it
+
+A node that needs consent evidenced rather than merely possible sets
+`require_approval_context` in its policy, listing the labels an approval must
+bind:
+
+```yaml
+require_approval_context: [screen]
+```
+
+after which an answer whose signature does not cover every listed label is a
+**denial**. Labels and not a count, deliberately: "at least one artifact" is
+satisfied by binding any artifact, including a constant, and would be an
+enforcement that enforces nothing.
+
+Setting it implies `require_signed_approval`, since a context is carried inside
+the signature and an unsigned answer cannot carry one. A conforming
+implementation MUST NOT accept an unsigned answer while requiring a context, and
+MUST refuse to start with an empty roster for the same reason
+`require_signed_approval` does.
+
+A conforming implementation SHOULD publish the required labels alongside the
+pending question, so a client learns the requirement before a human answers
+rather than by being refused afterwards — on every surface that raises one, not
+only the queue. C1 v1.6 carries them in [`std/confirmation@1`](c1-manifest.md)
+as `context_required`. It MUST NOT publish digests there: those are the
+approver's to compute.
 
 **Two checks, deliberately separated.** A conforming implementation MUST make
 both, and MUST NOT merge them:
@@ -186,6 +322,12 @@ its policy, after which an unsigned answer to a gate is a **denial**, not a
 downgrade — an enforcement that can be skipped by omitting a field enforces
 nothing. Such a node MUST refuse to start with an empty roster, since every
 gated effect would otherwise be unanswerable.
+
+A **present** `approver` carrying no `context` is unambiguous, and is its own
+weaker claim: a named person answered this delivery, and the record does not say
+what they were looking at. `aura verify` reports that count rather than folding
+it into the verdict, for the same reason it does not fold witness counts in —
+unbound is not corrupt.
 
 `aura verify` checks approver signatures during the same offline walk it uses
 for the chain, and an approval that no longer verifies makes the ledger
