@@ -45,6 +45,53 @@ hitos](GUIDE-ES.md#estado-de-los-hitos).
 | **Vista multidispositivo de una sesión viva** | Una sesión, un socket. La forma "muchos clientes mirando una conversación" no existe. |
 | **Un modelo activo para todo el nodo** | `model-manager` marca un modelo como activo y `llm-chat` lo sigue; el backend local del planner sigue leyendo `AURA_MODEL_FILE` con su propio default, así que el cambio mueve la mitad del sistema. Además cada uno carga su propia copia de los pesos, lo que con un 4B sale caro en una tarjeta pequeña. |
 
+## Medios, y la IA sobre ellos
+
+**Esto es lo siguiente que hay que construir.** Llegó desde NAAT, que contrató un
+CDN de video y un servidor de WebRTC en vez de esperar a esto — la decisión
+correcta, y no quita la necesidad. Cuatro capacidades que ese producto necesita
+son IA sobre video, y todas necesitan fotogramas:
+
+| Capacidad | Por qué el kernel es su sitio |
+|---|---|
+| **De-identificar un clip antes de publicarlo** | Caras y texto en pantalla fuera de un video que un clínico grabó en consultorio. Tiene un humano que aprueba y un artefacto que sellar, así que es un efecto `logical.*` y no un filtro. Y es la que obliga a la mitad difícil: **produce un activo de video nuevo**, así que este subsistema codifica, no sólo decodifica. |
+| **Transcribir y subtitular** | `sensorial.asr.transcribe` ya existe para el dictado. Apuntarlo a un video publicado exige demuxear el audio, y compra accesibilidad más un cuerpo de contenido buscable. |
+| **Borrador de un juicio de moderación** | Una red de salud sin criterio de moderación es una plataforma de desinformación con distintivos. Un borrador que cite qué contradice una afirmación, con una persona decidiendo detrás, es exactamente el patrón del gate. Necesita fotogramas muestreados y la transcripción. |
+| **Portada y texto alternativo** | Sugerir, con una persona confirmando. Fotogramas otra vez. |
+
+**Se construye aquí y corre al lado del kernel, no dentro.** Compartir el código
+es gratis; compartir el proceso es lo que cuesta. Tres razones, y ninguna es de
+estilo:
+
+- **Curvas de carga opuestas.** Aprobar un efecto son milisegundos y no puede
+  hacer cola nunca; codificar es un núcleo al tope durante minutos. Un solo
+  proceso significa que una subida de video puede dejar esperando a un clínico
+  que va a firmar una nota.
+- **Cruce de zonas.** El producto que consume esto mantiene los medios de la red
+  y los datos de paciente en procesos separados a propósito, y el kernel es donde
+  se maneja el dictado con PHI. Los bytes de un video público no van ahí — y
+  cuando el kernel **sí** cruza las dos, que sea en el gate de de-identificación,
+  que es donde el cruce está declarado y aprobado.
+- **El ancla deja de ser gobernable.** Quien consume fija un commit para poder
+  decir qué kernel selló una nota. Si libav viaja en el mismo artefacto, cada CVE
+  de códec obliga a mover la versión del kernel — y mover esa versión debe ser un
+  acto deliberado con un changelog que leer. **Así que esto sale como un segundo
+  artefacto con su propia línea de versión**, y el archivo de anclaje de quien
+  consume gana un segundo renglón en vez de que un renglón signifique dos cosas.
+
+**Forma del trabajo.** Una cola con `FOR UPDATE SKIP LOCKED` y N workers; ffmpeg
+para decodificar y codificar, Shaka Packager para HLS; un almacén de objetos para
+la salida. Semanas, no meses, y el paralelismo es el número de workers. La
+interfaz que ve quien consume sigue siendo la que ya es —entra un activo, sale
+una dirección—, así que nada río abajo se entera.
+
+**LiveKit va en el mismo subsistema.** Es lo que NAAT contrató para el vivo y
+para la teleconsulta, y ya habla las dos direcciones que esto necesita: Ingress
+acepta RTMP y WHIP, Egress devuelve fotogramas compuestos y HLS. Tiempo real de
+entrada, fotogramas de salida, una sola integración — y es lo que hace posible la
+IA sobre una transmisión en vivo, que es la línea de producto para la que existe
+toda esta sección.
+
 ## Trabajo de estándares
 
 | | Estado |

@@ -44,6 +44,50 @@ status](GUIDE.md#milestone-status).
 | **Multi-device view of one live session** | One session, one socket. The "many clients watching one conversation" shape does not exist. |
 | **One active model, for the whole node** | `model-manager` marks a model active and `llm-chat` follows it; the planner's local backend still reads `AURA_MODEL_FILE` with its own default, so the switch moves half the system. Both also load their own copy of the weights, which a 4B model makes expensive on a small card. |
 
+## Media, and the AI over it
+
+**This is the next thing to build.** It arrived from NAAT, which contracted a
+video CDN and a WebRTC server rather than wait for it — the right call, and it
+does not remove the need. Four capabilities that product needs are all AI over
+video, and every one of them needs frames:
+
+| Capability | Why the kernel is the right place |
+|---|---|
+| **De-identify a clip before it is published** | Faces and on-screen text out of a video a clinician recorded in a consulting room. It has a human who approves and an artefact to seal, so it is a `logical.*` effect and not a filter. It is also the one that forces the hard half: it **produces a new video asset**, so this subsystem encodes, not just decodes. |
+| **Transcribe and subtitle** | `sensorial.asr.transcribe` already exists for dictation. Pointing it at a published video needs the audio demuxed, and buys accessibility plus a searchable body of content. |
+| **Draft a moderation judgement** | A health network without a moderation criterion is a misinformation platform with badges. A draft that cites what an assertion contradicts, with a person deciding behind it, is exactly the gate pattern. Needs sampled keyframes and the transcript. |
+| **Poster and alt text** | Suggest, with a person confirming. Frames again. |
+
+**Build it here, run it beside the kernel — not inside it.** Sharing the code is
+free; sharing the process is what costs. Three reasons, and none is style:
+
+- **Opposite load curves.** Approving an effect is milliseconds and must never
+  queue; encoding is a core pinned for minutes. One process means a video upload
+  can starve a clinician waiting to sign a note.
+- **Zone crossing.** The consuming product keeps network media and patient data
+  in separate processes on purpose, and the kernel is where PHI dictation is
+  handled. Public video bytes do not belong in it — and when the kernel *does*
+  cross the two, it should be at the de-identification gate, where the crossing
+  is declared and approved.
+- **The pin stops being governable.** Consumers pin one commit so they can say
+  which kernel sealed a note. If libav ships in the same artefact, every codec
+  CVE forces a kernel version bump — and a bump is meant to be a deliberate act
+  with a changelog to read. **So this ships as a second artefact with its own
+  version line**, and a consumer's pin file grows a second entry rather than one
+  entry quietly meaning two things.
+
+**Shape of the work.** A job queue with `FOR UPDATE SKIP LOCKED` and N workers;
+ffmpeg for decode and encode, Shaka Packager for HLS; an object store for output.
+Weeks, not months, and the parallelism is the worker count. The interface a
+consumer sees stays what it already is — an asset in, an address out — so nothing
+downstream learns the difference.
+
+**LiveKit belongs in the same subsystem.** It is what NAAT contracted for live
+and for teleconsultation, and it already speaks the two directions this needs:
+Ingress accepts RTMP and WHIP, Egress hands back composed frames and HLS. Real
+time in, frames out, one integration — and it is what makes AI over a live
+stream possible at all, which is the product line this whole section is for.
+
 ## Standards work
 
 | | Status |
