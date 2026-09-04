@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -382,5 +383,41 @@ func TestAnIngestFailureIsReportedRatherThanSwallowed(t *testing.T) {
 	env := k.next(t, KindError)
 	if !strings.Contains(string(env.Payload), "does not fetch") {
 		t.Errorf("the error does not carry the reason: %s", env.Payload)
+	}
+}
+
+// A producer that omits `idem` must get no deduplication — not somebody else's
+// asset. Before the fallback to the envelope id, every keyless envelope in one
+// session shared the job key "<session>:", so the second video sent in a
+// session was answered with the first one's address.
+func TestKeylessEnvelopesDoNotShareOneIdempotencyKey(t *testing.T) {
+	k := newKernel(t)
+	in := &fakeIngest{assetID: "01ASSET"}
+	cat := &fakeCatalogue{asset: assets.Asset{
+		ID: "01ASSET", State: assets.StateReady, Address: "/media/out/01ASSET/master.m3u8",
+	}}
+	startClient(t, k, in, cat)
+
+	for i, uri := range []string{"https://example.test/first.mp4", "https://example.test/second.mp4"} {
+		if err := k.send(Envelope{
+			V: Protocol, ID: fmt.Sprintf("01IN%d", i), Kind: KindData, Session: "sess-1",
+			Port: PortIn, Schema: Schema,
+			Payload: json.RawMessage(fmt.Sprintf(`{"uri":%q}`, uri)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		k.next(t, KindDone)
+	}
+
+	if in.count() != 2 {
+		t.Fatalf("two different videos produced %d ingests", in.count())
+	}
+	if in.idems[0] == in.idems[1] {
+		t.Errorf("both envelopes were given the same job key %q, so the second video would be answered with the first one's address", in.idems[0])
+	}
+	for _, key := range in.idems {
+		if strings.HasSuffix(key, ":") {
+			t.Errorf("job key %q is just the session: every keyless envelope in it would collide", key)
+		}
 	}
 }

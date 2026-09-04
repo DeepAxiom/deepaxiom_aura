@@ -260,7 +260,17 @@ func (c *Client) handle(ctx context.Context, in Envelope) {
 
 	// The envelope's own idempotency key becomes the job's, so C3's
 	// at-least-once delivery cannot start a second encode of the same video.
-	result, err := c.Ingest.FromURI(chainCtx, asset.URI, ingest.Request{MIME: asset.MIME, Idem: in.Session + ":" + in.Idem})
+	//
+	// An envelope that carries no key falls back to its id, which is unique per
+	// message. Without that, every keyless envelope in one session would share
+	// the key "<session>:" — and the second video sent in that session would be
+	// answered with the first one's address. C3 requires the field, but a
+	// producer that omits it should get no deduplication, not the wrong asset.
+	idem := in.Idem
+	if idem == "" {
+		idem = in.ID
+	}
+	result, err := c.Ingest.FromURI(chainCtx, asset.URI, ingest.Request{MIME: asset.MIME, Idem: in.Session + ":" + idem})
 	if err != nil {
 		c.fail(in, err.Error())
 		return

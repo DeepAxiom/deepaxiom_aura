@@ -154,13 +154,13 @@ func (s *Server) createAsset(w http.ResponseWriter, r *http.Request) {
 		result, err = s.Ingest.FromReader(r.Context(), r.Body, req)
 	}
 	if err != nil {
-		status := http.StatusInternalServerError
-		switch {
-		case errors.Is(err, ingest.ErrTooLarge):
-			status = http.StatusRequestEntityTooLarge
-		case errors.Is(err, r.Context().Err()) && r.Context().Err() != nil:
-			// The client went away mid-upload; nobody is reading this answer.
+		// The client went away mid-upload; nobody is reading this answer.
+		if r.Context().Err() != nil {
 			return
+		}
+		status := http.StatusInternalServerError
+		if errors.Is(err, ingest.ErrTooLarge) {
+			status = http.StatusRequestEntityTooLarge
 		}
 		if status == http.StatusInternalServerError {
 			s.Log.Error("ingest failed", "error", err)
