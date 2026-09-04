@@ -915,6 +915,29 @@ jobs:
           CGO_ENABLED: '1'
         run: go test ./... -race
 
+  media-vulncheck:
+    name: known vulnerabilities (media)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: media/go.mod
+          cache-dependency-path: media/go.sum
+
+      # The kernel has had this since it had dependencies; this module shipped
+      # without it and immediately proved why it is needed — govulncheck found a
+      # reachable GO-2025 advisory in golang.org/x/text, pulled in by the
+      # Postgres driver and called on every connection this service opens.
+      #
+      # It also matters more here than anywhere else in the repo: separating
+      # this artefact from the kernel was justified BY vulnerability governance
+      # — a codec CVE must move this version line and not the kernel's — and a
+      # second artefact with no scanner is that argument abandoned.
+      - name: govulncheck
+        working-directory: media
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   media-e2e:
     name: media end to end (real ffmpeg)
     runs-on: ubuntu-latest
@@ -939,8 +962,16 @@ jobs:
           go-version-file: media/go.mod
           cache-dependency-path: media/go.sum
 
-      - name: ffmpeg is present
-        run: ffmpeg -version | head -1
+      # Installed rather than assumed. Which runner image ships ffmpeg is not a
+      # promise anybody made to this repository, and a job that fails because a
+      # base image changed teaches nothing about the code.
+      - name: ffmpeg
+        run: |
+          command -v ffmpeg >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          }
+          ffmpeg -version | head -1
 
       - name: build the binary
         working-directory: media
