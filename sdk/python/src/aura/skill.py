@@ -216,6 +216,7 @@ class Context:
         de-duplicates identical records anyway, so attaching it to the first
         or final chunk is enough and keeps the wire quiet.
         """
+        payload = _carry_correlation(self._incoming.payload, payload)
         schema = self._skill.egress_schema(port)
         seq = self._skill._next_seq(self.session, port)
         env = Envelope(
@@ -256,6 +257,32 @@ def _attest_wire(attest: "Attestation | dict | None") -> dict | None:
     if isinstance(attest, dict):
         return attest
     return attest.to_wire()
+
+
+def _carry_correlation(incoming: Any, outgoing: Any) -> Any:
+    """Put the caller's `correlate` back on the answer.
+
+    A graph is a pipeline, not a call: the envelope a skill emits is caused by
+    the delivery it received, not by the client message that started the chain,
+    so a caller waiting on a request/response cannot match the answer by cause
+    alone. What it can match on is a token it put in the request -- and the only
+    place that survives every hop is the payload.
+
+    So: if a delivery carried `correlate` and the answer does not set one, the
+    answer carries it back. Every skill needs this and none of them should have
+    to remember it; a refusal that cannot be matched to its caller is a refusal
+    nobody reads, and what an operator sees instead is a caller that waits until
+    its timeout.
+
+    Only added when it is absent, so a skill that means something else by that
+    key keeps it.
+    """
+    if not isinstance(incoming, dict) or not isinstance(outgoing, dict):
+        return outgoing
+    token = incoming.get("correlate")
+    if not isinstance(token, str) or not token or "correlate" in outgoing:
+        return outgoing
+    return {**outgoing, "correlate": token}
 
 
 class Skill:
@@ -451,7 +478,22 @@ class Skill:
         # unlike the browser client, which cannot set headers on a WebSocket and
         # has to use `?token=`. A header keeps the credential out of URLs, and
         # therefore out of anything that logs one.
-        opts: dict[str, Any] = {"ping_interval": 20, "ping_timeout": 10, "open_timeout": 10}
+        # `max_size` above the library default of 1 MiB, and this one is not a
+        # tuning knob: `std/document@1` and `std/image-study@1` carry their
+        # bytes inside the envelope by design, so a skill that reads a scanned
+        # page or a handful of imaging frames receives megabytes on a normal
+        # day. At the default the connection closes with 1009 in the middle of
+        # a working graph, and what an operator sees is a skill that
+        # "disconnected (no close frame received or sent)" and a caller that
+        # waits until its timeout -- neither of which names the size.
+        #
+        # Thirty-two mebibytes: sixteen rendered frames with room to spare, and
+        # still a ceiling. A skill is not a file transfer, and a payload past
+        # this is a design mistake that should announce itself.
+        opts: dict[str, Any] = {
+            "ping_interval": 20, "ping_timeout": 10, "open_timeout": 10,
+            "max_size": 32 * 1024 * 1024,
+        }
         if self._token:
             opts[_header_kwarg()] = {"Authorization": f"Bearer {self._token}"}
         while True:

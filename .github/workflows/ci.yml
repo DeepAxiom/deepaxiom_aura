@@ -172,7 +172,7 @@ jobs:
       # skill could not connect to a node running with its default auth at all.
       - name: python SDK
         working-directory: sdk/python
-        run: PYTHONPATH=src python -m unittest test_token -v
+        run: PYTHONPATH=src python -m unittest discover -p 'test_*.py' -v
 
       # No model is loaded: these cover the streaming buffer, whose failures
       # are silent — a mis-ordered chunk yields a worse transcript, never an

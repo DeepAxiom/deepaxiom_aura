@@ -33,7 +33,9 @@ import prompt as asking
 import vertex
 from aura import Attestation, Context, Skill, run_all, sha256_text
 
-logging.basicConfig(level=logging.INFO)
+# El nivel se puede subir sin tocar el codigo. Un lector que no dice nada
+# mientras trabaja es un lector que no se puede diagnosticar en un despliegue.
+logging.basicConfig(level=os.getenv("AURA_LOG_LEVEL", "INFO").upper())
 log = logging.getLogger("imaging-read")
 
 skill = Skill()
@@ -46,6 +48,10 @@ async def handle(ctx: Context) -> None:
     payload = ctx.payload or {}
     frames = payload.get("frames") or []
     language = str(skill.config.get("language", "es"))
+    # Un renglon al empezar, porque una lectura son segundos de espera y un
+    # operador que no ve nada no puede distinguir «pensando» de «colgado».
+    log.info("estudio recibido: %d imagenes, modalidad %s",
+             len(frames), payload.get("modality") or "?")
 
     if not frames:
         await ctx.error("status_out", "no llegó ninguna imagen que leer")
@@ -119,6 +125,7 @@ async def handle(ctx: Context) -> None:
             output_sha256=sha256_text(text),
         ),
     )
+    log.info("lectura terminada: %d hallazgos", len(out["findings"]))
     await ctx.status("status_out", "ready", f"{len(out['findings'])} hallazgos")
 
 

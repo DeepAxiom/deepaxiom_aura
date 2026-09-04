@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -546,7 +547,14 @@ func (s *Session) Route(env channel.Envelope) {
 	key := env.Node + "." + env.Port
 	dests := s.routes[key]
 	if len(dests) == 0 {
-		s.log.Debug("no route", "session", s.ID, "from", key, "kind", env.Kind)
+		// Warn and not Debug. An envelope with nowhere to go is a graph whose
+		// author believed an edge existed, and at Debug what an operator sees
+		// is a caller that waits until its timeout with nothing anywhere
+		// saying why -- the failure looks like the skill hanging, and the
+		// skill was never asked. The ports are named because the mistake is
+		// almost always a port name.
+		s.log.Warn("envelope has no edge to travel", "session", s.ID,
+			"from", key, "kind", env.Kind, "edges", s.edgeNames())
 		return
 	}
 	for _, d := range dests {
@@ -1170,4 +1178,17 @@ func (s *Session) emitError(causeID, msg string) {
 	if err := s.sendClient(raw, channel.QoSReliable); err != nil {
 		s.log.Error("error delivery failed", "err", err)
 	}
+}
+
+// edgeNames lists the sources this session routes from, for the warning above.
+// What a reader needs when an envelope found no edge is the set it could have
+// matched, and it is short: a graph with more than a handful of edges is a
+// graph nobody reads either.
+func (s *Session) edgeNames() []string {
+	out := make([]string, 0, len(s.routes))
+	for from := range s.routes {
+		out = append(out, from)
+	}
+	sort.Strings(out)
+	return out
 }
