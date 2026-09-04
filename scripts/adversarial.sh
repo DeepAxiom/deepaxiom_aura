@@ -143,20 +143,15 @@ code="$(status -X POST \
 [ "$code" = "201" ] || fail "registering a well-formed graph answered $code"
 pass "accepts a gate:none graph as a document"
 
-# Opening a session on it must fail: the capability is denied outright, and no
-# graph may talk its way past a deny.
-body="$(curl -s -i -N \
-  -H "Authorization: Bearer $POLICY_TOKEN" \
-  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-  "http://localhost:${PORT_POLICY}/v1/stream?graph=waiver" 2>&1 || true)"
-if printf '%s' "$body" | grep -q '101 Switching Protocols'; then
-  # The socket opened, so the refusal has to arrive as an error envelope
-  # instead — either shape is a refusal, neither is execution.
-  printf '%s' "$body" | grep -q '"kind":"error"' \
-    || fail "a session opened on a graph whose capability is denied"
-fi
-pass "refuses to run a graph whose capability is denied"
+# Whether the node then REFUSES to run it is checked by
+# scripts/policy_adversarial.py, not here, for two reasons this script cannot
+# fix. The refusal arrives as an envelope over a WebSocket, and curl does not
+# speak WebSocket: it prints the 101 and whatever bytes happened to arrive
+# before it stopped, so reading the answer with grep is a race — one this step
+# lost on a Linux runner and won on a developer's machine. And with no skill
+# connected, the node refuses with "no connected skill provides that
+# capability", which is what a node with NO policy answers too; a check that
+# accepts that refusal proves nothing about the policy at all.
 
 # ── the credential broker (C4 v1.3) ──────────────────────────────────
 #

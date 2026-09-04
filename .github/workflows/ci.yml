@@ -315,6 +315,19 @@ jobs:
       - name: a default node refuses what it should
         run: ./scripts/adversarial.sh ./kernel/aura
 
+      # `gate: none` is a graph author overruling the human checkpoint; a deny
+      # is the operator saying the effect must not happen at all. The claim is
+      # that the operator wins BEFORE the effect reaches the skill that would
+      # perform it, so this connects a real motor skill for the denied
+      # capability and requires that it is handed nothing. adversarial.sh
+      # cannot: the refusal arrives over a WebSocket, and its curl-based version
+      # of this check was both racy and satisfied by the refusal a node with no
+      # policy gives anyway.
+      - name: a graph cannot talk its way past a policy deny
+        run: |
+          pip install --quiet websockets
+          python scripts/policy_adversarial.py --port 9141 --data "$RUNNER_TEMP/aura-policy" --aura-binary ./kernel/aura
+
       # A witness is the party everyone else is asked to rely on, so "the
       # witness can be caught" is the claim that most needs testing the way it
       # would actually be attacked: by editing the database behind a running
