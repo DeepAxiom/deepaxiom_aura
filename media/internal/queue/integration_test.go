@@ -7,41 +7,29 @@ package queue_test
 //
 //	docker run --rm -e POSTGRES_PASSWORD=media -p 5433:5432 postgres:16
 //	AURA_MEDIA_TEST_DSN=postgres://postgres:media@localhost:5433/postgres go test ./...
+//
+// Every test runs in a schema of its own — see internal/testdb.
 
 import (
 	"context"
 	"errors"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"aura/media/internal/db"
 	"aura/media/internal/id"
 	"aura/media/internal/queue"
+	"aura/media/internal/testdb"
 )
 
+// Each test gets its own schema. These used to share one, and `go test ./...`
+// runs packages in parallel: the API's tests truncated these tables mid-test,
+// which showed up as a foreign key violation and a reclaim that found nothing.
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("AURA_MEDIA_TEST_DSN")
-	if dsn == "" {
-		t.Skip("AURA_MEDIA_TEST_DSN is not set; skipping the queue's Postgres tests")
-	}
-	ctx := context.Background()
-	pool, err := db.Open(ctx, dsn, 16)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if err := db.Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `TRUNCATE media_job, media_asset RESTART IDENTITY CASCADE`); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+	return testdb.Pool(t)
 }
 
 func newAsset(t *testing.T, pool *pgxpool.Pool) string {

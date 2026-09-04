@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -18,31 +17,19 @@ import (
 
 	"aura/media/internal/api"
 	"aura/media/internal/assets"
-	"aura/media/internal/db"
 	"aura/media/internal/ingest"
 	"aura/media/internal/queue"
 	"aura/media/internal/store"
+	"aura/media/internal/testdb"
 )
 
 const testToken = "test-token-that-is-long-enough"
 
 func newServer(t *testing.T) (*httptest.Server, *pgxpool.Pool, store.Store) {
 	t.Helper()
-	dsn := os.Getenv("AURA_MEDIA_TEST_DSN")
-	if dsn == "" {
-		t.Skip("AURA_MEDIA_TEST_DSN is not set; skipping the API's Postgres tests")
-	}
-	ctx := context.Background()
-	pool, err := db.Open(ctx, dsn, 8)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if err := db.Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `TRUNCATE media_job, media_asset RESTART IDENTITY CASCADE`); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
+	// A schema of this test's own: `go test ./...` runs packages in parallel,
+	// and these tables were being truncated by the queue's tests mid-request.
+	pool := testdb.Pool(t)
 	objects, err := store.NewFS(t.TempDir(), "", "/media")
 	if err != nil {
 		t.Fatalf("store: %v", err)
@@ -58,10 +45,7 @@ func newServer(t *testing.T) (*httptest.Server, *pgxpool.Pool, store.Store) {
 		Version:     "test",
 	}
 	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(func() {
-		ts.Close()
-		pool.Close()
-	})
+	t.Cleanup(ts.Close)
 	return ts, pool, objects
 }
 
