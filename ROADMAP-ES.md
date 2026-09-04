@@ -79,7 +79,8 @@ Dos cosas que rechaza, y las dos se encuentran el primer día:
 | Falta | Por qué importa |
 |---|---|
 | **Tapar lo quemado** | Hoy el requisito se empuja a quien manda, así que un estudio cuyos píxeles llevan un nombre sencillamente no se puede leer. Va aquí: es el mismo decodificado de fotogramas que el subsistema de medios ya hace, y tiene una persona que aprueba y un artefacto que sellar. |
-| **Un lector local** | Vertex significa que las imágenes salen del despliegue. Un nodo dentro de la red de un hospital va a querer que la lectura se quede ahí, y la forma de la skill no cambia: cambia el backend detrás de `vertex.py`. |
+| **Un lector local** | La API de Gemini significa que las imágenes salen del despliegue. Un nodo dentro de la red de un hospital va a querer que la lectura se quede ahí, y la forma de la skill no cambia: cambia el backend detrás de `reader.py`. |
+| **Un endpoint bajo contrato** | Vertex AI se construyó y se quitó: un segundo camino que nadie ejercita es un segundo camino que se pudre, y quien lo consume eligió la llave. Vuelve el día que un despliegue necesite acuerdo de tratamiento de datos, y es la misma forma: un módulo detrás de `reader.ask`. |
 | **Leer la serie entera y no una muestra** | Una tomografía son mil doscientas imágenes y al lector se le dan dieciséis. Muestrear es honesto y se declara en `limitations`, y no es lo mismo que leer el estudio. |
 
 ## Medios, y la IA sobre ellos
