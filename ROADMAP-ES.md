@@ -47,10 +47,12 @@ hitos](GUIDE-ES.md#estado-de-los-hitos).
 
 ## Medios, y la IA sobre ellos
 
-**Esto es lo siguiente que hay que construir.** Llegó desde NAAT, que contrató un
-CDN de video y un servidor de WebRTC en vez de esperar a esto — la decisión
-correcta, y no quita la necesidad. Cuatro capacidades que ese producto necesita
-son IA sobre video, y todas necesitan fotogramas:
+**El piso está construido; las capacidades no.** [`media/`](media/) es un segundo
+artefacto, `aura-media`, con su propia línea de versión: entra un activo, sale
+una dirección. Llegó desde NAAT, que contrató un CDN de video y un servidor de
+WebRTC en vez de esperar a esto — la decisión correcta, y no quita la necesidad.
+Cuatro capacidades que ese producto necesita son IA sobre video, todas necesitan
+fotogramas, y **ninguna de las cuatro está construida**:
 
 | Capacidad | Por qué el kernel es su sitio |
 |---|---|
@@ -79,13 +81,22 @@ estilo:
   artefacto con su propia línea de versión**, y el archivo de anclaje de quien
   consume gana un segundo renglón en vez de que un renglón signifique dos cosas.
 
-**Forma del trabajo.** Una cola con `FOR UPDATE SKIP LOCKED` y N workers; ffmpeg
-para decodificar y codificar, Shaka Packager para HLS; un almacén de objetos para
-la salida. Semanas, no meses, y el paralelismo es el número de workers. La
-interfaz que ve quien consume sigue siendo la que ya es —entra un activo, sale
-una dirección—, así que nada río abajo se entera.
+**Lo que existe.** Una cola con `FOR UPDATE SKIP LOCKED` y N workers, donde un
+claim es un lease y un worker que muere pierde su trabajo en vez de llevárselo;
+ffmpeg para decodificar y codificar; una escalera HLS que nunca escala hacia
+arriba, con keyframes alineados entre peldaños; fotogramas y portada salidos de
+esa misma decodificación, porque toda capacidad de arriba los necesita y
+decodificar dos veces cuesta el doble; un almacén de objetos cuyas fuentes no se
+le sirven a nadie. Se registra como `logical.media.transcode` (C1
+`format: projection`), así que un grafo lo puede llamar sin que la codificación
+entre al kernel.
 
-**LiveKit va en el mismo subsistema.** Es lo que NAAT contrató para el vivo y
+**Lo que falta del piso.** Un almacén compatible con S3 al lado del de archivos
+—la interfaz está, la implementación no—. Shaka Packager donde el muxer HLS de
+ffmpeg deje de alcanzar. Progreso por trabajo, en vez de un estado que sólo se
+mueve cuando el trabajo termina.
+
+**LiveKit va en el mismo subsistema, y no está empezado.** Es lo que NAAT contrató para el vivo y
 para la teleconsulta, y ya habla las dos direcciones que esto necesita: Ingress
 acepta RTMP y WHIP, Egress devuelve fotogramas compuestos y HLS. Tiempo real de
 entrada, fotogramas de salida, una sola integración — y es lo que hace posible la

@@ -177,9 +177,18 @@ func TestIdempotencyKeyDoesNotStartASecondEncode(t *testing.T) {
 
 	first := do(t, ts, http.MethodPost, "/v1/assets", testToken, "some bytes", headers)
 	second := do(t, ts, http.MethodPost, "/v1/assets", testToken, "some bytes", headers)
+	if first.StatusCode != http.StatusAccepted {
+		t.Errorf("the first upload answered %d, want 202", first.StatusCode)
+	}
+	// 200, not 202: nothing new was queued, and a client that reused one key for
+	// two different videos is being handed the first one's work.
+	if second.StatusCode != http.StatusOK {
+		t.Errorf("a redelivered upload answered %d, want 200", second.StatusCode)
+	}
 	var a, b struct {
-		ID    string `json:"id"`
-		JobID int64  `json:"job_id"`
+		ID           string `json:"id"`
+		JobID        int64  `json:"job_id"`
+		Deduplicated bool   `json:"deduplicated"`
 	}
 	decode(t, first, &a)
 	decode(t, second, &b)
@@ -195,6 +204,9 @@ func TestIdempotencyKeyDoesNotStartASecondEncode(t *testing.T) {
 	}
 	if jobs != 1 {
 		t.Errorf("%d jobs in the table, want 1", jobs)
+	}
+	if !b.Deduplicated {
+		t.Error("the second answer does not say it queued nothing")
 	}
 }
 

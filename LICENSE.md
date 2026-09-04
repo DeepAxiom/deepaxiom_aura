@@ -3,8 +3,8 @@
 **Deep Axiom** dual-licenses this repository by component. This file is the map;
 the enforceable text lives in [`LICENSE-AGPL-3.0.txt`](LICENSE-AGPL-3.0.txt) and
 [`LICENSE-APACHE-2.0.txt`](LICENSE-APACHE-2.0.txt), unmodified from the canonical
-FSF/ASF originals. The main source directories (`kernel/`, `ui/`, `sdk/`,
-`skills/`, `spec/`) also carry their own short `LICENSE` file pointing back here,
+FSF/ASF originals. The main source directories (`kernel/`, `media/`, `ui/`,
+`sdk/`, `skills/`, `spec/`) also carry their own short `LICENSE` file pointing back here,
 so the applicable terms are never more than one directory away from the code
 they cover.
 
@@ -33,6 +33,7 @@ different jobs, so they carry different licenses:
 | `scripts/` — build/release tooling | Apache-2.0 | `Apache-2.0` |
 | `kernel/` — the `aura` binary (the AURA kernel architecture) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | `ui/` — the control-plane frontend, embedded into the kernel binary | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
+| `media/` — the `aura-media` binary (the media subsystem: transcode, package, frames) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | `skills/` — first-party skills (echo, llm-chat, asr, tts, sentence-chunker, planner, model-manager, memory-context, postgres-cdc) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | Documentation at the repo root (this file, `README.md`, `README-ES.md`, `GUIDE.md`, `GUIDE-ES.md`, `ROADMAP.md`, `ROADMAP-ES.md`, `CONTRIBUTING.md`) | Apache-2.0 | `Apache-2.0` |
 
@@ -40,7 +41,7 @@ different jobs, so they carry different licenses:
 want its obligations — see below. Third-party skills you write yourself against
 the `sdk/` are **not** covered by this row: you license your own skill code
 however you choose, provided it doesn't ship modified copies of `kernel/`,
-`ui/`, or the first-party skills.
+`media/`, `ui/`, or the first-party skills.
 
 **What this means in practice:**
 - Writing and distributing your own skills (proprietary or open) against the
@@ -56,7 +57,7 @@ however you choose, provided it doesn't ship modified copies of `kernel/`,
 ## Commercial license
 
 Deep Axiom offers a commercial license that replaces the AGPLv3 obligations on
-`kernel/`, `ui/`, and `skills/` with ordinary commercial terms (no source
+`kernel/`, `media/`, `ui/`, and `skills/` with ordinary commercial terms (no source
 disclosure requirement, no copyleft on your modifications). It exists for:
 
 - Cloud/hosting providers who want to offer the kernel as a managed service

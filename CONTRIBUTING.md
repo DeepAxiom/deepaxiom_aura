@@ -28,6 +28,7 @@ have no automated tests at all.
 | Area | Language | License | Touch it for |
 |---|---|---|---|
 | `kernel/` | Go | AGPLv3 or commercial | Executor, routing, gateway, projections, registry, federation |
+| `media/` | Go | AGPLv3 or commercial | `aura-media`: the media subsystem — queue, ffmpeg pipeline, HLS packaging, object store. Its own module and its own version line, and it runs beside a node rather than inside one |
 | `sdk/python/` | Python | Apache-2.0 | The `aura` package every skill imports |
 | `sdk/node/` | TypeScript | Apache-2.0 | `@deepaxiom/aura` — types are generated from `spec/schemas`, never hand-edited |
 | `spec/` | Markdown + JSON Schema | Apache-2.0 | C1 (manifest), C2 (graph IR), C3 (channel protocol) |

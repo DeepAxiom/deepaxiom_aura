@@ -46,10 +46,12 @@ status](GUIDE.md#milestone-status).
 
 ## Media, and the AI over it
 
-**This is the next thing to build.** It arrived from NAAT, which contracted a
-video CDN and a WebRTC server rather than wait for it — the right call, and it
-does not remove the need. Four capabilities that product needs are all AI over
-video, and every one of them needs frames:
+**The floor is built; the capabilities are not.** [`media/`](media/) is a second
+artefact, `aura-media`, with its own version line: an asset in, an address out.
+It arrived from NAAT, which contracted a video CDN and a WebRTC server rather
+than wait for it — the right call, and it does not remove the need. Four
+capabilities that product needs are all AI over video, every one of them needs
+frames, and **none of the four is built**:
 
 | Capability | Why the kernel is the right place |
 |---|---|
@@ -76,13 +78,21 @@ free; sharing the process is what costs. Three reasons, and none is style:
   version line**, and a consumer's pin file grows a second entry rather than one
   entry quietly meaning two things.
 
-**Shape of the work.** A job queue with `FOR UPDATE SKIP LOCKED` and N workers;
-ffmpeg for decode and encode, Shaka Packager for HLS; an object store for output.
-Weeks, not months, and the parallelism is the worker count. The interface a
-consumer sees stays what it already is — an asset in, an address out — so nothing
-downstream learns the difference.
+**What exists.** A job queue with `FOR UPDATE SKIP LOCKED` and N workers, where
+a claim is a lease and a worker that dies loses its job rather than taking it
+with it; ffmpeg for decode and encode; an HLS ladder that never upscales, with
+keyframes aligned across rungs; still frames and a poster out of that same
+decode, because every capability above needs frames and decoding twice costs
+twice; an object store whose sources are served to nobody. It registers as
+`logical.media.transcode` (C1 `format: projection`), so a graph can call it
+without the encode entering the kernel.
 
-**LiveKit belongs in the same subsystem.** It is what NAAT contracted for live
+**What is left in the floor.** An S3-compatible store beside the filesystem one
+— the interface is there, the implementation is not. Shaka Packager where
+ffmpeg's HLS muxer stops being enough. Per-job progress, rather than a state
+that only moves when the job ends.
+
+**LiveKit belongs in the same subsystem, and is not started.** It is what NAAT contracted for live
 and for teleconsultation, and it already speaks the two directions this needs:
 Ingress accepts RTMP and WHIP, Egress hands back composed frames and HLS. Real
 time in, frames out, one integration — and it is what makes AI over a live

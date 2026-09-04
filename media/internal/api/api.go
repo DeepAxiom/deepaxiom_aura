@@ -171,8 +171,18 @@ func (s *Server) createAsset(w http.ResponseWriter, r *http.Request) {
 
 	// 202, not 201: the asset exists, the address does not yet. Saying 201 here
 	// would be telling a caller to fetch something that is still encoding.
+	//
+	// 200 when nothing new was queued — the same bytes, or an idempotency key
+	// this node has already answered. The distinction matters: a client that
+	// reuses one key for two different videos gets the first one's address back,
+	// which is correct idempotency and a nasty surprise if the answer looks
+	// identical to "your upload was accepted".
+	status := http.StatusAccepted
+	if result.Deduplicated {
+		status = http.StatusOK
+	}
 	w.Header().Set("Location", "/v1/assets/"+result.Asset.ID)
-	writeJSON(w, http.StatusAccepted, assetView{
+	writeJSON(w, status, assetView{
 		Asset:        result.Asset,
 		JobID:        result.Job.ID,
 		JobState:     string(result.Job.State),

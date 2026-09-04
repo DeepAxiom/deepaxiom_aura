@@ -834,3 +834,116 @@ jobs:
         run: |
           pkill -f 'aura up' || true
           pkill -f 'python main.py' || true
+
+  media:
+    name: media subsystem (Go)
+    runs-on: ubuntu-latest
+
+    # A real Postgres, because the queue's central claim — N workers dividing
+    # the queue with FOR UPDATE SKIP LOCKED rather than queueing behind each
+    # other — is a claim about a server. A fake would agree with whatever this
+    # code did.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: media
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      AURA_MEDIA_TEST_DSN: postgres://postgres:media@localhost:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v4
+      # Its own go.mod, and its own Go version line with it: this artefact is
+      # versioned apart from the kernel on purpose, so a codec CVE here is never
+      # a reason to move the kernel's version.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: media/go.mod
+          cache-dependency-path: media/go.sum
+
+      - name: gofmt
+        working-directory: media
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go vet
+        working-directory: media
+        run: go vet ./...
+
+      - name: go build
+        working-directory: media
+        run: go build ./...
+
+      - name: go test
+        working-directory: media
+        run: go test ./... -cover
+
+      # Workers, leases and one connection per skill: concurrent by
+      # construction, so the race detector earns its keep here as much as in the
+      # kernel. Separate step and cgo on, for the same reason it is there: a race
+      # report must never be confused with a build problem.
+      - name: go test -race
+        working-directory: media
+        env:
+          CGO_ENABLED: '1'
+        run: go test ./... -race
+
+  media-e2e:
+    name: media end to end (real ffmpeg)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: media
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: media/go.mod
+          cache-dependency-path: media/go.sum
+
+      - name: ffmpeg is present
+        run: ffmpeg -version | head -1
+
+      - name: build the binary
+        working-directory: media
+        run: go build -ldflags "-X main.version=$(cat VERSION)" -o aura-media ./cmd/aura-media
+
+      # Everything this covers is invisible to a unit test: whether the argv the
+      # builders produce is argv ffmpeg accepts, whether the package it writes is
+      # one a player can read, and whether the address handed back serves bytes.
+      # Two bugs came out of running it — an idempotency key honoured after the
+      # upload rather than before it, and a rendition width two pixels off what
+      # the playlist claimed — and neither was visible to anything else.
+      - name: an asset in, an address out
+        env:
+          AURA_MEDIA_TEST_DSN: postgres://postgres:media@localhost:5432/postgres
+        run: ./scripts/media_e2e.sh ./media/aura-media
+
+      - name: always
+        if: always()
+        run: pkill -f 'aura-media serve' || true
