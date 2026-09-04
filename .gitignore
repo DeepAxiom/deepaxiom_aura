@@ -1,5 +1,8 @@
 # build artifacts
 kernel/aura.exe
+kernel/aura
+media/aura-media
+media/aura-media.exe
 *.exe
 *.exe~
 *.db
@@ -35,16 +38,29 @@ release/
 # personal scratch notes, not project docs
 /TIPS
 
-# examples/ — local-only demo playground, not part of the published repo.
+# examples/ — local-only demo playground, with one exception that is not a demo.
 # The general-purpose skills that used to live under here (tuya-status,
 # tuya-command, vision-reasoner, notify-alert, vision-ask) were moved to
 # skills/, the only directory whose skills are considered "published" by
-# this repo. What remains under examples/ (mocks, the Frigate bridge, the
-# voice web client) is demo glue that needs real accounts/hardware/heavy
-# setup to exercise end to end — kept on disk for local use, not tracked.
-examples/
+# this repo. Anything else that lands here is glue needing real
+# accounts/hardware/heavy setup — kept on disk for local use, not tracked.
+#
+# expose-app IS tracked, because three things in this repository depend on it
+# and none of them is a demo: ci.yml copies app.mjs to prove that `write: true`
+# becomes a gated motor capability, docker-compose.yml builds a service from its
+# Dockerfile, and four documents link to the directory (check_links.py fails on
+# a link that does not resolve). Ignoring it meant all three worked here and
+# broke on any clean checkout — which is the whole point of a clean checkout.
+examples/*
+!examples/expose-app/
+examples/expose-app/node_modules/
+examples/expose-app/package-lock.json
 
 # aura-landing/ — the marketing site. It was here; it is its own repository
 # now (apps/aura-landing). Listed so a stray checkout of it beside the kernel
 # cannot be committed back into this one by `git add .`.
 aura-landing/
+
+# reglas y descartes locales, no documentacion publicada del repo
+/CLAUDE.md
+/NO_AGAIN.md

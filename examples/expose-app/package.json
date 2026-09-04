@@ -1,0 +1,7 @@
+{
+  "name": "aura-expose-app-example",
+  "private": true,
+  "type": "module",
+  "description": "An existing backend announcing its own functions as skills.",
+  "dependencies": { "@deepaxiom/aura": "file:../../sdk/node" }
+}
