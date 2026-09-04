@@ -78,7 +78,8 @@ Two things it refuses, and both are refusals a consumer will meet on day one:
 | Missing | Why it matters |
 |---|---|
 | **Mask the burn-in** | Today the requirement is pushed to the sender, so a study whose pixels carry a name simply cannot be read. It belongs here: it is the same frame decode the media subsystem already does, and it has a person who approves and an artefact to seal. |
-| **A local reader** | Vertex means the frames leave the deployment. A node inside a hospital's own network will want the read to stay there, and the skill's shape does not change — only the backend behind `vertex.py`. |
+| **A local reader** | The Gemini API means the frames leave the deployment. A node inside a hospital's own network will want the read to stay there, and the skill's shape does not change — only the backend behind `reader.py`. |
+| **An endpoint under a contract** | Vertex AI was built and then removed: a second path nobody exercises is a second path that rots, and the consumer chose the key. It comes back the day a deployment needs a data processing agreement, and it is the same shape — one module behind `reader.ask`. |
 | **Read a whole series, not a sample** | A CT is twelve hundred images and a reader is given sixteen. Sampling is honest and stated in `limitations`, and it is not the same as reading the study. |
 
 ## Media, and the AI over it
