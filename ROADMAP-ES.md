@@ -45,6 +45,43 @@ hitos](GUIDE-ES.md#estado-de-los-hitos).
 | **Vista multidispositivo de una sesión viva** | Una sesión, un socket. La forma "muchos clientes mirando una conversación" no existe. |
 | **Un modelo activo para todo el nodo** | `model-manager` marca un modelo como activo y `llm-chat` lo sigue; el backend local del planner sigue leyendo `AURA_MODEL_FILE` con su propio default, así que el cambio mueve la mitad del sistema. Además cada uno carga su propia copia de los pesos, lo que con un 4B sale caro en una tarjeta pequeña. |
 
+## Leer una imagen, y las dos negativas que trae
+
+**Construido:** `deepaxiom/cognitive/imaging-read` — entra una muestra de
+imágenes de un estudio, salen hallazgos con coordenadas normalizadas, la
+correlación contra el informe que ya está en el expediente, un borrador de
+impresión y lo que no se pudo decir. Dos esquemas nuevos, `std/image-study@1` y
+`std/imaging-finding@1`.
+
+**Cognitiva y nunca motor**, que es todo el arreglo: aquí no se escribe nada. El
+borrador llega a un expediente sólo por un efecto `motor.*` que aprueba un
+médico con nombre en el gate, y la atestación C5 que sale con la respuesta es lo
+que le permite a ese efecto decir sobre qué base ocurrió: qué modelo, qué
+revisión, sobre qué prompt. Sin ella una bitácora dice quién firmó y no qué le
+enseñaron.
+
+Dos cosas que rechaza, y las dos se encuentran el primer día:
+
+- **La otra puerta de Gemini.** La Generative Language API son los mismos
+  modelos detrás de otro endpoint, y ese endpoint **no está cubierto por el
+  acuerdo HIPAA de Google**. Lo que viaja aquí es imagen de una persona, así que
+  la skill habla con Vertex AI sobre un proyecto con el acuerdo en vigor, y
+  nombra al host prohibido en la negativa en vez de dejarlo fuera de una lista
+  que alguien podría ensanchar.
+- **Imágenes que nadie des-identificó.** Un ultrasonido lleva el nombre de la
+  paciente **quemado en los píxeles**, no sólo en las etiquetas — DICOM hasta
+  tiene un atributo que lo dice, `BurnedInAnnotation`. Esta skill no puede
+  revisar píxeles, así que exige que quien las manda declare que las limpió, y
+  si no, declina. Ser el sitio donde nadie revisó es peor que declinar.
+
+**Lo que todavía no hace**, en el orden en que va a hacer falta:
+
+| Falta | Por qué importa |
+|---|---|
+| **Tapar lo quemado** | Hoy el requisito se empuja a quien manda, así que un estudio cuyos píxeles llevan un nombre sencillamente no se puede leer. Va aquí: es el mismo decodificado de fotogramas que el subsistema de medios ya hace, y tiene una persona que aprueba y un artefacto que sellar. |
+| **Un lector local** | Vertex significa que las imágenes salen del despliegue. Un nodo dentro de la red de un hospital va a querer que la lectura se quede ahí, y la forma de la skill no cambia: cambia el backend detrás de `vertex.py`. |
+| **Leer la serie entera y no una muestra** | Una tomografía son mil doscientas imágenes y al lector se le dan dieciséis. Muestrear es honesto y se declara en `limitations`, y no es lo mismo que leer el estudio. |
+
 ## Medios, y la IA sobre ellos
 
 **El piso está construido; las capacidades no.** [`media/`](media/) es un segundo

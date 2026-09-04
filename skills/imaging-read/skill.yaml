@@ -1,0 +1,72 @@
+id: "deepaxiom/cognitive/imaging-read"
+version: "0.1.0"
+protocol: "1"
+
+name: "Imaging read"
+description: "Reads a sample of frames from an imaging study and returns findings with normalised coordinates, a correlation against the report on file, a draft impression and what it could not tell. Cognitive and not motor on purpose: nothing here writes. The draft reaches a record only when a named clinician approves it at the gate, and the effect that writes it cites this inference through its C5 attestation."
+capability: "cognitive.imaging.read"
+type: cognitive
+
+format: source
+runtime:
+  language: python
+  version: ">=3.11"
+
+ports:
+  ingress:
+    - name: study_in
+      schema: "std/image-study@1"
+  egress:
+    - name: finding_out
+      schema: "std/imaging-finding@1"
+    - name: status_out
+      schema: "std/status@1"
+
+requirements:
+  memory: "512Mi"
+  accelerator: none
+
+permissions:
+  # Vertex AI, and only Vertex AI. The Generative Language API
+  # (generativelanguage.googleapis.com) is the same models behind a different
+  # door, and that door is not covered by Google's HIPAA BAA -- so it is not on
+  # this list, and a config pointing at it is refused rather than allowed
+  # quietly. What travels here is a person's imaging.
+  egress_http:
+    - "aiplatform.googleapis.com"
+    - "*.aiplatform.googleapis.com"
+    - "oauth2.googleapis.com"
+  filesystem: none
+  channels: declared-only
+
+config:
+  - key: "project"
+    type: string
+    default: ""
+    description: "Google Cloud project with the BAA in force. Empty means this skill has no reader, and it says so instead of answering."
+  - key: "location"
+    type: string
+    default: "us-central1"
+    description: "Vertex AI region. It decides where the frames are processed, which is a data-residency question before it is a latency one."
+  - key: "model"
+    type: string
+    default: "gemini-3.7-flash"
+    description: "Model id at that endpoint. Pinned rather than aliased: 'latest' means the reading changes under a clinician without anybody deciding it, and the attestation would name something that no longer exists."
+  - key: "temperature"
+    type: float
+    default: 0.0
+    min: 0.0
+    max: 1.0
+    description: "Zero by default. Two reads of the same study should not disagree because of sampling, and a clinician comparing today against last week is entitled to that."
+  - key: "max_findings"
+    type: int
+    default: 12
+    min: 1
+    max: 32
+    description: "Ceiling on what one read returns. A reader that points at forty things has pointed at nothing."
+  - key: "language"
+    type: string
+    default: "es"
+    description: "Language of the labels and the draft. It is read by a person, so it follows them and not the model's default."
+
+signature: null

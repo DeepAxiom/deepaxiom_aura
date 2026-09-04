@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:std:image-study@1",
+  "title": "std/image-study@1",
+  "description": "A handful of frames from one imaging study, with what is already known about it. Frames travel IN the envelope rather than by address, unlike std/media-asset@1, and the reason is the opposite of that schema's: these are pixels of a named person, and an address would mean whoever fetches them holds a credential to the archive. A reader is given a sample -- eight or sixteen frames, not the twelve hundred a CT has -- so an envelope stays a message. `deidentified` is a statement by the sender, not something this schema can verify: an ultrasound carries the patient's name burned into the pixels, and masking it is the sender's job.",
+  "type": "object",
+  "required": [
+    "frames",
+    "deidentified"
+  ],
+  "properties": {
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "description": "The sample, in the order a reader should see it.",
+      "items": {
+        "type": "object",
+        "required": [
+          "mime",
+          "bytes_b64"
+        ],
+        "properties": {
+          "mime": {
+            "enum": [
+              "image/jpeg",
+              "image/png"
+            ],
+            "description": "Rendered, not raw DICOM: a reader looks at what a person would look at, windowed the way the archive rendered it."
+          },
+          "bytes_b64": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "instance_uid": {
+            "type": "string",
+            "description": "SOPInstanceUID, so a finding can name the image it is on rather than a position in this array."
+          },
+          "series_uid": {
+            "type": "string"
+          },
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Frame number within the instance, for a multi-frame image."
+          }
+        }
+      }
+    },
+    "deidentified": {
+      "type": "boolean",
+      "description": "That the sender removed the identifiers -- the DICOM tags AND anything burned into the pixels. A reader refuses when this is false: it cannot check, and being the place where nobody checked is worse than refusing."
+    },
+    "modality": {
+      "type": "string",
+      "description": "DICOM modality of the study: CT, MR, US, CR, MG."
+    },
+    "body_part": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string",
+      "description": "What the study is called."
+    },
+    "report": {
+      "type": "string",
+      "description": "The report already on file, when there is one. A reader is asked to correlate with it and to say where it disagrees -- not to repeat it."
+    },
+    "question": {
+      "type": "string",
+      "description": "What the clinician is asking. Empty means a general read."
+    },
+    "prior": {
+      "type": "string",
+      "description": "The report of an earlier study of the same person, for comparison."
+    }
+  }
+}

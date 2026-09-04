@@ -207,6 +207,12 @@ jobs:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
+      - name: imaging-read
+        working-directory: skills/imaging-read
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
       - name: planner
         working-directory: skills/planner
         env:

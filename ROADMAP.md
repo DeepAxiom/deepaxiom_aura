@@ -44,6 +44,41 @@ status](GUIDE.md#milestone-status).
 | **Multi-device view of one live session** | One session, one socket. The "many clients watching one conversation" shape does not exist. |
 | **One active model, for the whole node** | `model-manager` marks a model active and `llm-chat` follows it; the planner's local backend still reads `AURA_MODEL_FILE` with its own default, so the switch moves half the system. Both also load their own copy of the weights, which a 4B model makes expensive on a small card. |
 
+## Reading an image, and the two refusals that come with it
+
+**Built:** `deepaxiom/cognitive/imaging-read` — a sample of frames from one
+imaging study in, findings with normalised coordinates out, plus a correlation
+against the report on file, a draft impression and what it could not tell. Two
+new schemas, `std/image-study@1` and `std/imaging-finding@1`.
+
+**Cognitive and never motor**, which is the whole arrangement: nothing in it
+writes. The draft becomes a line in a record only through a `motor.*` effect
+that a named clinician approves at the gate, and the C5 attestation emitted with
+the answer is what lets that effect say on what basis it happened — which model,
+which revision, over which prompt. Without it a ledger can say who signed and
+not what they were shown.
+
+Two things it refuses, and both are refusals a consumer will meet on day one:
+
+- **The other Gemini door.** The Generative Language API is the same models
+  behind a different endpoint, and that endpoint is not covered by Google's
+  HIPAA BAA. What travels here is a person's imaging, so the skill talks to
+  Vertex AI on a project with the agreement in force, and names the forbidden
+  host in the refusal rather than leaving it off a list somebody could widen.
+- **Frames nobody de-identified.** An ultrasound carries the patient's name
+  *burned into the pixels*, not only in the tags — DICOM even has an attribute
+  that says so, `BurnedInAnnotation`. This skill cannot check pixels, so it
+  requires the sender to state that they were cleaned, and declines otherwise.
+  Being the place where nobody checked is worse than declining.
+
+**What it does not do yet**, in the order it will be wanted:
+
+| Missing | Why it matters |
+|---|---|
+| **Mask the burn-in** | Today the requirement is pushed to the sender, so a study whose pixels carry a name simply cannot be read. It belongs here: it is the same frame decode the media subsystem already does, and it has a person who approves and an artefact to seal. |
+| **A local reader** | Vertex means the frames leave the deployment. A node inside a hospital's own network will want the read to stay there, and the skill's shape does not change — only the backend behind `vertex.py`. |
+| **Read a whole series, not a sample** | A CT is twelve hundred images and a reader is given sixteen. Sampling is honest and stated in `limitations`, and it is not the same as reading the study. |
+
 ## Media, and the AI over it
 
 **The floor is built; the capabilities are not.** [`media/`](media/) is a second

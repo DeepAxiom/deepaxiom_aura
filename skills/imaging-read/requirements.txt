@@ -1,0 +1,7 @@
+websockets>=12.0
+pyyaml>=6.0
+# Vertex AI is reached with Application Default Credentials -- a service account
+# file or the metadata server. The HTTP call itself is urllib: one POST with a
+# bearer token does not need a client library, and a dependency on the critical
+# path of a clinical read is a dependency somebody has to audit.
+google-auth>=2.30
