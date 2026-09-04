@@ -4,7 +4,3 @@ pyyaml>=6.0
 # the one this reader uses and hand-rolling it would be tracking somebody else's
 # API by hand.
 google-genai>=2.22
-# The Vertex door reaches its endpoint with Application Default Credentials --
-# a service account file or the metadata server. The HTTP call itself is
-# urllib: one POST with a bearer token does not need a client library.
-google-auth>=2.30

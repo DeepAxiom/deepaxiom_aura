@@ -3,7 +3,7 @@ version: "0.1.0"
 protocol: "1"
 
 name: "Imaging read"
-description: "Reads a sample of frames from an imaging study and returns findings with normalised coordinates, a correlation against the report on file, a draft impression and what it could not tell. Cognitive and not motor on purpose: nothing here writes. The draft reaches a record only when a named clinician approves it at the gate, and the effect that writes it cites this inference through its C5 attestation. Two doors, chosen by the deployment: the Gemini API, or Vertex AI on a project with a data processing agreement. Which one answered is written into the attestation."
+description: "Reads a sample of frames from an imaging study and returns findings with normalised coordinates, a correlation against the report on file, a draft impression and what it could not tell. Cognitive and not motor on purpose: nothing here writes. The draft reaches a record only when a named clinician approves it at the gate, and the effect that writes it cites this inference through its C5 attestation, which names the engine that answered."
 capability: "cognitive.imaging.read"
 type: cognitive
 
@@ -27,33 +27,21 @@ requirements:
   accelerator: none
 
 permissions:
-  # Both doors, and the deployment picks one. Listing them is not the same as
-  # approving them: `generativelanguage.googleapis.com` is the Gemini API, which
-  # is **not** covered by Google's data processing agreement, and a node that
-  # sets a key for it is deciding that these frames leave without that contract
-  # behind them. The attestation says which door answered, so the decision is
-  # readable afterwards rather than remembered.
+  # One host, and naming it is not approving it: the Gemini API is **not**
+  # covered by Google's data processing agreement, and a node that sets a key
+  # for it is deciding that these frames leave without that contract behind
+  # them. That decision is the deployment's; what this manifest owes is that it
+  # is visible here and in the attestation of every read.
   egress_http:
     - "generativelanguage.googleapis.com"
-    - "aiplatform.googleapis.com"
-    - "*.aiplatform.googleapis.com"
-    - "oauth2.googleapis.com"
   filesystem: none
   channels: declared-only
 
 config:
-  - key: "project"
-    type: string
-    default: ""
-    description: "Google Cloud project with the BAA in force. Empty falls back to GOOGLE_CLOUD_PROJECT in the environment, which is how a container is configured on first boot; empty in both means this node has no reader, and it says so instead of answering. Never a credential: those come from GOOGLE_APPLICATION_CREDENTIALS, because a key in a config field is a key in the control plane's UI."
-  - key: "location"
-    type: string
-    default: "us-central1"
-    description: "Vertex AI region. It decides where the frames are processed, which is a data-residency question before it is a latency one."
   - key: "model"
     type: string
     default: ""
-    description: "Model id at whichever door is configured. Empty means the door's own default -- models/gemini-3-flash-preview for the Gemini API, gemini-3.7-flash for Vertex. Pinned rather than aliased: 'latest' means the reading changes under a clinician without anybody deciding it, and the attestation would name something that no longer exists."
+    description: "Model id. Empty means models/gemini-3-flash-preview. Pinned rather than aliased: 'latest' means the reading changes under a clinician without anybody deciding it, and the attestation would name something that no longer exists."
   - key: "thinking"
     type: string
     default: "high"

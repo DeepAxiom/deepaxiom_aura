@@ -8,9 +8,8 @@ like a box over the right one.
 import json
 import unittest
 
-import doors
 import findings
-import vertex
+import reader
 
 KNOWN = {"1.2.3", "1.2.4"}
 
@@ -79,47 +78,21 @@ class WhenTheAnswerIsBad(unittest.TestCase):
         self.assertNotIn("confidence", out["findings"][0])
 
 
-class TheTwoDoors(unittest.TestCase):
-    """Cual puerta contesta lo elige quien despliega; que quede escrito, no."""
+class HowItRefuses(unittest.TestCase):
+    """Sin llave no hay lectura, y lo dice."""
 
-    def test_the_vertex_client_refuses_to_be_aimed_at_the_other_door(self):
-        # No es una regla de politica --esa se decide poniendo una llave u otra--
-        # sino de correccion: otra forma de peticion y otra autenticacion.
-        with self.assertRaises(vertex.NoReader) as refusal:
-            vertex.ask("https://generativelanguage.googleapis.com/v1/x:generateContent",
-                       "token", {})
-        self.assertIn("generativelanguage", str(refusal.exception))
-
-    def test_the_gemini_door_without_a_key_says_what_is_missing(self):
-        with self.assertRaises(doors.NoReader) as refusal:
-            doors.ask(doors.GEMINI, "models/gemini-3-flash-preview", "", "s", [], {}, 0.0, "high")
+    def test_without_a_key_it_says_what_is_missing(self):
+        with self.assertRaises(reader.NoReader) as refusal:
+            reader.ask("models/gemini-3-flash-preview", "", "s", [], {}, 0.0, "high")
         self.assertIn("llave", str(refusal.exception))
 
-    def test_an_unknown_door_is_not_guessed(self):
-        with self.assertRaises(doors.NoReader):
-            doors.ask("la-de-al-lado", "m", "k", "s", [], {}, 0.0, "high")
-
-    def test_a_node_without_a_project_says_so_instead_of_guessing(self):
-        with self.assertRaises(vertex.NoReader) as refusal:
-            vertex.endpoint("", "us-central1", "gemini-3.7-flash")
-        self.assertIn("proyecto", str(refusal.exception))
-
-    def test_the_address_is_regional(self):
-        url = vertex.endpoint("un-proyecto", "europe-west4", "gemini-3.7-flash")
-        self.assertTrue(url.startswith("https://europe-west4-aiplatform.googleapis.com/"))
-        self.assertIn("/projects/un-proyecto/locations/europe-west4/", url)
-
-    def test_an_answer_with_no_candidate_is_empty_and_not_a_crash(self):
-        self.assertEqual(vertex.text_of({}), "")
-        self.assertEqual(vertex.text_of({"candidates": [{"content": {"parts": []}}]}), "")
-        self.assertEqual(
-            vertex.text_of({"candidates": [{"content": {"parts": [{"text": "hola"}]}}]}),
-            "hola")
+    def test_the_engine_has_a_name_for_the_record(self):
+        # Va en la atestacion C5 de cada lectura: sin el, «un modelo leyo esto»
+        # y «esta imagen salio por un endpoint sin contrato» son la misma frase.
+        self.assertEqual(reader.ENGINE, "gemini-api")
 
 
-
-
-class WhereTheProjectComesFrom(unittest.TestCase):
+class WhereTheModelComesFrom(unittest.TestCase):
     """C1 config primero, luego el entorno, luego lo declarado.
 
     El entorno esta ahi porque un contenedor no tiene plano de control en su
@@ -138,25 +111,26 @@ class WhereTheProjectComesFrom(unittest.TestCase):
     def test_the_config_wins(self):
         import os
         from unittest import mock
-        self.main.skill.config["project"] = "el-de-la-config"
-        with mock.patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "el-del-entorno"}):
+        self.main.skill.config["model"] = "el-de-la-config"
+        with mock.patch.dict(os.environ, {"IMAGING_MODEL": "el-del-entorno"}):
             self.assertEqual(
-                self.main.setting("project", "GOOGLE_CLOUD_PROJECT", ""), "el-de-la-config")
+                self.main.setting("model", "IMAGING_MODEL", "el-declarado"), "el-de-la-config")
 
     def test_the_environment_fills_in(self):
         import os
         from unittest import mock
-        self.main.skill.config["project"] = ""
-        with mock.patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "el-del-entorno"}):
+        self.main.skill.config["model"] = ""
+        with mock.patch.dict(os.environ, {"IMAGING_MODEL": "el-del-entorno"}):
             self.assertEqual(
-                self.main.setting("project", "GOOGLE_CLOUD_PROJECT", ""), "el-del-entorno")
+                self.main.setting("model", "IMAGING_MODEL", "el-declarado"), "el-del-entorno")
 
-    def test_with_neither_there_is_no_reader(self):
+    def test_with_neither_the_declared_default_stands(self):
         import os
         from unittest import mock
-        self.main.skill.config["project"] = ""
-        with mock.patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": ""}):
-            self.assertEqual(self.main.setting("project", "GOOGLE_CLOUD_PROJECT", ""), "")
+        self.main.skill.config["model"] = ""
+        with mock.patch.dict(os.environ, {"IMAGING_MODEL": ""}):
+            self.assertEqual(
+                self.main.setting("model", "IMAGING_MODEL", "el-declarado"), "el-declarado")
 
 
 class WhatCameBack(unittest.TestCase):
@@ -167,19 +141,18 @@ class WhatCameBack(unittest.TestCase):
     """
 
     def test_output_text_wins(self):
-        self.assertEqual(doors._text_of(_Answer(output_text="{}")), "{}")
+        self.assertEqual(reader._text_of(_Answer(output_text="{}")), "{}")
 
     def test_a_step_with_string_content(self):
-        answer = _Answer(steps=[_Step(content="hola")])
-        self.assertEqual(doors._text_of(answer), "hola")
+        self.assertEqual(reader._text_of(_Answer(steps=[_Step(content="hola")])), "hola")
 
     def test_a_step_with_content_blocks(self):
         answer = _Answer(steps=[_Step(content=[_Block(text="  "), _Block(text="hola")])])
-        self.assertEqual(doors._text_of(answer), "hola")
+        self.assertEqual(reader._text_of(answer), "hola")
 
     def test_nothing_readable_is_empty_and_not_a_crash(self):
-        self.assertEqual(doors._text_of(_Answer()), "")
-        self.assertEqual(doors._text_of(_Answer(steps=[_Step(content=None)])), "")
+        self.assertEqual(reader._text_of(_Answer()), "")
+        self.assertEqual(reader._text_of(_Answer(steps=[_Step(content=None)])), "")
 
 
 class _Answer:

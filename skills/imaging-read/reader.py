@@ -1,21 +1,15 @@
-"""Por qué puerta sale una lectura, y qué queda escrito de eso.
+"""La llamada al modelo, y qué queda escrito de ella.
 
-Google sirve los mismos modelos por dos entradas, y no son intercambiables para
-quien despliega esto:
+Se lee por la API de Gemini (`generativelanguage.googleapis.com`), con una
+llave. Es una decisión de quien despliega y tiene una consecuencia que se dice
+una vez: **ese endpoint no está cubierto por el acuerdo de tratamiento de datos
+de Google**, así que estas imágenes salen hacia un tercero sin ese contrato
+detrás.
 
-- **La API de Gemini** (`generativelanguage.googleapis.com`), que abre una
-  ``GEMINI_API_KEY``. Es la que casi todo el mundo usa y la más simple de poner
-  en marcha. **No está cubierta por el acuerdo de tratamiento de datos (BAA) de
-  Google**, así que un despliegue que la elija está decidiendo que estas
-  imágenes salen hacia un tercero sin ese contrato detrás.
-- **Vertex AI**, sobre un proyecto con el acuerdo en vigor y credenciales de
-  aplicación.
-
-**La elección es de quien despliega, no de este archivo.** Lo que sí es de este
-archivo: que la elección sea explícita —una variable u otra, nunca una por
-omisión silenciosa— y que **cuál contestó quede en la atestación C5** junto al
-modelo. Un año después, la pregunta «¿por dónde salió esta imagen?» tiene que
-tener respuesta en el registro y no en la memoria de alguien.
+Lo que este archivo sí decide es que eso quede registrado. `ENGINE` viaja en la
+atestación C5 de cada lectura, junto al modelo: un año después, «¿por dónde
+salió esta imagen?» se responde desde el registro y no desde la memoria de
+alguien.
 
 Lo que se manda es un fotograma renderizado: sin etiquetas DICOM, y con lo que
 el aparato escribió encima ya recortado por quien lo envía. No lo vuelve
@@ -28,25 +22,22 @@ import logging
 
 log = logging.getLogger("imaging-read")
 
-# The two doors, by the name that appears in the attestation.
-GEMINI = "gemini-api"
-VERTEX = "vertex-ai"
+# The engine, by the name that appears in the attestation.
+ENGINE = "gemini-api"
 
 
 class NoReader(RuntimeError):
-    """No door is configured, or the one configured cannot be used."""
+    """No reader is configured, or the one configured cannot be used."""
 
 
-def ask(door: str, model: str, key: str, system: str, parts: list, schema: dict,
+def ask(model: str, key: str, system: str, parts: list, schema: dict,
         temperature: float, thinking: str, timeout: float = 180.0) -> str:
-    """One read through the Gemini API, as text.
+    """One read, as text.
 
     `parts` is the SDK's content list: images first, the question last. What
     comes back is the JSON the response format asked for, unparsed -- reading it
-    is `findings.py`'s job, and it is the same job whichever door answered.
+    is `findings.py`'s job.
     """
-    if door != GEMINI:
-        raise NoReader(f"puerta desconocida: {door}")
     if not key:
         raise NoReader(
             "este nodo no tiene lector de imagen configurado: falta la llave de la "

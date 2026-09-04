@@ -62,13 +62,12 @@ enseñaron.
 
 Dos cosas que rechaza, y las dos se encuentran el primer día:
 
-- **Por qué puerta salió.** Google sirve los mismos modelos por la API de
-  Gemini y por Vertex AI, y sólo la segunda puede quedar bajo un acuerdo de
-  tratamiento de datos. Elegir es de quien despliega y esta skill no lo decide:
-  lo que hace es negarse a adivinar —una variable u otra, nunca una por omisión
-  silenciosa— y escribir la puerta en la atestación C5 junto al modelo, para que
-  «por dónde salió esta imagen» se responda desde el registro y no desde la
-  memoria de alguien.
+- **Por dónde lee.** Por la API de Gemini, con una llave. No está cubierta
+  por el acuerdo de tratamiento de datos de Google, y eso es una decisión de
+  quien despliega y no de esta skill: lo que la skill debe es que la decisión se
+  vea —ese host es el único de su lista de salida— y que el motor quede en la
+  atestación C5 de cada lectura, para que «por dónde salió esta imagen» se
+  responda desde el registro y no desde la memoria de alguien.
 - **Imágenes que nadie des-identificó.** Un ultrasonido lleva el nombre de la
   paciente **quemado en los píxeles**, no sólo en las etiquetas — DICOM hasta
   tiene un atributo que lo dice, `BurnedInAnnotation`. Esta skill no puede
