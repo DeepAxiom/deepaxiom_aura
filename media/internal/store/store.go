@@ -31,6 +31,9 @@ type Store interface {
 	PutTree(ctx context.Context, prefix, dir string) ([]Object, error)
 	// Open reads a key back.
 	Open(ctx context.Context, key string) (io.ReadCloser, int64, error)
+	// Delete removes a key. Deleting what is not there is not an error: the
+	// caller wanted it gone, and it is.
+	Delete(ctx context.Context, key string) error
 	// Address is where a player fetches this key. It is public: the output of
 	// this subsystem is public-zone bytes, which is the whole reason it does
 	// not run inside the process that handles PHI.

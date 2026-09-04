@@ -146,6 +146,26 @@ func (q *Queue) Enqueue(ctx context.Context, n New) (Job, error) {
 	return job, nil
 }
 
+// ByIdem finds the job an idempotency key already owns, or ErrNoJob.
+//
+// Callers ask this before doing any work: an idempotency key names a request
+// that has already been answered, and re-reading a video off the wire to
+// discover that is the expensive way to find out.
+func (q *Queue) ByIdem(ctx context.Context, idem string) (Job, error) {
+	if idem == "" {
+		return Job{}, ErrNoJob
+	}
+	const sql = `SELECT ` + jobColumns + ` FROM media_job WHERE idem = $1`
+	job, err := scanJob(q.pool.QueryRow(ctx, sql, idem))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Job{}, ErrNoJob
+	}
+	if err != nil {
+		return Job{}, fmt.Errorf("looking up idempotency key: %w", err)
+	}
+	return job, nil
+}
+
 // Claim takes the next claimable job and leases it to worker for lease.
 // Returns ErrNoJob when there is nothing to do.
 //
@@ -243,6 +263,30 @@ func (q *Queue) Fail(ctx context.Context, id int64, worker string, cause error) 
 		return false, fmt.Errorf("fail: %w", err)
 	}
 	return state == StateQueued, nil
+}
+
+// Release hands a job back immediately, with no backoff and without spending an
+// attempt on it. This is the shutdown path: a node stopping is not the job's
+// fault, and making a deploy look like two failed attempts is how a healthy
+// source ends up permanently failed after three restarts.
+func (q *Queue) Release(ctx context.Context, id int64, worker, reason string) error {
+	const sql = `UPDATE media_job SET
+			state       = 'queued',
+			worker      = '',
+			attempts    = greatest(attempts - 1, 0),
+			run_after   = now(),
+			lease_until = NULL,
+			last_error  = $3,
+			updated_at  = now()
+		WHERE id = $1 AND worker = $2 AND state = 'running'`
+	tag, err := q.pool.Exec(ctx, sql, id, worker, reason)
+	if err != nil {
+		return fmt.Errorf("release: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("job %d is not running under %s", id, worker)
+	}
+	return nil
 }
 
 // Reclaim returns jobs whose lease expired to the queue, and gives up on the

@@ -235,3 +235,24 @@ func itoa(n int) string {
 	}
 	return string(digits)
 }
+
+func TestWidthForMatchesWhatFfmpegWrites(t *testing.T) {
+	src := Media{Width: 1280, Height: 720, HasVideo: true}
+	cases := map[int]int{
+		720: 1280,
+		480: 854, // 853.33 rounds up to the nearest even, as scale=-2 does
+		360: 640,
+	}
+	for height, want := range cases {
+		if got := WidthFor(src, height); got != want {
+			t.Errorf("WidthFor(1280x720, %d) = %d, want %d", height, got, want)
+		}
+	}
+	// A 4:3 source, and a degenerate one.
+	if got := WidthFor(Media{Width: 640, Height: 480}, 360); got != 480 {
+		t.Errorf("WidthFor(640x480, 360) = %d, want 480", got)
+	}
+	if got := WidthFor(Media{}, 360); got != 0 {
+		t.Errorf("WidthFor of a source with no height = %d, want 0", got)
+	}
+}

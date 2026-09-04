@@ -1,6 +1,9 @@
 package pipeline
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // Rendition is one rung of the output ladder.
 type Rendition struct {
@@ -44,4 +47,18 @@ func Ladder(src Media) []Rendition {
 		})
 	}
 	return out
+}
+
+// WidthFor is the width a rung actually lands on.
+//
+// scale=-2 rounds to the NEAREST even number, not down: a 1280x720 source at
+// the 480p rung is 853.33 wide and ffmpeg writes 854. Reporting 852 because the
+// arithmetic truncated would put a number in the asset record that disagrees
+// with the number in the playlist, and the playlist is the one a player reads.
+func WidthFor(src Media, height int) int {
+	if src.Height <= 0 {
+		return 0
+	}
+	exact := float64(src.Width) * float64(height) / float64(src.Height)
+	return int(math.Round(exact/2)) * 2
 }

@@ -159,6 +159,18 @@ func (s *FS) Open(ctx context.Context, key string) (io.ReadCloser, int64, error)
 	return f, info.Size(), nil
 }
 
+// Delete removes an object.
+func (s *FS) Delete(_ context.Context, key string) error {
+	full, err := s.Path(key)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(full); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("delete %s: %w", key, err)
+	}
+	return nil
+}
+
 // Address is where a player fetches this key.
 func (s *FS) Address(key string) string {
 	clean, err := CleanKey(key)

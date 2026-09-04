@@ -155,6 +155,15 @@ func (r *Repo) List(ctx context.Context, limit int) ([]Asset, error) {
 	return out, rows.Err()
 }
 
+// Delete removes an asset row. Used for one thing only: an asset this node
+// created and then found it should not have, in the race where two requests
+// carrying the same idempotency key both got as far as storing bytes. Leaving
+// it would be leaving a row in "received" that nothing will ever encode.
+func (r *Repo) Delete(ctx context.Context, id string) error {
+	const sql = `DELETE FROM media_asset WHERE id = $1`
+	return r.exec(ctx, sql, id)
+}
+
 // MarkProcessing says a worker is on it.
 func (r *Repo) MarkProcessing(ctx context.Context, id string) error {
 	const sql = `UPDATE media_asset SET state = 'processing', updated_at = now() WHERE id = $1`
