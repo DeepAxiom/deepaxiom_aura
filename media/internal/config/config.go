@@ -118,6 +118,31 @@ func ResolveToken(c Config) (string, error) {
 	return token, nil
 }
 
+// ResolveNodeToken is the credential this service presents to the KERNEL, which
+// is a different credential from the one it demands of its own callers.
+//
+// Same two places the Python SDK and the CLI look, deliberately: one answer to
+// "where does the kernel token come from", not one per language.
+func ResolveNodeToken(explicit string) string {
+	if explicit = strings.TrimSpace(explicit); explicit != "" {
+		return explicit
+	}
+	if env := strings.TrimSpace(os.Getenv("AURA_TOKEN")); env != "" {
+		return env
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(home, ".aura", "node.token"))
+	if err != nil {
+		// Empty is correct rather than an error: a kernel started with
+		// --no-auth has no token file and asks for no credential.
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
 // checkPermissions refuses a credential anyone on the box can read. A token is
 // a credential; a credential with the permissions of a log file is a shared one.
 func checkPermissions(path string) error {

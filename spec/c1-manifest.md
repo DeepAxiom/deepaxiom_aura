@@ -1,6 +1,6 @@
 # C1 — Skill Manifest (frozen contract)
 
-**Protocol major: 1 · Status: v1.6 — FROZEN (2026-09-02: `std/confirmation@1` gained optional `context_required`, so a gate can say what an approval must bind before a person answers rather than after — additive, C4 v1.7; v1.5 2026-08-02: `std/db-change@1` added — additive, Phase 3 Postgres CDC; 2026-08-02: `std/confirmation@1` gained optional `to_ref`/`to_port` — additive, Phase 2 session resume; 2026-08-01: `compensates` added — additive; 2026-08-01: the `std` namespace became executable JSON Schemas, `std/transcript@1` added, `std/audio-chunk@1` gained optional `channels`/`seq`/`ref` — all additive; 2026-07-30: `config` added; base v1.0 frozen 2026-07-14). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.7 — FROZEN (2026-09-04: `std/media-asset@1` added — additive, the media subsystem; v1.6 2026-09-02: `std/confirmation@1` gained optional `context_required`, so a gate can say what an approval must bind before a person answers rather than after — additive, C4 v1.7; v1.5 2026-08-02: `std/db-change@1` added — additive, Phase 3 Postgres CDC; 2026-08-02: `std/confirmation@1` gained optional `to_ref`/`to_port` — additive, Phase 2 session resume; 2026-08-01: `compensates` added — additive; 2026-08-01: the `std` namespace became executable JSON Schemas, `std/transcript@1` added, `std/audio-chunk@1` gained optional `channels`/`seq`/`ref` — all additive; 2026-07-30: `config` added; base v1.0 frozen 2026-07-14). Changes: additive only; breaking = new major via RFC.**
 
 A **Skill** is the system's atomic unit of function: something the system *knows how to do*.
 Every skill is described by a `skill.yaml` file conforming to `schemas/manifest.schema.json`.
@@ -142,6 +142,7 @@ normative.
 - `std/confirmation@1` — `{ "question": string, "options": [string], "held": string, "to_ref": string?, "to_port": string?, "context_required": [string]? }` (gates)
 - `std/plan@1` — `{ "reasoning": string, "graph": <C2 IR>, "inputs": [{ "port": string, "schema": string, "payload": any }] }` (planners)
 - `std/db-change@1` — `{ "table": string, "op": "insert"|"update"|"delete", "columns": obj, "lsn": string? }` (CDC, e.g. `example/sensorial/postgres-cdc`)
+- `std/media-asset@1` — `{ "uri": string, "mime": string?, "asset_id": string?, "state": "received"|"processing"|"ready"|"failed"?, "duration_ms": int?, "renditions": [obj]?, "frames": [string]?, "poster": string?, "error": string? }` (media, e.g. `deepaxiom/logical/media-transcode`)
 
 **`text` and `transcript` are not interchangeable, and this is the trap.** In
 `std/text@1`, `text` is a *delta*: a streaming producer emits one per token and

@@ -22,8 +22,10 @@ import (
 	"syscall"
 	"time"
 
+	"aura/media"
 	"aura/media/internal/api"
 	"aura/media/internal/assets"
+	"aura/media/internal/c3"
 	"aura/media/internal/config"
 	"aura/media/internal/db"
 	"aura/media/internal/ingest"
@@ -69,6 +71,8 @@ func run(args []string) error {
 	fs.BoolVar(&cfg.FetchHTTP, "fetch-http", false, "allow ingesting a source named by an http(s) URI")
 	fs.Float64Var(&cfg.FrameEvery, "frame-every", 5, "seconds between sampled still frames")
 	fs.IntVar(&cfg.MaxFrames, "max-frames", 200, "most still frames to sample from one source")
+	fs.StringVar(&cfg.NodeWS, "node", env("AURA_MEDIA_NODE", ""), "kernel to register with as a skill, e.g. ws://127.0.0.1:9080/ws/skill (empty: do not register)")
+	fs.StringVar(&cfg.NodeToken, "node-token", "", "credential for that kernel (default: AURA_TOKEN, then ~/.aura/node.token)")
 	printSchema := fs.Bool("print", false, "migrate: print the DDL instead of applying it")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -194,6 +198,27 @@ func serve(cfg config.Config, log *slog.Logger) error {
 		defer close(workersDone)
 		pool2.Run(ctx)
 	}()
+
+	// Registering is optional. The service is complete without it — upload,
+	// poll, fetch an address — and a kernel that is not running must not stop
+	// it from doing that work for the consumers that call it directly.
+	if cfg.NodeWS != "" {
+		manifest, err := c3.ManifestJSON(media.SkillYAML, version)
+		if err != nil {
+			return err
+		}
+		client := &c3.Client{
+			URL:      cfg.NodeWS,
+			Token:    config.ResolveNodeToken(cfg.NodeToken),
+			Manifest: manifest,
+			Ingest:   ingestor,
+			Assets:   repo,
+			Store:    objects,
+			Log:      log,
+		}
+		go client.Run(ctx)
+		log.Info("registering with the kernel as a skill", "node", cfg.NodeWS, "capability", "logical.media.transcode")
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:std:media-asset@1",
+  "title": "std/media-asset@1",
+  "description": "A video asset, in both directions: on the way in, `uri` names where the source can be fetched; on the way out, `uri` is the address of the packaged result. Deliberately NOT std/document@1: a video is named by an envelope rather than carried in one — an hour of it is gigabytes, and the packaged form is a tree of playlists and segments rather than a blob. Everything but `uri` is optional, because the ingress side of an edge knows almost nothing and the egress side knows all of it.",
+  "type": "object",
+  "required": ["uri"],
+  "properties": {
+    "uri": {
+      "type": "string",
+      "description": "Where the media is. Inbound: a source the media subsystem can fetch. Outbound: the address of the HLS master playlist."
+    },
+    "mime": {
+      "type": "string",
+      "description": "Media type of the source, when the sender knows it."
+    },
+    "asset_id": {
+      "type": "string",
+      "description": "The media subsystem's id for this asset, so a consumer can ask it directly afterwards."
+    },
+    "state": {
+      "enum": ["received", "processing", "ready", "failed"],
+      "description": "Outbound only. `ready` is the only state in which `uri` is fetchable."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "renditions": {
+      "type": "array",
+      "description": "The ladder that was encoded, tallest first.",
+      "items": {
+        "type": "object",
+        "required": ["name", "playlist"],
+        "properties": {
+          "name": { "type": "string" },
+          "width": { "type": "integer", "minimum": 0 },
+          "height": { "type": "integer", "minimum": 0 },
+          "bitrate_kbps": { "type": "integer", "minimum": 0 },
+          "playlist": { "type": "string" }
+        }
+      }
+    },
+    "frames": {
+      "type": "array",
+      "description": "Addresses of still frames sampled from the source, in time order. Every capability that reasons about video needs frames, and they come out of the decode the encode already did.",
+      "items": { "type": "string" }
+    },
+    "poster": {
+      "type": "string",
+      "description": "Address of a single representative frame."
+    },
+    "error": {
+      "type": "string",
+      "description": "Why it failed, in the words of whoever has to act on it. Present only with state `failed`."
+    }
+  }
+}

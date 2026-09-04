@@ -1,0 +1,42 @@
+id: "deepaxiom/logical/media-transcode"
+version: "0.1.0"
+protocol: "1"
+
+name: "Media transcode"
+description: "Takes a video by address and returns the address of a packaged one: an HLS ladder, still frames sampled from the same decode, and a poster. The work does not happen in the kernel — this manifest is how a separate process, aura-media, appears in a graph. That separation is the point: approving an effect is milliseconds and must never queue behind a core pinned for minutes of encoding."
+capability: "logical.media.transcode"
+type: logical
+
+# projection, not source: what registers here is an existing system exposed as a
+# skill. The kernel never runs this code, it talks to a service that is already
+# running, with its own version line and its own database.
+format: projection
+
+ports:
+  ingress:
+    - name: asset_in
+      schema: "std/media-asset@1"
+  egress:
+    - name: asset_out
+      schema: "std/media-asset@1"
+
+requirements:
+  memory: "512Mi"
+  accelerator: none
+
+permissions:
+  # The kernel does not sandbox a projection — this process is not its child —
+  # so these describe what the service is configured to do, and the service
+  # enforces them itself: it fetches a source over HTTP only when started with
+  # --fetch-http, and writes only inside its own data directory.
+  egress_http: []
+  filesystem: none
+  channels: declared-only
+
+config:
+  - key: "priority"
+    type: string
+    default: ""
+    description: "Queue priority for work arriving on this edge, lower first. Empty means the service default. A live consultation being packaged for review should outrank a batch re-encode of last year's library."
+
+signature: null
