@@ -93,6 +93,25 @@ encode actually happens, and it is where the bugs were: an idempotency key
 honoured after the upload rather than before it, and a rendition width two
 pixels off what the playlist claimed.
 
+## Releasing
+
+Its own tag line, `media/v<version>`, never the kernel's `v*`:
+
+```bash
+# 1. bump and commit
+echo 0.2.0 > VERSION && git commit -am "media: 0.2.0"
+# 2. tag exactly what VERSION says
+git tag media/v0.2.0 && git push origin media/v0.2.0
+```
+
+`.github/workflows/release-media.yml` refuses a tag that disagrees with
+[VERSION](VERSION) before it builds anything — a binary reporting one number
+under a tag naming another is a lie told to whoever pinned it. It then builds
+six platforms, generates an SBOM for *this* module, and signs the checksums and
+the SBOM keylessly with cosign. Verification is in
+[SECURITY.md](../SECURITY.md#verifying-a-release), and the identity to check is
+this workflow's, not the kernel's.
+
 ## Not built yet
 
 The pipeline is the floor the roadmap's four capabilities stand on; none of them

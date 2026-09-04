@@ -1,0 +1,185 @@
+name: Release (media)
+
+# The media subsystem releases on its own tags, `media/v0.1.0`, and never on the
+# kernel's `v*`. That separation is the entire reason it is a second artefact:
+# a consumer pins one commit to say which kernel sealed a note, and if a codec
+# CVE forced the kernel's version to move, that pin would stop meaning anything.
+# One tag prefix per version line, so a release of one is never a release of the
+# other.
+#
+# `media/v*` is also the shape Go itself uses for a module in a subdirectory, so
+# nothing here has to be explained twice to tooling that already knows it.
+#
+# Same shape as release.yml otherwise: six targets, hashed into SHA256SUMS, an
+# SBOM for this module's dependency graph, both signed keylessly with cosign via
+# this workflow's own OIDC identity. See SECURITY.md for how to verify one.
+on:
+  push:
+    tags: ['media/v*']
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: the tag says what VERSION says
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A binary that reports 0.1.0 under a tag called media/v0.2.0 is a lie
+      # told to whoever pins it, and the pin is the whole product. Cheaper to
+      # refuse the release than to explain the discrepancy later.
+      - name: the tag matches media/VERSION
+        run: |
+          tag="${GITHUB_REF_NAME#media/v}"
+          declared="$(tr -d ' \r\n' < media/VERSION)"
+          echo "tag: $tag · media/VERSION: $declared"
+          [ "$tag" = "$declared" ] || {
+            echo "FAIL: tag media/v$tag does not match media/VERSION ($declared)."
+            echo "Either bump media/VERSION and commit it, or tag media/v$declared."
+            exit 1
+          }
+
+  build:
+    name: aura-media (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: guard
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: windows, goarch: amd64}
+          - {goos: windows, goarch: arm64}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: media/go.mod
+          cache-dependency-path: media/go.sum
+
+      # The version is stamped from media/VERSION, which the guard job has
+      # already checked against the tag — so `aura-media version` answers the
+      # same string the release is called, on every platform.
+      - name: build
+        working-directory: media
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          go build -trimpath -ldflags "-s -w -X main.version=$(tr -d ' \r\n' < VERSION)" \
+            -o "aura-media-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" ./cmd/aura-media
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aura-media-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: media/aura-media-${{ matrix.goos }}-${{ matrix.goarch }}*
+          retention-days: 7
+
+  sbom:
+    name: SBOM (media Go module)
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: media/go.mod
+          cache-dependency-path: media/go.sum
+
+      # Pinned, not @latest, for two reasons. A release input that can change
+      # without a commit is a supply-chain input nobody reviewed — and @latest
+      # is now v1.12.0, which requires Go 1.26 while this module pins 1.25.14,
+      # so it would quietly pull a toolchain nobody chose (or fail outright
+      # wherever GOTOOLCHAIN is local). v1.10.0 is the newest that builds with
+      # the Go version this repository declares.
+      - name: install cyclonedx-gomod
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0
+
+      # This module's own graph, not the repository's. It depends on a Postgres
+      # driver the kernel has never heard of, and the kernel depends on a QUIC
+      # stack this one does not — one SBOM covering both would describe neither.
+      - name: generate SBOM
+        run: ./scripts/gen_sbom.sh media-sbom.json media
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: media-sbom
+          path: media-sbom.json
+          retention-days: 7
+
+  release:
+    name: sign and publish
+    needs: [build, sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the GitHub Release
+      id-token: write # for cosign's keyless OIDC signing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: false
+
+      - name: stage release files
+        run: |
+          mkdir -p release
+          find dist -type f -name 'aura-media-*' -exec cp {} release/ \;
+          cp dist/media-sbom/media-sbom.json release/media-sbom.json
+          cd release
+          sha256sum aura-media-* > SHA256SUMS
+          ls -l
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Keyless, exactly as the kernel's release does it: signed by this
+      # workflow run's own GitHub OIDC identity against Sigstore's public
+      # Fulcio CA and Rekor transparency log. The identity a verifier pins is
+      # this file's path, which is why SECURITY.md names both workflows.
+      - name: sign checksums and SBOM
+        working-directory: release
+        run: |
+          cosign sign-blob --yes \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.pem \
+            SHA256SUMS
+          cosign sign-blob --yes \
+            --output-signature media-sbom.json.sig \
+            --output-certificate media-sbom.json.pem \
+            media-sbom.json
+
+      - name: publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          name: aura-media ${{ github.ref_name }}
+          body: |
+            The media subsystem: an asset in, an address out. Runs beside a
+            node, not inside one — see [media/README.md](media/README.md) and
+            [ROADMAP.md](ROADMAP.md#media-and-the-ai-over-it).
+
+            This artefact has its own version line. It is released on
+            `media/v*` tags and is deliberately not part of the kernel's `v*`
+            releases: a codec CVE moves this number and leaves the kernel's
+            alone, which is what makes a consumer's pin worth having.
+
+            Needs `ffmpeg` and `ffprobe` on PATH and a Postgres it owns.
+
+            Verify before running — see
+            [SECURITY.md](SECURITY.md#verifying-a-release):
+
+            ```sh
+            sha256sum -c SHA256SUMS --ignore-missing
+            cosign verify-blob \
+              --certificate-identity-regexp "^https://github.com/DeepAxiom/deepaxiom_aura/.github/workflows/release-media.yml@.*$" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --signature SHA256SUMS.sig --certificate SHA256SUMS.pem SHA256SUMS
+            ```

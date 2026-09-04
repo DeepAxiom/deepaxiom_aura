@@ -60,17 +60,33 @@ policy is the node operator's decision, not the kernel's to override.
 
 ## Verifying a release
 
-Tagged releases (`.github/workflows/release.yml`) are built for six
-platforms, hashed into a `SHA256SUMS` file, and both the checksums and the
-generated SBOM are signed keylessly with [cosign](https://github.com/sigstore/cosign)
-via GitHub Actions' OIDC identity — no long-lived private key exists for
-anyone to compromise. To verify a downloaded binary:
+This repository releases **two artefacts on two tag lines**, each signed by the
+workflow that built it:
+
+| Artefact | Tag | Workflow | Files |
+|---|---|---|---|
+| `aura` — the kernel | `v0.3.0` | `.github/workflows/release.yml` | `aura-<os>-<arch>`, `sbom.json` |
+| `aura-media` — the media subsystem | `media/v0.1.0` | `.github/workflows/release-media.yml` | `aura-media-<os>-<arch>`, `media-sbom.json` |
+
+They are separate because their versions mean different things: a codec CVE
+moves the media line and must leave the kernel's alone, which is what makes
+pinning a kernel worth doing at all. Each release carries its own SBOM, because
+the two modules do not share a dependency graph.
+
+Both are built for six platforms, hashed into a `SHA256SUMS` file, and both the
+checksums and the SBOM are signed keylessly with
+[cosign](https://github.com/sigstore/cosign) via GitHub Actions' OIDC identity —
+no long-lived private key exists for anyone to compromise. To verify a
+downloaded binary:
 
 ```sh
 # 1. Confirm the checksum
 sha256sum -c SHA256SUMS --ignore-missing
 
-# 2. Confirm SHA256SUMS itself was signed by this repo's release workflow
+# 2. Confirm SHA256SUMS itself was signed by this repo's release workflow.
+#    The identity names the workflow file, so swap release.yml for
+#    release-media.yml when verifying an aura-media download: a kernel
+#    signature on a media artefact is exactly the substitution this catches.
 cosign verify-blob \
   --certificate-identity-regexp "^https://github.com/DeepAxiom/deepaxiom_aura/.github/workflows/release.yml@.*$" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \

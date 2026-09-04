@@ -66,8 +66,14 @@ jobs:
           go-version-file: kernel/go.mod
           cache-dependency-path: kernel/go.sum
 
+      # Pinned, not @latest, for two reasons. A release input that can change
+      # without a commit is a supply-chain input nobody reviewed — and @latest
+      # is now v1.12.0, which requires Go 1.26 while this module pins 1.25.14,
+      # so it would quietly pull a toolchain nobody chose (or fail outright
+      # wherever GOTOOLCHAIN is local). v1.10.0 is the newest that builds with
+      # the Go version this repository declares.
       - name: install cyclonedx-gomod
-        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0
 
       - name: generate SBOM
         run: ./scripts/gen_sbom.sh sbom.json
