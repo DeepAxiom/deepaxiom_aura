@@ -26,6 +26,7 @@ readable from the control plane):
 """
 import base64
 import logging
+import os
 
 import findings as reading
 import prompt as asking
@@ -60,9 +61,9 @@ async def handle(ctx: Context) -> None:
             "quita el nombre, incluido el que está quemado en la imagen")
         return
 
-    project = str(skill.config.get("project", "")).strip()
-    location = str(skill.config.get("location", "us-central1")).strip()
-    model = str(skill.config.get("model", "gemini-3.7-flash")).strip()
+    project = setting("project", "GOOGLE_CLOUD_PROJECT", "")
+    location = setting("location", "GOOGLE_CLOUD_LOCATION", "us-central1")
+    model = setting("model", "VERTEX_MODEL", "gemini-3.7-flash")
     try:
         url = vertex.endpoint(project, location, model)
         bearer = vertex.token()
@@ -119,6 +120,25 @@ async def handle(ctx: Context) -> None:
         ),
     )
     await ctx.status("status_out", "ready", f"{len(out['findings'])} hallazgos")
+
+
+def setting(key: str, variable: str, fallback: str) -> str:
+    """C1 config first, then the environment, then the declared default.
+
+    The config is the right place and the control plane is how it is normally
+    set. The environment is here because a container has no control plane on
+    first boot, and asking somebody to `PUT /v1/skills/config` before a node can
+    read anything is asking them to configure a thing twice.
+
+    Never a credential: `GOOGLE_APPLICATION_CREDENTIALS` names a file that
+    google-auth reads, and nothing in this process ever holds its contents. A
+    project id is not a secret; a key is, and a key in a config field is a key
+    in the control plane's UI and in its audit log.
+    """
+    value = str(skill.config.get(key, "") or "").strip()
+    if value:
+        return value
+    return os.getenv(variable, "").strip() or fallback
 
 
 async def _call(url: str, bearer: str, body: dict) -> dict:

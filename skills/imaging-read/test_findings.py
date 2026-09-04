@@ -103,5 +103,47 @@ class TheDoorItWillNotUse(unittest.TestCase):
             "hola")
 
 
+
+
+class WhereTheProjectComesFrom(unittest.TestCase):
+    """C1 config primero, luego el entorno, luego lo declarado.
+
+    El entorno esta ahi porque un contenedor no tiene plano de control en su
+    primer arranque, y pedirle a alguien que haga un PUT antes de que un nodo
+    pueda leer nada es pedirle que configure lo mismo dos veces.
+    """
+
+    def setUp(self):
+        import main
+        self.main = main
+        self.saved = dict(main.skill.config)
+
+    def tearDown(self):
+        self.main.skill.config = self.saved
+
+    def test_the_config_wins(self):
+        import os
+        from unittest import mock
+        self.main.skill.config["project"] = "el-de-la-config"
+        with mock.patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "el-del-entorno"}):
+            self.assertEqual(
+                self.main.setting("project", "GOOGLE_CLOUD_PROJECT", ""), "el-de-la-config")
+
+    def test_the_environment_fills_in(self):
+        import os
+        from unittest import mock
+        self.main.skill.config["project"] = ""
+        with mock.patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "el-del-entorno"}):
+            self.assertEqual(
+                self.main.setting("project", "GOOGLE_CLOUD_PROJECT", ""), "el-del-entorno")
+
+    def test_with_neither_there_is_no_reader(self):
+        import os
+        from unittest import mock
+        self.main.skill.config["project"] = ""
+        with mock.patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": ""}):
+            self.assertEqual(self.main.setting("project", "GOOGLE_CLOUD_PROJECT", ""), "")
+
+
 if __name__ == "__main__":
     unittest.main()
