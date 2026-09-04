@@ -60,11 +60,13 @@ not what they were shown.
 
 Two things it refuses, and both are refusals a consumer will meet on day one:
 
-- **The other Gemini door.** The Generative Language API is the same models
-  behind a different endpoint, and that endpoint is not covered by Google's
-  HIPAA BAA. What travels here is a person's imaging, so the skill talks to
-  Vertex AI on a project with the agreement in force, and names the forbidden
-  host in the refusal rather than leaving it off a list somebody could widen.
+- **Which door it went through.** Google serves the same models through the
+  Gemini API and through Vertex AI, and only the second can sit under a data
+  processing agreement. Picking one is the deployment's call and this skill does
+  not make it -- what it does is refuse to guess (one variable or the other,
+  never a silent default) and write the door into the C5 attestation beside the
+  model, so "which way did this image leave" is answerable from the record
+  rather than from somebody's memory.
 - **Frames nobody de-identified.** An ultrasound carries the patient's name
   *burned into the pixels*, not only in the tags — DICOM even has an attribute
   that says so, `BurnedInAnnotation`. This skill cannot check pixels, so it

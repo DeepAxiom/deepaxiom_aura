@@ -8,6 +8,7 @@ like a box over the right one.
 import json
 import unittest
 
+import doors
 import findings
 import vertex
 
@@ -78,12 +79,25 @@ class WhenTheAnswerIsBad(unittest.TestCase):
         self.assertNotIn("confidence", out["findings"][0])
 
 
-class TheDoorItWillNotUse(unittest.TestCase):
-    def test_the_endpoint_without_a_baa_is_refused_by_name(self):
+class TheTwoDoors(unittest.TestCase):
+    """Cual puerta contesta lo elige quien despliega; que quede escrito, no."""
+
+    def test_the_vertex_client_refuses_to_be_aimed_at_the_other_door(self):
+        # No es una regla de politica --esa se decide poniendo una llave u otra--
+        # sino de correccion: otra forma de peticion y otra autenticacion.
         with self.assertRaises(vertex.NoReader) as refusal:
             vertex.ask("https://generativelanguage.googleapis.com/v1/x:generateContent",
                        "token", {})
         self.assertIn("generativelanguage", str(refusal.exception))
+
+    def test_the_gemini_door_without_a_key_says_what_is_missing(self):
+        with self.assertRaises(doors.NoReader) as refusal:
+            doors.ask(doors.GEMINI, "models/gemini-3-flash-preview", "", "s", [], {}, 0.0, "high")
+        self.assertIn("llave", str(refusal.exception))
+
+    def test_an_unknown_door_is_not_guessed(self):
+        with self.assertRaises(doors.NoReader):
+            doors.ask("la-de-al-lado", "m", "k", "s", [], {}, 0.0, "high")
 
     def test_a_node_without_a_project_says_so_instead_of_guessing(self):
         with self.assertRaises(vertex.NoReader) as refusal:
@@ -143,6 +157,45 @@ class WhereTheProjectComesFrom(unittest.TestCase):
         self.main.skill.config["project"] = ""
         with mock.patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": ""}):
             self.assertEqual(self.main.setting("project", "GOOGLE_CLOUD_PROJECT", ""), "")
+
+
+class WhatCameBack(unittest.TestCase):
+    """La respuesta viaja en tres formas segun la version del SDK.
+
+    Un lector que asumiera una de ellas se rompe en una actualizacion con una
+    traza en vez de una frase.
+    """
+
+    def test_output_text_wins(self):
+        self.assertEqual(doors._text_of(_Answer(output_text="{}")), "{}")
+
+    def test_a_step_with_string_content(self):
+        answer = _Answer(steps=[_Step(content="hola")])
+        self.assertEqual(doors._text_of(answer), "hola")
+
+    def test_a_step_with_content_blocks(self):
+        answer = _Answer(steps=[_Step(content=[_Block(text="  "), _Block(text="hola")])])
+        self.assertEqual(doors._text_of(answer), "hola")
+
+    def test_nothing_readable_is_empty_and_not_a_crash(self):
+        self.assertEqual(doors._text_of(_Answer()), "")
+        self.assertEqual(doors._text_of(_Answer(steps=[_Step(content=None)])), "")
+
+
+class _Answer:
+    def __init__(self, output_text=None, steps=None):
+        self.output_text = output_text
+        self.steps = steps or []
+
+
+class _Step:
+    def __init__(self, content=None):
+        self.content = content
+
+
+class _Block:
+    def __init__(self, text=None):
+        self.text = text
 
 
 if __name__ == "__main__":

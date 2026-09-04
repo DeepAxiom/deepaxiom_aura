@@ -62,12 +62,13 @@ enseñaron.
 
 Dos cosas que rechaza, y las dos se encuentran el primer día:
 
-- **La otra puerta de Gemini.** La Generative Language API son los mismos
-  modelos detrás de otro endpoint, y ese endpoint **no está cubierto por el
-  acuerdo HIPAA de Google**. Lo que viaja aquí es imagen de una persona, así que
-  la skill habla con Vertex AI sobre un proyecto con el acuerdo en vigor, y
-  nombra al host prohibido en la negativa en vez de dejarlo fuera de una lista
-  que alguien podría ensanchar.
+- **Por qué puerta salió.** Google sirve los mismos modelos por la API de
+  Gemini y por Vertex AI, y sólo la segunda puede quedar bajo un acuerdo de
+  tratamiento de datos. Elegir es de quien despliega y esta skill no lo decide:
+  lo que hace es negarse a adivinar —una variable u otra, nunca una por omisión
+  silenciosa— y escribir la puerta en la atestación C5 junto al modelo, para que
+  «por dónde salió esta imagen» se responda desde el registro y no desde la
+  memoria de alguien.
 - **Imágenes que nadie des-identificó.** Un ultrasonido lleva el nombre de la
   paciente **quemado en los píxeles**, no sólo en las etiquetas — DICOM hasta
   tiene un atributo que lo dice, `BurnedInAnnotation`. Esta skill no puede

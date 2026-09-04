@@ -11,23 +11,28 @@ able to say on what basis it happened -- which model, which revision, over
 which prompt. Without it the ledger can say who signed and not what they were
 shown.
 
-**It refuses more than it answers**, and each refusal is a sentence rather than
-a code:
+**Two doors, and the deployment picks.** Google serves the same models through
+the Gemini API --a `GEMINI_API_KEY`, simple, and **not covered by its data
+processing agreement**-- and through Vertex AI on a project that is. Neither is
+a default here: one variable or the other, never a silent fallback, and **which
+one answered is written into the C5 attestation** beside the model. A year later
+"which way did this image leave" has to be answerable from the record.
 
-- No project configured: this node has no reader.
-- Frames that were not de-identified: it cannot check pixels, and being the
-  place where nobody checked is worse than declining.
-- The Generative Language endpoint: same models, different door, and that door
-  is not covered by Google's BAA. See vertex.py.
+**It refuses rather than guesses**, and each refusal is a sentence rather than a
+code: no door configured, or frames nobody de-identified -- it cannot check
+pixels, and being the place where nobody checked is worse than declining.
 
 Config (env, credentials only -- never in the skill's C1 config, which is
 readable from the control plane):
-  GOOGLE_APPLICATION_CREDENTIALS   service account with Vertex AI User
+  GEMINI_API_KEY                   the Gemini API door
+  GOOGLE_APPLICATION_CREDENTIALS   the Vertex door: a service account with
+                                   Vertex AI User
 """
 import base64
 import logging
 import os
 
+import doors
 import findings as reading
 import prompt as asking
 import vertex
@@ -40,7 +45,7 @@ log = logging.getLogger("imaging-read")
 
 skill = Skill()
 
-ENGINE = "vertex-ai"
+
 
 
 @skill.on("study_in")
@@ -67,45 +72,46 @@ async def handle(ctx: Context) -> None:
             "quita el nombre, incluido el que está quemado en la imagen")
         return
 
+    key = os.getenv("GEMINI_API_KEY", "").strip()
     project = setting("project", "GOOGLE_CLOUD_PROJECT", "")
+    door = doors.GEMINI if key else doors.VERTEX
+    model = setting("model", "IMAGING_MODEL",
+                    "models/gemini-3-flash-preview" if key else "gemini-3.7-flash")
     location = setting("location", "GOOGLE_CLOUD_LOCATION", "us-central1")
-    model = setting("model", "VERTEX_MODEL", "gemini-3.7-flash")
-    try:
-        url = vertex.endpoint(project, location, model)
-        bearer = vertex.token()
-    except vertex.NoReader as err:
-        await ctx.error("status_out", str(err))
+    if not key and not project:
+        await ctx.error(
+            "status_out",
+            "este nodo no tiene lector de imagen configurado: falta la llave de la "
+            "API de Gemini, o el proyecto de Google Cloud con el acuerdo de "
+            "tratamiento de datos en vigor")
         return
 
     uids, parts = [], []
     for index, frame in enumerate(frames, start=1):
         uid = str(frame.get("instance_uid") or "").strip() or f"frame-{index}"
         uids.append(uid)
-        parts.append({"inlineData": {
-            "mimeType": str(frame.get("mime") or "image/jpeg"),
+        parts.append({
+            "type": "image",
+            "mime_type": str(frame.get("mime") or "image/jpeg"),
             "data": str(frame.get("bytes_b64") or ""),
-        }})
+        })
 
+    # La pregunta va **al final**, despues de las imagenes: un lector al que se
+    # le dice que buscar antes de ensenarle nada busca eso y no lo que hay.
     asked = asking.question(payload, uids, language)
-    parts.append({"text": asked})
-    body = {
-        "systemInstruction": {"parts": [{"text": asking.system(language)}]},
-        "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {
-            "temperature": float(skill.config.get("temperature", 0.0)),
-            "responseMimeType": "application/json",
-            "responseSchema": asking.SCHEMA,
-        },
-    }
+    parts.append({"type": "text", "text": asked})
 
+    temperature = float(skill.config.get("temperature", 0.0))
     await ctx.status("status_out", "working", f"leyendo {len(frames)} imágenes")
     try:
-        answer = await _call(url, bearer, body)
+        text = await _call(door, model, key, project, location,
+                           asking.system(language), parts, temperature)
+    except doors.NoReader as err:
+        await ctx.error("status_out", str(err))
+        return
     except vertex.NoReader as err:
         await ctx.error("status_out", str(err))
         return
-
-    text = vertex.text_of(answer)
     out = reading.read(text, set(uids), int(skill.config.get("max_findings", 12)), language)
 
     # C5. The prompt hash covers the words and the identifiers, not the pixels:
@@ -114,11 +120,15 @@ async def handle(ctx: Context) -> None:
     await ctx.emit(
         "finding_out", out,
         attest=Attestation(
-            engine=ENGINE,
+            # La puerta, en el registro. Es la diferencia entre «un modelo de
+            # Google leyo esto» y «esta imagen salio por un endpoint sin
+            # acuerdo de tratamiento de datos», y la segunda es la que alguien
+            # va a querer poder responder.
+            engine=door,
             model=model,
             params={
-                "location": location,
-                "temperature": float(skill.config.get("temperature", 0.0)),
+                "location": location if door == doors.VERTEX else "",
+                "temperature": temperature,
                 "frames": len(frames),
             },
             prompt_sha256=sha256_text(asking.system(language) + "\n" + asked),
@@ -148,7 +158,8 @@ def setting(key: str, variable: str, fallback: str) -> str:
     return os.getenv(variable, "").strip() or fallback
 
 
-async def _call(url: str, bearer: str, body: dict) -> dict:
+async def _call(door: str, model: str, key: str, project: str, location: str,
+                system: str, parts: list, temperature: float) -> str:
     """The blocking request, off the event loop.
 
     A read is seconds of somebody else's compute, and the kernel's connection
@@ -156,7 +167,37 @@ async def _call(url: str, bearer: str, body: dict) -> dict:
     the failure the whole separation of concerns exists to avoid.
     """
     import asyncio
-    return await asyncio.to_thread(vertex.ask, url, bearer, body)
+
+    thinking = str(skill.config.get("thinking", "high"))
+    if door == doors.GEMINI:
+        return await asyncio.to_thread(
+            doors.ask, door, model, key, system, parts, asking.SCHEMA,
+            temperature, thinking)
+
+    # La puerta de Vertex habla REST directo: son tres peticiones contra tres
+    # rutas y no necesita cliente, y una dependencia en el camino critico de una
+    # lectura clinica es una dependencia que alguien tiene que auditar.
+    url = vertex.endpoint(project, location, model)
+    bearer = vertex.token()
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [_vertexPart(p) for p in parts]}],
+        "generationConfig": {
+            "temperature": temperature,
+            "responseMimeType": "application/json",
+            "responseSchema": asking.SCHEMA,
+        },
+    }
+    answer = await asyncio.to_thread(vertex.ask, url, bearer, body)
+    return vertex.text_of(answer)
+
+
+def _vertexPart(part: dict) -> dict:
+    """One content block in the shape Vertex takes."""
+    if part.get("type") == "image":
+        return {"inlineData": {"mimeType": part.get("mime_type", "image/jpeg"),
+                               "data": part.get("data", "")}}
+    return {"text": part.get("text", "")}
 
 
 if __name__ == "__main__":

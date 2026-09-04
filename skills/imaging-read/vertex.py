@@ -1,11 +1,15 @@
-"""The call to Vertex AI, and the reason it is Vertex and not the other door.
+"""The call to Vertex AI: one of the two doors, and the one with a contract.
 
-Google serves the same Gemini models through two endpoints. The Generative
-Language API — ``generativelanguage.googleapis.com``, the one an AI Studio key
-opens — is **not covered by Google's HIPAA BAA**, and neither is AI Studio
-itself. Vertex AI on a project with the BAA executed is. What this skill sends
-is a person's imaging, so the other door is not an option and is refused by
-name rather than left off a list somebody could add to.
+Google serves the same Gemini models through two endpoints. This module is the
+Vertex one -- a project with a data processing agreement in force, reached with
+application default credentials. The other door lives in ``doors.py`` and is
+chosen by setting a key instead of a project; which one answered is written into
+the attestation, so the choice is readable a year later.
+
+What this module refuses is being *pointed at the other endpoint*. Not a policy
+claim -- the deployment already made that choice elsewhere -- but a correctness
+one: this code speaks Vertex's REST shape and authenticates with a Vertex token,
+so a Vertex client aimed at the Gemini API is a bug, not a configuration.
 
 Credentials come from Application Default Credentials, the way every other
 Google client on a node gets them: a service account file named by
@@ -23,8 +27,8 @@ import urllib.request
 
 log = logging.getLogger("imaging-read")
 
-# The endpoint that must not be used, kept here so the refusal can name it.
-FORBIDDEN_HOST = "generativelanguage.googleapis.com"
+# The other door's host. Named here so this client can refuse to be aimed at it.
+OTHER_DOOR = "generativelanguage.googleapis.com"
 
 SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
@@ -63,11 +67,11 @@ def token() -> str:
 
 def ask(url: str, bearer: str, body: dict, timeout: float = 120.0) -> dict:
     """One request, with the refusal that keeps the wrong endpoint unreachable."""
-    if FORBIDDEN_HOST in url:
+    if OTHER_DOOR in url:
         raise NoReader(
-            f"{FORBIDDEN_HOST} no está cubierto por el acuerdo de tratamiento de "
-            "datos de Google, y lo que va en esta petición es imagen de una "
-            "persona. Se usa Vertex AI sobre un proyecto con BAA.")
+            f"este cliente habla con Vertex AI y se le apuntó a {OTHER_DOOR}, que "
+            "es la otra puerta: otra forma de petición y otra autenticación. La "
+            "API de Gemini se usa poniendo su llave, no esta dirección.")
 
     request = urllib.request.Request(
         url,

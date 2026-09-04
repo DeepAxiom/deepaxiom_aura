@@ -3,7 +3,7 @@ version: "0.1.0"
 protocol: "1"
 
 name: "Imaging read"
-description: "Reads a sample of frames from an imaging study and returns findings with normalised coordinates, a correlation against the report on file, a draft impression and what it could not tell. Cognitive and not motor on purpose: nothing here writes. The draft reaches a record only when a named clinician approves it at the gate, and the effect that writes it cites this inference through its C5 attestation."
+description: "Reads a sample of frames from an imaging study and returns findings with normalised coordinates, a correlation against the report on file, a draft impression and what it could not tell. Cognitive and not motor on purpose: nothing here writes. The draft reaches a record only when a named clinician approves it at the gate, and the effect that writes it cites this inference through its C5 attestation. Two doors, chosen by the deployment: the Gemini API, or Vertex AI on a project with a data processing agreement. Which one answered is written into the attestation."
 capability: "cognitive.imaging.read"
 type: cognitive
 
@@ -27,12 +27,14 @@ requirements:
   accelerator: none
 
 permissions:
-  # Vertex AI, and only Vertex AI. The Generative Language API
-  # (generativelanguage.googleapis.com) is the same models behind a different
-  # door, and that door is not covered by Google's HIPAA BAA -- so it is not on
-  # this list, and a config pointing at it is refused rather than allowed
-  # quietly. What travels here is a person's imaging.
+  # Both doors, and the deployment picks one. Listing them is not the same as
+  # approving them: `generativelanguage.googleapis.com` is the Gemini API, which
+  # is **not** covered by Google's data processing agreement, and a node that
+  # sets a key for it is deciding that these frames leave without that contract
+  # behind them. The attestation says which door answered, so the decision is
+  # readable afterwards rather than remembered.
   egress_http:
+    - "generativelanguage.googleapis.com"
     - "aiplatform.googleapis.com"
     - "*.aiplatform.googleapis.com"
     - "oauth2.googleapis.com"
@@ -50,8 +52,12 @@ config:
     description: "Vertex AI region. It decides where the frames are processed, which is a data-residency question before it is a latency one."
   - key: "model"
     type: string
-    default: "gemini-3.7-flash"
-    description: "Model id at that endpoint. Pinned rather than aliased: 'latest' means the reading changes under a clinician without anybody deciding it, and the attestation would name something that no longer exists."
+    default: ""
+    description: "Model id at whichever door is configured. Empty means the door's own default -- models/gemini-3-flash-preview for the Gemini API, gemini-3.7-flash for Vertex. Pinned rather than aliased: 'latest' means the reading changes under a clinician without anybody deciding it, and the attestation would name something that no longer exists."
+  - key: "thinking"
+    type: string
+    default: "high"
+    description: "How much the model reasons before answering, on the doors that take it. High by default: a read that correlates frames against each other and against a report is not a caption."
   - key: "temperature"
     type: float
     default: 0.0
