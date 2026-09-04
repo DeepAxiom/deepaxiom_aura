@@ -595,6 +595,33 @@ jobs:
           path: kernel/aura-${{ matrix.goos }}-${{ matrix.goarch }}
           retention-days: 7
 
+      # The second artefact builds for the same targets. It is a separate module
+      # with a separate version line, so nothing about the kernel building says
+      # this one does — and an operator running the media subsystem on the same
+      # arm64 box as the node is the ordinary case, not an exotic one.
+      #
+      # It needs its own Go version, which is why setup-go runs again: reading
+      # one module's go.mod to build another is how the two version lines start
+      # meaning one thing.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: media/go.mod
+          cache-dependency-path: media/go.sum
+
+      - name: build the media binary
+        working-directory: media
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: go build -o "aura-media-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/aura-media
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aura-media-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: media/aura-media-${{ matrix.goos }}-${{ matrix.goarch }}
+          retention-days: 7
+
   docs:
     name: documentation links
     runs-on: ubuntu-latest

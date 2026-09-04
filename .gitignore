@@ -3,6 +3,11 @@ kernel/aura.exe
 kernel/aura
 media/aura-media
 media/aura-media.exe
+# The per-target names ci.yml and release.yml build under (aura-linux-arm64,
+# aura-media-darwin-arm64, ...). Running those commands by hand is the normal
+# way to check a cross-compile, and it should not leave the tree dirty.
+kernel/aura-*
+media/aura-media-*
 *.exe
 *.exe~
 *.db
