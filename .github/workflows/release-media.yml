@@ -113,6 +113,9 @@ jobs:
         with:
           name: media-sbom
           path: media-sbom.json
+          # Por defecto es 'warn': el job pasaba en verde sin subir nada y el
+          # fallo aparecia despues, en el paso que buscaba el artefacto.
+          if-no-files-found: error
           retention-days: 7
 
   release:
