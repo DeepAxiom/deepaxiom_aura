@@ -97,23 +97,6 @@ jobs:
         working-directory: ui
         run: npm ci
 
-      # TEMPORAL: el bundle emitido aqui difiere del que produce un contenedor
-      # node:22 limpio con el mismo lockfile (500.69 kB vs 492.93 kB). Esto
-      # imprime el arbol real para localizar la diferencia. Quitar despues.
-      - name: DEBUG entorno del build
-        working-directory: ui
-        run: |
-          echo "node   $(node --version)"
-          echo "npm    $(npm --version)"
-          for m in vite rollup esbuild @vitejs/plugin-react react react-dom typescript; do
-            v=$(node -p "require('$m/package.json').version" 2>/dev/null || echo AUSENTE)
-            echo "$m $v"
-          done
-          echo "--- binarios nativos instalados ---"
-          ls node_modules/@esbuild node_modules/@rollup 2>/dev/null || true
-          echo "--- total de paquetes ---"
-          ls node_modules | wc -l
-
       # The canvas serialises the C2 IR the kernel executes, so its model layer
       # is checked against the same conformance vectors the kernel is.
       - name: test
@@ -189,7 +172,7 @@ jobs:
       # skill could not connect to a node running with its default auth at all.
       - name: python SDK
         working-directory: sdk/python
-        run: PYTHONPATH=src python -m unittest test_token -v
+        run: PYTHONPATH=src python -m unittest discover -p 'test_*.py' -v
 
       # No model is loaded: these cover the streaming buffer, whose failures
       # are silent — a mis-ordered chunk yields a worse transcript, never an
@@ -220,6 +203,12 @@ jobs:
 
       - name: llm-chat
         working-directory: skills/llm-chat
+        env:
+          PYTHONPATH: ../../sdk/python/src
+        run: python -m unittest discover -p 'test_*.py'
+
+      - name: imaging-read
+        working-directory: skills/imaging-read
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
