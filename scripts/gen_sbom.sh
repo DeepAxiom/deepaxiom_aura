@@ -15,7 +15,15 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="${1:-$root/sbom.json}"
+# cyclonedx-gomod resuelve -output contra su cwd, y mas abajo se entra en
+# $root/$module. Una ruta relativa pasada como argumento acaba escrita dentro
+# del modulo -- kernel/sbom.json en vez de la raiz -- donde upload-artifact no
+# la encuentra. Se ancla aqui, antes de movernos.
+case "${1:-}" in
+  "")  out="$root/sbom.json" ;;
+  /*)  out="$1" ;;
+  *)   out="$PWD/$1" ;;
+esac
 module="${2:-kernel}"
 
 if [ ! -f "$root/$module/go.mod" ]; then
