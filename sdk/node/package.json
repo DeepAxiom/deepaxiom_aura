@@ -23,7 +23,7 @@
     "generate": "node scripts/generate-types.mjs",
     "check:generated": "node scripts/generate-types.mjs --check",
     "build": "tsc -p tsconfig.json",
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node --test test/"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
