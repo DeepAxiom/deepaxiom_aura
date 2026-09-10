@@ -31,7 +31,8 @@ REGEN = "Regenerate with: python scripts/gen_ssot.py"
 
 def read_lf(path: Path) -> str:
     """Read a file without translating line endings."""
-    return path.read_text(encoding="utf-8", newline="")
+    with io.open(path, "r", encoding="utf-8", newline="") as fh:
+        return fh.read()
 
 
 def write_lf(path: Path, content: str) -> None:
