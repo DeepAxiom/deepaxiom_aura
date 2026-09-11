@@ -340,10 +340,10 @@ abierto, cualquiera podría apropiarse de `deepaxiom/*/*` para siempre. La
 credencial de publicador se entrega a petición (`info@deepaxiom.com`) hasta que
 las cuentas de Studio puedan emitirlas por desarrollador.
 
-**DeepAxiom Studio está en construcción** en `https://studio.deepaxiom.com`
-([repositorio](https://github.com/DeepAxiom/deepaxiom_studio)): un frente web
-para explorar lo que hay en el registry, descargar una versión, publicar la tuya,
-y un directorio de quién construye qué. Corre en el mismo VPS que el registry y,
+**DeepAxiom Studio** ya está en `https://studio.deepaxiom.com` como primer
+corte de solo lectura: un frente web para explorar lo que hay en el registry,
+descargar una versión y un directorio de quién construye qué — publicar desde
+el navegador y las cuentas vienen después. Corre en el mismo VPS que el registry y,
 a propósito, fuera de su frontera de confianza: lee el registry solo por la API
 HTTP pública de arriba, nunca por disco, que es donde viven los vínculos
 trust-on-first-use. No confundir con la **vista Studio** del plano de control del

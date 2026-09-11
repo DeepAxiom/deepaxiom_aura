@@ -323,10 +323,10 @@ override — left open, anyone could claim `deepaxiom/*/*` forever. A publisher
 credential is issued on request (`info@deepaxiom.com`) until Studio accounts
 can issue them per developer.
 
-**DeepAxiom Studio is under construction** at `https://studio.deepaxiom.com`
-([repository](https://github.com/DeepAxiom/deepaxiom_studio)): a web front to
-browse what the registry holds, download a version, publish yours, and a
-directory of who builds what. It runs on the same VPS as the registry and
+**DeepAxiom Studio** is up at `https://studio.deepaxiom.com` as a first,
+read-only cut: a web front to browse what the registry holds, download a
+version, and a directory of who builds what — publishing from the browser and
+accounts come next. It runs on the same VPS as the registry and
 deliberately outside its trust boundary — it reads the registry only through
 the public HTTP API above, never its disk, which is where the trust-on-first-use
 bindings live. Not to be confused with the **Studio view** of the node's own
