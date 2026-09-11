@@ -340,9 +340,14 @@ not belong in the kernel.
 
 ## Install & quickstart
 
-**Requirements:** Go 1.25+ to build the kernel; Python 3.11+ to run the
-first-party skills; Node 20+ only if you want to rebuild the UI. Consumer
-hardware (8 GB RAM) is enough.
+**Requirements:** none to run a release binary. Go 1.25+ only to build the
+kernel yourself; Python 3.11+ to run the first-party skills; Node 20+ only if
+you want to rebuild the UI. Consumer hardware (8 GB RAM) is enough.
+
+Signed binaries for six targets are on the [v0.3.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0)
+— `aura-windows-amd64.exe` here — with `SHA256SUMS`, its cosign signature and an
+SBOM. Verify before you run; [Verifying a release](SECURITY.md#verifying-a-release)
+has the exact commands. Or build it:
 
 ```powershell
 # 1. Build the kernel (the UI ships embedded — no Node needed at runtime)

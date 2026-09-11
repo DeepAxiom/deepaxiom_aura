@@ -25,9 +25,9 @@ the actual problem.
 
 | | Why it blocks | Shape of the work |
 |---|---|---|
-| **Publish the repository** | The README says `git clone` against a URL that returns 404. Nothing here exists for anyone yet. | Hours. |
 | **Publish the SDKs** | `@deepaxiom/aura` and `aura-sdk` are packaged and unpublished. A full-stack team following [the integration guide](GUIDE.md#when-the-app-is-yours) cannot `npm install` it — they vendor it from the repo. | Hours: npm and PyPI, plus a CI job that publishes on tag. |
-| **Publish binaries and a container image** | CI cross-compiles six targets and uploads them as artifacts with a seven-day retention, so a release is not downloadable. The image is now built and exercised on every push — it becomes healthy on a fresh volume, drains on SIGTERM and keeps its identity across a restart — but it is not pushed anywhere. | Hours: a release job, and a registry to push to. |
+| **Publish a container image** | The binaries are done: `v0.3.0` ships six targets with cosign-signed checksums and an SBOM, and the repository is public. The image is built and exercised on every push — it becomes healthy on a fresh volume, drains on SIGTERM and keeps its identity across a restart — but it is not pushed anywhere, so `docker compose up` still builds it locally. | Hours: a push step in the release job, and a registry to push to. |
+| **A web front for the public registry** | `registry.deepaxiom.com` is up and empty. Publishing and installing work from the CLI, but there is nowhere to browse what exists, read a manifest before installing, or find who built a skill. | DeepAxiom Studio, at `studio.deepaxiom.com`: React and Go on the registry's VPS, outside its trust boundary — it reads the registry through the public `r1` API only, never its disk. Browse, download and a developer directory are up; publishing from the browser and accounts are next. |
 | **A public witness** | Anchoring is the network effect. A witness several independent nodes present to is worth more than two nodes anchoring each other, and running one costs almost nothing. | Days: an instance, a URL, and a retention policy someone stands behind. |
 
 ## Narrowing the honest gaps

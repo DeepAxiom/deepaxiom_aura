@@ -2,9 +2,9 @@
 
 ### Deploy assistants and automations that run live — and can prove what they did.
 
-[Quick start](QUICKSTART.md) · [Full guide](GUIDE.md) · [Versión en español](README-ES.md) ·
-[Milestone status](GUIDE.md#milestone-status) · [Roadmap](ROADMAP.md) ·
-**v0.3.0 — pre-1.0, pre-production**
+[Download v0.3.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0) · [Quick start](QUICKSTART.md) · [Full guide](GUIDE.md) ·
+[Versión en español](README-ES.md) · [Milestone status](GUIDE.md#milestone-status) ·
+[Roadmap](ROADMAP.md) · **v0.3.0 — pre-1.0, pre-production**
 
 ---
 
@@ -303,6 +303,36 @@ different content is rejected), **trust-on-first-use** (the first publish binds 
 package id to its publisher key, and a later version signed by a different key
 cannot hijack it), and a permissions review before anything lands.
 
+**A public registry is up.** `https://registry.deepaxiom.com` serves the same
+`r1` API as `aura registry serve`, from the same code. Point the CLI at it with
+`--registry` or `AURA_REGISTRY`:
+
+```bash
+export AURA_REGISTRY=https://registry.deepaxiom.com
+aura add acme/vision/invoice-ocr         # verifies hash + signature, reviews permissions, installs
+curl -s https://registry.deepaxiom.com/r1/health   # {"api":"r1","ok":true,"registry":"aura"}
+
+# publishing needs a publisher credential; it rides in the URL
+AURA_REGISTRY=https://publisher:PASS@registry.deepaxiom.com aura publish my-skill/
+```
+
+Reads are open; writes are not. Every mutating method is behind basic auth at
+the edge, because the registry's trust-on-first-use binds the *first* key that
+publishes an id to it permanently, with no rotation and no administrative
+override — left open, anyone could claim `deepaxiom/*/*` forever. A publisher
+credential is issued on request (`info@deepaxiom.com`) until Studio accounts
+can issue them per developer.
+
+**DeepAxiom Studio** is up at `https://studio.deepaxiom.com` as a first,
+read-only cut: a web front to browse what the registry holds, download a
+version, and a directory of who builds what — publishing from the browser and
+accounts come next. It runs on the same VPS as the registry and
+deliberately outside its trust boundary — it reads the registry only through
+the public HTTP API above, never its disk, which is where the trust-on-first-use
+bindings live. Not to be confused with the **Studio view** of the node's own
+control plane, which is where you build and run graphs; the name is shared, the
+thing is not.
+
 **The SDK is Apache-2.0**, so a skill you write and sell carries no copyleft
 obligation, ever. Given the isolation gap above, today's honest pitch is *publish
 and host your own* rather than *install strangers' code* — the distribution,
@@ -394,17 +424,35 @@ shape is written up as [a proposal to MCP](spec/proposals/mcp-effect-receipts.md
 
 ---
 
-## 60 seconds, the long way
+## 60 seconds
+
+Signed binaries for Linux, macOS and Windows on amd64 and arm64 are on the
+[v0.3.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0). Verify before you run — the
+signature on `SHA256SUMS` proves who built the file, and only then is the sum
+worth checking ([how](SECURITY.md#verifying-a-release)):
 
 ```bash
-git clone https://github.com/deepaxiom/aura && cd aura/kernel
-go build -o aura ./cmd/aura     # Go 1.25+, no CGO, no external services
-./aura up                       # kernel, UI, state store, ledger, witness client
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/aura-linux-amd64
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/SHA256SUMS{,.sig,.pem}
+cosign verify-blob --certificate-identity-regexp \
+  "^https://github.com/DeepAxiom/deepaxiom_aura/.github/workflows/release.yml@.*$" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --signature SHA256SUMS.sig --certificate SHA256SUMS.pem SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+chmod +x aura-linux-amd64 && ./aura-linux-amd64 up   # kernel, UI, state store, ledger, witness client
 ```
 
-One binary, 18.6 MB — the stripped Linux build that ships in the container; an
-unstripped local `go build` is nearer 26. No account, no cloud, no Postgres, no
-broker, no cluster. `aura up` is the whole runtime and no skills: skills are
+Or the long way, from source:
+
+```bash
+git clone https://github.com/DeepAxiom/deepaxiom_aura && cd deepaxiom_aura/kernel
+go build -o aura ./cmd/aura     # Go 1.25+, no CGO, no external services
+./aura up
+```
+
+One binary, 18.6 MB — the stripped build on the release page and in the
+container; an unstripped local `go build` is nearer 26. No account, no cloud,
+no Postgres, no broker, no cluster. `aura up` is the whole runtime and no skills: skills are
 separate processes that connect *to* it, so a fresh node is a working kernel
 with an empty catalogue and four seeded graphs — `echo`, `chat`, `plan` and
 `voice` — to point one at.

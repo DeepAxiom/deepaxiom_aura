@@ -26,9 +26,9 @@ problema real.
 
 | | Por qué bloquea | Forma del trabajo |
 |---|---|---|
-| **Publicar el repositorio** | El README dice `git clone` contra una URL que devuelve 404. Nada de esto existe todavía para nadie. | Horas. |
 | **Publicar los SDKs** | `@deepaxiom/aura` y `aura-sdk` están empaquetados y sin publicar. Un equipo full-stack que siga [la guía de integración](GUIDE-ES.md) no puede hacer `npm install` — lo copia desde el repo. | Horas: npm y PyPI, más un job de CI que publique en tag. |
-| **Publicar binarios y una imagen de contenedor** | CI compila para seis targets y los sube como artifacts con retención de siete días, así que una release no es descargable. La imagen ahora se construye y se ejercita en cada push — llega a healthy sobre un volumen nuevo, drena con SIGTERM y conserva su identidad tras un reinicio — pero no se publica en ningún sitio. | Horas: un job de release, y un registry al que empujar. |
+| **Publicar una imagen de contenedor** | Los binarios ya están: `v0.3.0` trae seis targets con checksums firmados con cosign y un SBOM, y el repositorio es público. La imagen se construye y se ejercita en cada push — llega a healthy sobre un volumen nuevo, drena con SIGTERM y conserva su identidad tras un reinicio — pero no se publica en ningún sitio, así que `docker compose up` todavía la construye en local. | Horas: un paso de push en el job de release, y un registry al que empujar. |
+| **Un frente web para el registry público** | `registry.deepaxiom.com` está arriba y vacío. Publicar e instalar funcionan desde la CLI, pero no hay dónde explorar lo que existe, leer un manifiesto antes de instalar, ni encontrar quién construyó un skill. | DeepAxiom Studio, en `studio.deepaxiom.com`: React y Go en el VPS del registry, fuera de su frontera de confianza — lee el registry solo por la API pública `r1`, nunca por disco. Explorar, descargar y el directorio de desarrolladores ya están; publicar desde el navegador y las cuentas vienen después. |
 | **Un witness público** | El anclaje es el efecto de red. Un witness al que acuden varios nodos independientes vale más que dos nodos anclándose mutuamente, y operarlo no cuesta casi nada. | Días: una instancia, una URL, y una política de retención que alguien sostenga. |
 
 ## Estrechar los huecos declarados
