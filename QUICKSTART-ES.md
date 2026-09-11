@@ -122,7 +122,7 @@ de ser reconocido.
 | **Poner tu app detrás** | [`examples/expose-app/`](examples/expose-app/) son seis líneas: expone dos funciones que ya existen, marca una con `write: true`, y el kernel la gatea y la sella. |
 | **Proteger un agente que ya corres** | `aura guard --config claude_desktop_config.json` pone tus servidores MCP detrás de un checkpoint. Sin levantar ningún runtime. |
 | **Ver qué se selló** | `aura verify` recalcula la cadena de hashes y las firmas del ledger solo desde el archivo de base de datos, sin kernel corriendo. |
-| **Publicar un skill** | `aura publish mi-skill/ --registry https://registry.deepaxiom.com` firma y sube al registry público; `aura add <org/cat/name> --registry …` instala desde ahí tras verificar hash y firma. Studio, el frente web para ello, está en construcción en `studio.deepaxiom.com`. |
+| **Publicar un skill** | `aura add <org/cat/name> --registry https://registry.deepaxiom.com` instala desde el registry público tras verificar hash y firma. Publicar necesita una credencial de publicador en la URL (`https://publisher:PASS@registry.deepaxiom.com`), que se entrega a petición — ver [el README](README-ES.md#4--un-registry-que-alojas-tú-y-skills-que-son-tuyas). Studio, el frente web para ello, está en `studio.deepaxiom.com`. |
 
 ---
 

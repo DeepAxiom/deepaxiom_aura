@@ -309,10 +309,19 @@ cannot hijack it), and a permissions review before anything lands.
 
 ```bash
 export AURA_REGISTRY=https://registry.deepaxiom.com
-aura publish my-skill/                   # signs with your key; the first publish binds the id to it
 aura add acme/vision/invoice-ocr         # verifies hash + signature, reviews permissions, installs
 curl -s https://registry.deepaxiom.com/r1/health   # {"api":"r1","ok":true,"registry":"aura"}
+
+# publishing needs a publisher credential; it rides in the URL
+AURA_REGISTRY=https://publisher:PASS@registry.deepaxiom.com aura publish my-skill/
 ```
+
+Reads are open; writes are not. Every mutating method is behind basic auth at
+the edge, because the registry's trust-on-first-use binds the *first* key that
+publishes an id to it permanently, with no rotation and no administrative
+override — left open, anyone could claim `deepaxiom/*/*` forever. A publisher
+credential is issued on request (`info@deepaxiom.com`) until Studio accounts
+can issue them per developer.
 
 **DeepAxiom Studio is under construction** at `https://studio.deepaxiom.com`
 ([repository](https://github.com/DeepAxiom/deepaxiom_studio)): a web front to

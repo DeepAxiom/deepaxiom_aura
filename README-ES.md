@@ -326,10 +326,19 @@ misma API `r1` que `aura registry serve`, con el mismo código. Apunta la CLI co
 
 ```bash
 export AURA_REGISTRY=https://registry.deepaxiom.com
-aura publish mi-skill/                   # firma con tu clave; la primera publicación ata el id a ella
 aura add acme/vision/invoice-ocr         # verifica hash + firma, revisa permisos, instala
 curl -s https://registry.deepaxiom.com/r1/health   # {"api":"r1","ok":true,"registry":"aura"}
+
+# publicar necesita una credencial de publicador; viaja en la URL
+AURA_REGISTRY=https://publisher:PASS@registry.deepaxiom.com aura publish mi-skill/
 ```
+
+Leer es público; escribir no. Todo método mutante va tras basic auth en el
+borde, porque el trust-on-first-use del registry ata al *primer* par de llaves
+que publica un id de forma permanente, sin rotación ni puerta administrativa —
+abierto, cualquiera podría apropiarse de `deepaxiom/*/*` para siempre. La
+credencial de publicador se entrega a petición (`info@deepaxiom.com`) hasta que
+las cuentas de Studio puedan emitirlas por desarrollador.
 
 **DeepAxiom Studio está en construcción** en `https://studio.deepaxiom.com`
 ([repositorio](https://github.com/DeepAxiom/deepaxiom_studio)): un frente web

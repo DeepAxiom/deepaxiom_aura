@@ -120,7 +120,7 @@ WebSocket, with every envelope durably logged before it was acknowledged.
 | **Put your own app behind it** | [`examples/expose-app/`](examples/expose-app/) is six lines: expose two existing functions, mark one `write: true`, and the kernel gates and seals it. |
 | **Guard an agent you already run** | `aura guard --config claude_desktop_config.json` puts your MCP servers behind a checkpoint. No runtime to stand up. |
 | **See what was sealed** | `aura verify` recomputes the ledger's hash chain and signatures from the database file alone, with no kernel running. |
-| **Publish a skill** | `aura publish my-skill/ --registry https://registry.deepaxiom.com` signs and uploads to the public registry; `aura add <org/cat/name> --registry …` installs from it after verifying hash and signature. Studio, the web front for it, is under construction at `studio.deepaxiom.com`. |
+| **Publish a skill** | `aura add <org/cat/name> --registry https://registry.deepaxiom.com` installs from the public registry after verifying hash and signature. Publishing needs a publisher credential in the URL (`https://publisher:PASS@registry.deepaxiom.com`), issued on request — see [the README](README.md#4--a-registry-you-host-and-skills-you-own). Studio, the web front for it, is at `studio.deepaxiom.com`. |
 
 ---
 
