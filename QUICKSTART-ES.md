@@ -5,12 +5,24 @@ comando de aquí se ejecutó de punta a punta en una máquina limpia.
 
 [English version](QUICKSTART.md) · [Guía completa](GUIDE-ES.md) · [README](README-ES.md)
 
-**Necesitas:** Go 1.25+ y Python 3.11+. Sin CGO, sin Docker, sin base de datos,
-sin cuenta.
+**Necesitas:** Python 3.11+ para los skills, y Go 1.25+ solo si compilas el
+kernel en vez de descargarlo. Sin CGO, sin Docker, sin base de datos, sin cuenta.
 
 ---
 
-## 1 · Compila y arranca el nodo
+## 1 · Consigue el nodo y arráncalo
+
+O bien descarga el binario firmado de tu plataforma desde la
+[release v0.3.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0) y verifícalo
+([cómo](SECURITY.md#verifying-a-release)):
+
+```bash
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/aura-linux-amd64
+chmod +x aura-linux-amd64 && mv aura-linux-amd64 kernel/aura
+./kernel/aura up
+```
+
+O compílalo, que es lo que el resto de esta página asume para las rutas:
 
 ```bash
 cd kernel
@@ -110,6 +122,7 @@ de ser reconocido.
 | **Poner tu app detrás** | [`examples/expose-app/`](examples/expose-app/) son seis líneas: expone dos funciones que ya existen, marca una con `write: true`, y el kernel la gatea y la sella. |
 | **Proteger un agente que ya corres** | `aura guard --config claude_desktop_config.json` pone tus servidores MCP detrás de un checkpoint. Sin levantar ningún runtime. |
 | **Ver qué se selló** | `aura verify` recalcula la cadena de hashes y las firmas del ledger solo desde el archivo de base de datos, sin kernel corriendo. |
+| **Publicar un skill** | `aura publish mi-skill/ --registry https://registry.deepaxiom.com` firma y sube al registry público; `aura add <org/cat/name> --registry …` instala desde ahí tras verificar hash y firma. Studio, el frente web para ello, está en construcción en `studio.deepaxiom.com`. |
 
 ---
 

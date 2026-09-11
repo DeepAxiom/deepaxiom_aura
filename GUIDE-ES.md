@@ -333,9 +333,15 @@ funcionalidad necesita un LLM para funcionar, no pertenece al kernel.
 
 ## Instalación y arranque rápido
 
-**Requisitos:** Go 1.25+ para compilar el kernel; Python 3.11+ para ejecutar los
-skills de primera parte; Node 20+ solo si quieres reconstruir la UI. Hardware de
-consumo (8 GB de RAM) es suficiente.
+**Requisitos:** ninguno para correr un binario de release. Go 1.25+ solo para
+compilar el kernel tú mismo; Python 3.11+ para ejecutar los skills de primera
+parte; Node 20+ solo si quieres reconstruir la UI. Hardware de consumo (8 GB de
+RAM) es suficiente.
+
+Hay binarios firmados para seis targets en la [release v0.3.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0)
+— `aura-windows-amd64.exe` aquí — con `SHA256SUMS`, su firma cosign y un SBOM.
+Verifica antes de correr; [Verifying a release](SECURITY.md#verifying-a-release)
+tiene los comandos exactos. O compílalo:
 
 ```powershell
 # 1. Compila el kernel (la UI va embebida — no hace falta Node en runtime)
