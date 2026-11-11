@@ -1270,7 +1270,7 @@ segunda declara `write: true`— gateadas con aprobación humana en toda arista 
 llegue a ellas, incluso en grafos cuyo autor olvidó pedirlo.
 
 El paquete ([`sdk/node/`](sdk/node/), `@deepaxiom/aura`) **no tiene dependencias
-de runtime** —usa el WebSocket que ya traen Node 20+ y el navegador— y sus tipos
+de runtime** —usa el WebSocket que ya traen Node 22+ y el navegador— y sus tipos
 se generan desde `spec/schemas/`, así que no pueden divergir de los contratos
 congelados. También incluye un cliente de sesión tipado, que es lo que usa un
 frontend en vez de copiar el `useSession.ts` del plano de control:

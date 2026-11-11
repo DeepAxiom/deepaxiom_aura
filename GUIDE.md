@@ -1284,7 +1284,7 @@ declares `write: true` — gated for human approval on every edge that reaches i
 including in graphs whose author forgot to ask for one.
 
 The package ([`sdk/node/`](sdk/node/), `@deepaxiom/aura`) has **no runtime
-dependencies** — it uses the WebSocket built into Node 20+ and the browser — and
+dependencies** — it uses the WebSocket built into Node 22+ and the browser — and
 its types are generated from `spec/schemas/`, so they cannot drift from the
 frozen contracts. It also carries a typed session client, which is what a
 frontend uses instead of copying the control plane's `useSession.ts`:

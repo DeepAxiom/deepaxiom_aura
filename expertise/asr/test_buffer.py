@@ -179,11 +179,25 @@ class ForIncrementalDecoding(unittest.TestCase):
         appends. Every read must be a prefix of the final audio."""
         u = engine.Utterance(id="u")
         chunks = [pcm([i] * 64) for i in range(2000)]
-        seen, stop = [], threading.Event()
+        whole = b"".join(chunks)
+        stop = threading.Event()
+        reads, bad = [0], []
 
         def reader():
+            # Each read is checked here and then dropped. Keeping every read to
+            # check afterwards looked harmless and was not: this loop runs as
+            # fast as the interpreter lets it, each read is a copy of up to the
+            # whole buffer, and on a machine where the appending thread gets
+            # little CPU the list grew to gigabytes before the appends
+            # finished — which is how this test took a CI runner down rather
+            # than failing.
             while not stop.is_set():
-                seen.append(u.pcm_from(0))
+                data = u.pcm_from(0)
+                reads[0] += 1
+                if len(data) % 128 != 0 or data != whole[:len(data)]:
+                    bad.append(len(data))
+                    return
+                time.sleep(0)  # let the appending thread run
 
         t = threading.Thread(target=reader)
         t.start()
@@ -191,12 +205,11 @@ class ForIncrementalDecoding(unittest.TestCase):
             u.add(c, seq=i)
         stop.set()
         t.join(5)
+        self.assertFalse(t.is_alive(), "the reader thread did not stop")
 
-        whole = b"".join(chunks)
         self.assertEqual(u.pcm(), whole)
-        for data in seen:
-            self.assertEqual(len(data) % 128, 0)
-            self.assertEqual(data, whole[:len(data)])
+        self.assertEqual(bad, [], "a read from another thread was not a prefix of the audio")
+        self.assertGreater(reads[0], 0, "the reader never ran, so the test proved nothing")
 
 
 if __name__ == "__main__":

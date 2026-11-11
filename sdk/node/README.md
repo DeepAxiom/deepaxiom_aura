@@ -5,7 +5,7 @@ TypeScript client for the [AURA runtime](../../README.md). Two things:
 - **`createNode()`** — expose functions your app already has as Expertises.
 - **`openSession()`** — drive a graph from a frontend or a script.
 
-No runtime dependencies: it uses the WebSocket built into Node 20+ and the
+No runtime dependencies: it uses the WebSocket built into Node 22+ and the
 browser. Types are generated from `spec/schemas/`, the same frozen JSON Schemas
 the kernel and the conformance suite use, so they cannot drift from the wire.
 

@@ -123,9 +123,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 22, not 20. The SDK uses the WebSocket built into Node, which is only
+      # a global from 22 on, and its test script hands node:test a glob, which
+      # only 21+ expands itself. On 20 this job failed before running a single
+      # test — and had been failing on main.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: install
         working-directory: sdk/node
