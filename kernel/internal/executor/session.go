@@ -116,6 +116,23 @@ type Session struct {
 	ctxLedger *contextLedger
 
 	sendClient func(raw []byte, qos string) error
+
+	// mailbox is this session's inbound queue when the node dispatches through
+	// mailboxes; nil means Dispatch routes inline. See mailbox.go.
+	mailbox *mailbox
+	// replicas are the distinct skill connections this session was wired to,
+	// held so the load it places on each can be given back when it ends. See
+	// registry.Live.Acquire.
+	replicas    []*registry.Live
+	replicaOnce sync.Once
+	// traces remembers the W3C trace context a client supplied on a root
+	// envelope, so every hop of that chain carries it (C3 v1.7 `trace`).
+	traces *traceIndex
+	// usage is the node-wide token meter this session reports into. Nil in
+	// tests that build a Session directly.
+	usage *usageCounters
+	// watch is this session's read-only audience. See watch.go.
+	watch watchSet
 }
 
 type pendingGate struct {
@@ -129,7 +146,7 @@ type pendingGate struct {
 //
 // This lives here, in the single place every graph passes through, rather than
 // in each producer of graphs. Before, the rule was implemented twice in
-// userland (skills/planner and the MCP server) and the executor only enforced
+// userland (expertise/planner and the MCP server) and the executor only enforced
 // gates already written into the IR, so a hand-declared graph could reach a
 // motor skill with no gate at all and the write would go through unapproved. A
 // visual graph editor would have been a third implementation of the same rule,
@@ -258,6 +275,14 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		spec:       newSpecIndex(maxSpecRoots),
 		ctxLedger:  newContextLedger(g.ContextBudget),
 		sendClient: sendClient,
+		traces:     newTraceIndex(maxTraceRoots),
+	}
+	seen := map[*registry.Live]bool{}
+	for _, live := range resolved {
+		if live != nil && !seen[live] {
+			seen[live] = true
+			s.replicas = append(s.replicas, live)
+		}
 	}
 	if ldg != nil {
 		s.nodeID = ldg.NodeID()
@@ -463,7 +488,7 @@ func (s *Session) emitStatus(causeID string, payload []byte) {
 	if err := s.st.AppendEvent(s.ID, env.ID, env.CauseID, env.Kind, raw); err != nil {
 		s.log.Error("event log append failed", "err", err)
 	}
-	if err := s.sendClient(raw, channel.QoSReliable); err != nil {
+	if err := s.toClient(raw, channel.QoSReliable); err != nil {
 		s.log.Debug("status delivery failed", "err", err)
 	}
 }
@@ -532,6 +557,11 @@ func (s *Session) Route(env channel.Envelope) {
 	// after AppendEvent: the log must stay a truthful record of what the skill
 	// actually did, so `aura why` can show work that was cancelled.
 	root := s.rootOf(env)
+	// C3 v1.7: a client that is already inside a distributed trace says so on
+	// the envelope that starts a chain, and the chain carries it from then on.
+	if env.Trace != "" && env.Node == ClientRef {
+		s.traces.set(root, env.Trace)
+	}
 	if s.cancelled.has(root) {
 		s.log.Debug("suppressed post-cancel envelope",
 			"session", s.ID, "root", root, "id", env.ID, "kind", env.Kind)
@@ -729,6 +759,11 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 	// every hop would let a three-hop chain quietly spend three times what its
 	// author allowed.
 	out.Deadline = inheritDeadline(src.Deadline, d.deadlineMS)
+	// C3 v1.7: the trace context a client supplied rides every hop of the
+	// chain it started. Looked up by root rather than copied from `src`, so it
+	// survives a skill built on an SDK that predates the field and never
+	// echoes it back.
+	out.Trace = s.traceFor(src)
 
 	// C2 v1.2: refuse to deliver into a chain that has already blown the
 	// graph's context budget, rather than letting a model discover it as a
@@ -798,7 +833,7 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 
 	var err error
 	if d.ref == ClientRef {
-		err = s.sendClient(raw, qos)
+		err = s.toClient(raw, qos)
 	} else {
 		err = d.skill.Send(raw, qos)
 	}
@@ -1054,6 +1089,7 @@ func (s *Session) recordAttestation(root string, env channel.Envelope) {
 			"session", s.ID, "from", env.Node+"."+env.Port, "err", err)
 		return
 	}
+	s.meterUsage(env.Attest)
 	if err := ledger.RecordAttestation(s.st, hash, env.Attest); err != nil {
 		s.log.Error("storing inference attestation failed",
 			"session", s.ID, "hash", hash, "err", err)
@@ -1175,7 +1211,7 @@ func (s *Session) emitError(causeID, msg string) {
 	}
 	raw, _ := json.Marshal(env)
 	_ = s.st.AppendEvent(s.ID, env.ID, env.CauseID, env.Kind, raw)
-	if err := s.sendClient(raw, channel.QoSReliable); err != nil {
+	if err := s.toClient(raw, channel.QoSReliable); err != nil {
 		s.log.Error("error delivery failed", "err", err)
 	}
 }

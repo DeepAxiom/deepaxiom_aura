@@ -1,189 +1,166 @@
 # Roadmap
 
-Lo que falta, en el orden en que le bloquea a alguien. Corto a propósito: la
-versión anterior de este archivo tenía 95 KB y la mayor parte describía trabajo
-ya terminado, que es un changelog con nombre de roadmap. Lo que ya está hecho
-está en [Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos); esto es solo lo
-que no.
+AURA se está construyendo para ser el sistema operativo de los robots
+autónomos: la capa que toma lo que una máquina percibe, corre los modelos que
+deciden y autoriza lo que hace — lo bastante rápido para estar dentro del lazo,
+con cada decisión trazable hasta lo que la argumentó, y sin que nada actúe
+sobre el mundo que el nodo no haya revisado antes.
+
+Este archivo es la distancia entre esa frase y el código. Está ordenado por lo
+que un robot necesita primero, no por lo más fácil. Lo que ya existe está en
+[Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos); esto es solo lo que no.
 
 [English version](ROADMAP.md)
 
 ---
 
-## Bloquea producción
+## Dónde está la línea hoy
 
-Nada de lo de abajo es un problema de investigación. Es la diferencia entre
-"desplegable como servicio auxiliar" y "desplegable como algo con SLA".
+Dicho primero, porque todo lo de abajo depende de ello.
 
-| | Por qué bloquea | Forma del trabajo |
+**Para lo que el kernel sirve hoy** es la capa de decisión de una máquina:
+streams de entrada, modelos razonando sobre ellos, efectos de salida a través
+de un gate, y todo registrado. Las latencias son las de un proceso Go ruteando
+envelopes JSON sobre sockets — por debajo del milisegundo por salto en
+loopback, sin contención. Ese es el nivel correcto para "¿debe el brazo
+recoger esto?", "¿hay una persona en el camino?", "cambia la ruta", y el
+equivocado para el lazo de servo que mueve el brazo.
+
+**Lo que no es, ni va a ser,** es un controlador de tiempo real duro. Un lazo
+de control a 1 kHz pertenece al controlador del propio robot, donde está hoy.
+La afirmación es más estrecha y más útil: nada de lo que a ese controlador se
+le *pide hacer* llega sin haber pasado la policy del nodo, y nada de lo que
+hizo falta en el registro.
+
+**Lo que todavía no ha pasado:** ningún robot físico ha sido conducido por este
+código en nada de lo que este repositorio prueba. Cada punto de "El robot en
+sí", abajo, es el trabajo de volver falsa esa frase.
+
+---
+
+## El robot en sí
+
+Nada de esto es investigación. Es el conjunto de conexiones que una máquina
+necesita antes de que el resto de este runtime trate de ella.
+
+| | Por qué va primero | Forma del trabajo |
 |---|---|---|
-| **Failover de nodo** | Un nodo es un proceso, y nada arranca un reemplazo. El hueco es más estrecho de lo que decía: el estado de sesión *sí* es recuperable — `resumeFromLog` reconstruye la ventana de deduplicación, los índices causales, los gates pendientes y los contadores por salto, muera el cliente o el kernel — y el SDK reconecta solo. Un único escritor ya está garantizado por un arrendamiento, así que un standby no puede corromper el ledger arrancando junto a un nodo vivo. Falta la orquestación: algo que note que el líder murió y arranque el reemplazo, y decidir si ese reemplazo vive en la misma máquina u otra. | **Reconsiderar antes de construir.** La recuperación tras un SIGKILL mide 10.04s, de los cuales 10.03s son esperar el arrendamiento del muerto; el nodo vuelve en 3ms, incluso sobre un ledger de 4,000 entradas. Así que `--lease-ttl` ya *es* la perilla del tiempo de recuperación, y un standby tibio gastaría complejidad real en ahorrarse un arranque de milisegundos. Lo que sigue sin resolver es la pérdida de máquina, que exige el directorio de datos alcanzable desde dos hosts — lo primero aquí que necesitaría almacenamiento que no trae. |
+| **Un puente al middleware del robot** | Un robot ya tiene uno — ROS 2 en la mayoría de los casos — y sus sensores, actuadores y controladores ya lo hablan. Hasta que AURA pueda suscribirse a un tópico y llamar una acción, es una capa de decisión sin nada sobre qué decidir. | Tópicos, servicios y acciones proyectados como Expertises, igual que `aura connect` proyecta un documento OpenAPI: un tópico es un stream `sensorial`, una acción es un efecto `motor` y por tanto se gatea y se sella como cualquier otro. De solo lectura por defecto, promoción por acción. |
+| **Un paro que sea invariante del kernel** | Un gate pregunta antes de un efecto. Un robot necesita además lo contrario: una señal tras la cual *ninguna* entrega `motor.*` sale del nodo, esté lo que esté en cola, diga lo que diga un grafo, hasta que una persona con nombre la levante. Hoy lo más parecido es editar la policy y reiniciar. | Un alto a nivel de nodo en el executor, en el mismo punto donde se aplica el gate, sellado en el ledger cuando se levanta y cuando se retira, activable desde una entrada de hardware. Tiene que sostenerse con la UI caída y sin red. |
+| **Datos de sensores que no sean base64** | El PCM y los fotogramas viajan como base64 dentro de JSON: un tercio más grandes de lo que son, codificados y decodificados en cada salto. Tolerable para voz, no para cámaras. | Una trama binaria para aristas `realtime` — un cambio aditivo a C3, aún sin especificar — y un camino en el mismo host que no copie a través del kernel. C3 ya dice que los datos no tienen que transitar el kernel cuando existe ruta directa; solo está implementado el relay. |
+| **El tiempo** | "Sobre qué fotograma se tomó esta decisión" exige que ambos lleven un reloj en el que la máquina esté de acuerdo. Los envelopes llevan un id y un padre causal, no un tiempo de captura. | Un timestamp de captura en los envelopes de sensores, monótono por fuente, y el hash del fotograma que consumió una decisión conservado aunque el fotograma no (el log de eventos ya reduce los payloads `realtime` a un digest; ese digest tiene que volverse citable desde un efecto). |
+| **Correr en la máquina** | Se compilan binarios Linux arm64 y existe un smoke test en Raspberry Pi. Nadie ha medido un nodo en un Jetson con una cámara y un modelo compartiendo su GPU. | Un dispositivo de referencia, un presupuesto medido de percepción → decisión → efecto sobre él, y ese número en este archivo. |
 
-## Bloquea adopción
+## Rápido
 
-La ingeniería va muy por delante de la distribución, y esa distancia es el
-problema real.
+"Ultrarrápido" es una afirmación, y por ahora no es una medida. 0.4 quitó los
+lugares donde se perdía tiempo sin motivo; no produjo el número.
 
-| | Por qué bloquea | Forma del trabajo |
+| | Estado | Qué falta |
 |---|---|---|
-| **Publicar los SDKs** | `@deepaxiom/aura` y `aura-sdk` están empaquetados y sin publicar. Un equipo full-stack que siga [la guía de integración](GUIDE-ES.md) no puede hacer `npm install` — lo copia desde el repo. | Horas: npm y PyPI, más un job de CI que publique en tag. |
-| **Publicar una imagen de contenedor** | Los binarios ya están: `v0.3.0` trae seis targets con checksums firmados con cosign y un SBOM, y el repositorio es público. La imagen se construye y se ejercita en cada push — llega a healthy sobre un volumen nuevo, drena con SIGTERM y conserva su identidad tras un reinicio — pero no se publica en ningún sitio, así que `docker compose up` todavía la construye en local. | Horas: un paso de push en el job de release, y un registry al que empujar. |
-| **Un frente web para el registry público** | `registry.deepaxiom.com` está arriba y vacío. Publicar e instalar funcionan desde la CLI, pero no hay dónde explorar lo que existe, leer un manifiesto antes de instalar, ni encontrar quién construyó un skill. | DeepAxiom Studio, en `studio.deepaxiom.com`: React y Go en el VPS del registry, fuera de su frontera de confianza — lee el registry solo por la API pública `r1`, nunca por disco. Explorar, descargar y el directorio de desarrolladores ya están; publicar desde el navegador y las cuentas vienen después. |
-| **Un witness público** | El anclaje es el efecto de red. Un witness al que acuden varios nodos independientes vale más que dos nodos anclándose mutuamente, y operarlo no cuesta casi nada. | Días: una instancia, una URL, y una política de retención que alguien sostenga. |
+| **Un presupuesto de latencia, medido** | Las colas de despacho por sesión, las réplicas por carga, el agrupado de deltas y un prefijo de prompt estable están dentro y probados en corrección. | Una cifra. `kernel/cmd/loadgen` conduce un round-trip de echo — sin consumidor lento, un envelope por mensaje — así que no muestra nada de eso. Un generador de carga con un productor en streaming, un consumidor deliberadamente lento y un p99 por salto es lo que convierte "una sesión lenta solo se frena a sí misma" de propiedad probada en propiedad medida. |
+| **Deadlines que hagan algo** | Existen deadlines absolutos y heredados: un salto puede apretar uno y nunca extenderlo, y una entrega tardía se descarta en vez de enviarse. | Se *espera* que el Expertise que recibe degrade y nada comprueba que lo haga. Un deadline necesita su segunda mitad: qué corre en su lugar cuando el presupuesto se acabó — un modelo más pequeño, una respuesta en caché, un valor seguro por defecto. |
+| **Prioridad que desaloje** | Las aristas declaran una prioridad y el kernel la estampa en cada entrega. | Actuar sobre ella queda en manos del Expertise que la recibe; el kernel no desaloja nada. En una máquina con una sola GPU, una cadena relevante para la seguridad tiene que poder quitarle el modelo a una conversacional, y eso tiene que ser decisión del nodo y no de cada Expertise. |
+| **Un presupuesto de contexto en tokens reales** | Los Expertises pueden reportar lo que contó un motor (C5 v1.2) y el kernel lo mide. | El presupuesto por grafo se sigue cobrando a bytes/4. Cobrarlo desde el uso reportado cambia lo que significa un presupuesto existente, y por eso no se hizo de paso. |
 
-## Estrechar los huecos declarados
+## Cada decisión, trazable
 
-Cada uno de estos es un sitio donde la documentación dice hoy "esto no está
-garantizado", y cerrarlo mueve una línea en [Estado de los
-hitos](GUIDE-ES.md#estado-de-los-hitos).
+Esta es la parte que más existe. El gate, el ledger encadenado por hash, la
+aprobación firmada, la atestación de inferencia, el witness, el replay y la
+regresión están construidos y probados. Lo que un robot agrega:
 
-| | Qué cambiaría |
+| | Por qué lo necesita una máquina |
 |---|---|
-| **Sandbox microVM para `format: source`** | Hoy `--sandbox process` limpia el entorno y encierra el directorio de trabajo; no contiene código hostil. Hasta que esto aterrice, el pitch del marketplace es *publica y aloja los tuyos*, no *instala código de desconocidos*. `format: wasm` ya está genuinamente aislado. |
-| **Verificación de cadena TEE** | La evidencia de hardware llega a `bound` — el quote está atado a esa declaración concreta y es comprobable sin conexión. `verified` exige verificar la cadena del fabricante, que está declarada y rechazada en vez de stubbeada, porque nunca ha corrido contra hardware real. |
-| **Credenciales cortas para el navegador** | Un frontend web no puede tener el token del operador. Hoy el backend de la app hace de proxy. Una credencial corta con alcance de sesión quitaría ese salto. |
-| **Vista multidispositivo de una sesión viva** | Una sesión, un socket. La forma "muchos clientes mirando una conversación" no existe. |
-| **Un modelo activo para todo el nodo** | `model-manager` marca un modelo como activo y `llm-chat` lo sigue; el backend local del planner sigue leyendo `AURA_MODEL_FILE` con su propio default, así que el cambio mueve la mitad del sistema. Además cada uno carga su propia copia de los pesos, lo que con un 4B sale caro en una tarjeta pequeña. |
+| **Un registrador que sobreviva a la máquina** | La evidencia está en el directorio de datos, y el directorio de datos está en el robot. Cuando lo que falló es el robot, ese es el lugar equivocado. El ledger ya se puede anclar en un witness; el *log* no se puede enviar a ningún lado. El envío continuo de segmentos sellados a una segunda máquina es además lo que haría que el failover sobreviva a perder la primera. |
+| **Replay contra la percepción grabada** | `aura replay` y `aura regress` vuelven a correr sesiones grabadas y comparan los efectos. Para un robot la entrada son datos de sensores, la mayoría de los cuales el log deliberadamente no guarda. Reproducir una decisión necesita los fotogramas que vio, opt-in y acotado. |
+| **Verificación de cadena TEE** | La evidencia de hardware llega a `bound`: el quote está atado a una declaración y es comprobable sin conexión. `verified` exige la cadena del fabricante, que está declarada y rechazada en vez de stubbeada, porque nunca ha corrido contra hardware real. |
+| **Una traza que incluya al controlador** | Un contexto de traza W3C viaja ya en cada salto dentro de un nodo. Se detiene en el puente al middleware del robot, que todavía no existe. |
 
-## Leer una imagen, y las dos negativas que trae
+## Seguro
 
-**Construido:** `deepaxiom/cognitive/imaging-read` — entra una muestra de
-imágenes de un estudio, salen hallazgos con coordenadas normalizadas, la
-correlación contra el informe que ya está en el expediente, un borrador de
-impresión y lo que no se pudo decir. Dos esquemas nuevos, `std/image-study@1` y
-`std/imaging-finding@1`.
+| | Estado | Qué falta |
+|---|---|---|
+| **Contención para código que no es tuyo** | Los Expertises `format: wasm` corren en un sandbox WASI real. Los `format: source` no: `--sandbox process` limpia el entorno y encierra el directorio de trabajo, y no contiene código hostil. | Una frontera de microVM, que está declarada y rechazada al arrancar en vez de degradada. Hasta que aterrice, la posición honesta es *corre tus propios Expertises*, no *instala los de un desconocido*. |
+| **Una credencial para un espectador, y otra para un navegador** | Un ticket de observación deja que un espectador mire una sesión y nada más. | Un frontend todavía no puede *conducir* una sesión sin el backend de la aplicación en medio. La credencial con alcance de sesión para eso no está construida. |
+| **Cadena de suministro de lo que corre el robot** | Los paquetes se firman y las versiones son inmutables; las revisiones de modelo se fijan y se atestiguan; los pesos en formato pickle se rechazan. | Nada verifica que el modelo que a un nodo se le *dijo* correr sea el que un operador de flota *aprobó*. Un manifiesto de despliegue firmado, comprobado al cargar, es el eslabón que falta entre el registry y la atestación. |
+| **Operar sin red** | Un nodo no necesita nada externo para correr. | La aprobación sí. Una máquina en campo tiene que poder actuar sobre una policy decidida de antemano, y el registro tiene que decir que eso fue lo que pasó — preautorización con caducidad, sellada como cualquier otra aprobación. |
 
-**Cognitiva y nunca motor**, que es todo el arreglo: aquí no se escribe nada. El
-borrador llega a un expediente sólo por un efecto `motor.*` que aprueba un
-médico con nombre en el gate, y la atestación C5 que sale con la respuesta es lo
-que le permite a ese efecto decir sobre qué base ocurrió: qué modelo, qué
-revisión, sobre qué prompt. Sin ella una bitácora dice quién firmó y no qué le
-enseñaron.
+## Modelos: despliegue y optimización
 
-Dos cosas que rechaza, y las dos se encuentran el primer día:
+Un robot es sobre todo un problema de despliegue de modelos con motores
+pegados. Lo que existe es un comienzo: un catálogo y descargador
+(`model-manager`), un estimador de ajuste al hardware (`model-fit`),
+revisiones fijadas y atestiguadas, y — desde 0.4 — todo Expertise de primera
+parte capaz de compartir un solo juego de pesos a través de un servidor de
+inferencia.
 
-- **Por dónde lee.** Por la API de Gemini, con una llave. No está cubierta
-  por el acuerdo de tratamiento de datos de Google, y eso es una decisión de
-  quien despliega y no de esta skill: lo que la skill debe es que la decisión se
-  vea —ese host es el único de su lista de salida— y que el motor quede en la
-  atestación C5 de cada lectura, para que «por dónde salió esta imagen» se
-  responda desde el registro y no desde la memoria de alguien.
-- **Imágenes que nadie des-identificó.** Un ultrasonido lleva el nombre de la
-  paciente **quemado en los píxeles**, no sólo en las etiquetas — DICOM hasta
-  tiene un atributo que lo dice, `BurnedInAnnotation`. Esta skill no puede
-  revisar píxeles, así que exige que quien las manda declare que las limpió, y
-  si no, declina. Ser el sitio donde nadie revisó es peor que declinar.
-
-**Lo que todavía no hace**, en el orden en que va a hacer falta:
-
-| Falta | Por qué importa |
+| | Qué falta |
 |---|---|
-| **Tapar lo quemado** | Hoy el requisito se empuja a quien manda, así que un estudio cuyos píxeles llevan un nombre sencillamente no se puede leer. Va aquí: es el mismo decodificado de fotogramas que el subsistema de medios ya hace, y tiene una persona que aprueba y un artefacto que sellar. |
-| **Un lector local** | La API de Gemini significa que las imágenes salen del despliegue. Un nodo dentro de la red de un hospital va a querer que la lectura se quede ahí, y la forma de la skill no cambia: cambia el backend detrás de `reader.py`. |
-| **Un endpoint bajo contrato** | Vertex AI se construyó y se quitó: un segundo camino que nadie ejercita es un segundo camino que se pudre, y quien lo consume eligió la llave. Vuelve el día que un despliegue necesite acuerdo de tratamiento de datos, y es la misma forma: un módulo detrás de `reader.ask`. |
-| **Leer la serie entera y no una muestra** | Una tomografía son mil doscientas imágenes y al lector se le dan dieciséis. Muestrear es honesto y se declara en `limitations`, y no es lo mismo que leer el estudio. |
+| **Que el nodo sea dueño de su servidor de inferencia** | `AURA_INFERENCE_URL` apunta a un servidor; nada lo arranca, lo supervisa ni lo reinicia. Marcar un modelo como activo no cambia lo que ese servidor tiene cargado, y la admisión (`--memory-budget`) no sabe que existe. Verificado solo contra un endpoint falso. |
+| **Cambiar un modelo sin parar la máquina** | Un cambio de pesos es un reinicio de quien los tenga. Hace falta cargar al lado, desviar, descargar — con `aura regress` como el gate que decide si el desvío ocurre, porque esa es exactamente la pregunta que ya contesta. Y un camino de vuelta. |
+| **La optimización como un paso, no como una descarga** | `model-fit` elige entre cuantizaciones que produjo alguien más. Producir el artefacto correcto para un dispositivo dado — cuantizar, compilar para su acelerador — no está en este repositorio, y la atestación no tiene cómo decir que un artefacto se derivó de una revisión fijada en vez de descargarse. |
+| **Más de un modelo en un acelerador** | Cada Expertise que carga pesos carga su propia copia. Percepción, lenguaje y voz en una GPU pequeña necesitan un planificador que sepa qué está cargado, qué cuesta y qué cadena está esperando. |
+| **Voz realmente incremental** | Una policy LocalAgreement opcional da un prefijo estable. Medida en CPU con un modelo pequeño no abarató los parciales, y empeoró los finales en un idioma. Un reconocedor en streaming, en vez de uno por lotes decodificado repetidamente, sigue siendo el arreglo de verdad. |
 
-## Medios, y la IA sobre ellos
+## Video
 
-**El piso está construido; las capacidades no.** [`media/`](media/) es un segundo
-artefacto, `aura-media`, con su propia línea de versión: entra un activo, sale
-una dirección. Llegó desde NAAT, que contrató un CDN de video y un servidor de
-WebRTC en vez de esperar a esto — la decisión correcta, y no quita la necesidad.
-Cuatro capacidades que ese producto necesita son IA sobre video, todas necesitan
-fotogramas, y **ninguna de las cuatro está construida**:
+El sentido principal de un robot. `media/` es un artefacto aparte con su
+propia línea de versión, a propósito: codificar ocupa un núcleo durante minutos
+y aprobar un efecto no puede hacer cola detrás de eso nunca.
 
-| Capacidad | Por qué el kernel es su sitio |
+`aura-media` 0.2 publica mientras codifica — un activo es reproducible segundos
+después de empezar, con progreso reportado —, recibe una transmisión en vivo
+por RTMP y saca una escalera HLS adaptativa con una ventana DVR que se vuelve
+una grabación normal cuando la transmisión termina, muestrea fotogramas en la
+misma decodificación que la codificación, y se le puede decir qué encoder usar.
+Todo se corrió de punta a punta contra ffmpeg real en Linux. Nada se reprodujo
+en un reproductor real, ningún encoder por hardware ha codificado un fotograma,
+y la latencia en vivo está calculada, no medida. [`media/README.md`](media/README.md)
+tiene la lista.
+
+| | Qué falta |
 |---|---|
-| **De-identificar un clip antes de publicarlo** | Caras y texto en pantalla fuera de un video que un clínico grabó en consultorio. Tiene un humano que aprueba y un artefacto que sellar, así que es un efecto `logical.*` y no un filtro. Y es la que obliga a la mitad difícil: **produce un activo de video nuevo**, así que este subsistema codifica, no sólo decodifica. |
-| **Transcribir y subtitular** | `sensorial.asr.transcribe` ya existe para el dictado. Apuntarlo a un video publicado exige demuxear el audio, y compra accesibilidad más un cuerpo de contenido buscable. |
-| **Borrador de un juicio de moderación** | Una red de salud sin criterio de moderación es una plataforma de desinformación con distintivos. Un borrador que cite qué contradice una afirmación, con una persona decidiendo detrás, es exactamente el patrón del gate. Necesita fotogramas muestreados y la transcripción. |
-| **Portada y texto alternativo** | Sugerir, con una persona confirmando. Fotogramas otra vez. |
+| **Una cámara, en vivo, a una latencia que un robot pueda usar** | HLS es la forma correcta para una audiencia y la equivocada para un lazo de control: segundos de retraso por diseño. La percepción necesita fotogramas en decenas de milisegundos, lo que significa WebRTC o un transporte crudo, no una playlist. |
+| **Fotogramas a un modelo sin tocar un disco** | Los fotogramas se muestrean a archivos y se suben a un almacén. Un Expertise de percepción los necesita entregados en memoria, por el camino binario de arriba. |
+| **De-identificación antes de guardar nada** | Caras y texto fuera de lo que una máquina graba en un lugar donde hay personas. Tiene un humano que aprueba y un artefacto que sellar, así que es un efecto gateado y no un filtro — y es la capacidad que obliga a este subsistema a codificar un video *nuevo* y no solo a transcodificar uno. |
+| **Un almacén de objetos que no sea un directorio** | La interfaz existe; una implementación compatible con S3 no. |
+| **Distribución a escala** | No es un objetivo. Los segmentos son archivos estáticos; un CDN delante de ellos es la respuesta, y construir uno aquí sería construir lo equivocado. |
 
-**Se construye aquí y corre al lado del kernel, no dentro.** Compartir el código
-es gratis; compartir el proceso es lo que cuesta. Tres razones, y ninguna es de
-estilo:
+## Una flota
 
-- **Curvas de carga opuestas.** Aprobar un efecto son milisegundos y no puede
-  hacer cola nunca; codificar es un núcleo al tope durante minutos. Un solo
-  proceso significa que una subida de video puede dejar esperando a un clínico
-  que va a firmar una nota.
-- **Cruce de zonas.** El producto que consume esto mantiene los medios de la red
-  y los datos de paciente en procesos separados a propósito, y el kernel es donde
-  se maneja el dictado con PHI. Los bytes de un video público no van ahí — y
-  cuando el kernel **sí** cruza las dos, que sea en el gate de de-identificación,
-  que es donde el cruce está declarado y aprobado.
-- **El ancla deja de ser gobernable.** Quien consume fija un commit para poder
-  decir qué kernel selló una nota. Si libav viaja en el mismo artefacto, cada CVE
-  de códec obliga a mover la versión del kernel — y mover esa versión debe ser un
-  acto deliberado con un changelog que leer. **Así que esto sale como un segundo
-  artefacto con su propia línea de versión**, y el archivo de anclaje de quien
-  consume gana un segundo renglón en vez de que un renglón signifique dos cosas.
+| | Estado | Qué falta |
+|---|---|---|
+| **Un nodo que muere** | `aura up --standby` se queda listo junto a un nodo vivo y toma el relevo cuando muere: medido en decenas de milisegundos en Linux cuando ambos corren en un mismo host, porque el standby puede ver que el proceso ya no existe en vez de esperar el arrendamiento. Las sesiones se reanudan desde el log causal. | Perder la *máquina*. El standby necesita el directorio de datos, y el directorio de datos está en la máquina que murió. Ese es el punto de envío del log de arriba, y es la diferencia entre failover y alta disponibilidad. |
+| **Muchas máquinas** | Los nodos se federan: un grafo puede resolver un Expertise en otro nodo. | Nada administra una flota como una sola cosa — el despliegue de una policy o un modelo a cien máquinas, con el registro de qué máquina corrió qué versión y cuándo. |
+| **Muchos clientes en una sesión** | Observadores de solo lectura, ninguno capaz de frenar la sesión, con un ticket por espectador y una reproducción del historial reciente al conectarse. | Lo mismo sobre QUIC, y una cuenta de observadores que escale más allá de los sockets de un nodo retransmitiendo en vez de subiendo el límite. |
 
-**Lo que existe.** Una cola con `FOR UPDATE SKIP LOCKED` y N workers, donde un
-claim es un lease y un worker que muere pierde su trabajo en vez de llevárselo;
-ffmpeg para decodificar y codificar; una escalera HLS que nunca escala hacia
-arriba, con keyframes alineados entre peldaños; fotogramas y portada salidos de
-esa misma decodificación, porque toda capacidad de arriba los necesita y
-decodificar dos veces cuesta el doble; un almacén de objetos cuyas fuentes no se
-le sirven a nadie. Se registra como `logical.media.transcode` (C1
-`format: projection`), así que un grafo lo puede llamar sin que la codificación
-entre al kernel.
+## Ponerlo en manos de alguien
 
-**Lo que falta del piso.** Un almacén compatible con S3 al lado del de archivos
-—la interfaz está, la implementación no—. Shaka Packager donde el muxer HLS de
-ffmpeg deje de alcanzar. Progreso por trabajo, en vez de un estado que sólo se
-mueve cuando el trabajo termina.
+La ingeniería va por delante de la distribución, y esa distancia es el
+obstáculo real para que alguien averigüe si algo de lo anterior es cierto.
 
-**LiveKit va en el mismo subsistema, y no está empezado.** Es lo que NAAT contrató para el vivo y
-para la teleconsulta, y ya habla las dos direcciones que esto necesita: Ingress
-acepta RTMP y WHIP, Egress devuelve fotogramas compuestos y HLS. Tiempo real de
-entrada, fotogramas de salida, una sola integración — y es lo que hace posible la
-IA sobre una transmisión en vivo, que es la línea de producto para la que existe
-toda esta sección.
+| | Forma del trabajo |
+|---|---|
+| **Publicar los SDKs** | `@deepaxiom/aura` y `aura-sdk` están empaquetados y sin publicar. Horas: npm y PyPI, y un job de CI que publique en tag. |
+| **Publicar una imagen de contenedor** | Se construye y se ejercita en cada push; no se empuja a ningún lado. Horas. |
+| **Un witness público** | El anclaje es el efecto de red, y operar uno no cuesta casi nada. Días: una instancia, una URL, una política de retención que alguien sostenga. |
+| **Binarios de 0.4** | La última release firmada es la 0.3.0. |
 
 ## Trabajo de estándares
 
 | | Estado |
 |---|---|
-| **[Aprobación humana firmada](spec/proposals/draft-signed-human-approval.md)** | En `-01`, sin enviar. El hueco que llena es real: el draft de audit trail para agentes que ya existe en la IETF registra un id de operador pseudónimo sin firma. `-01` agrega el miembro `context` — digests de lo que se le mostró a quien aprueba —, que es la mitad que convierte "una persona con nombre hizo clic" en "una persona con nombre consintió este documento", y que el kernel implementa como C4 v1.7. Enviarlo es lo que convierte un diseño local en una reclamación sobre la categoría. |
+| **[Aprobación humana firmada](spec/proposals/draft-signed-human-approval.md)** | En `-01`, sin enviar. Agrega el miembro `context` — digests de lo que se le mostró a quien aprueba —, que es lo que convierte "una persona con nombre hizo clic" en "una persona con nombre consintió esto", y que el kernel implementa como C4 v1.7. |
 | **[Recibos de efecto para MCP](spec/proposals/mcp-effect-receipts.md)** | Escrito, sin proponer aguas arriba. |
-
-## Cobertura de tests, dónde es delgada y por qué importa
-
-Medida, no recordada — los números están en [Estado de los
-hitos](GUIDE-ES.md#estado-de-los-hitos).
-
-- **`cmd/aura` al 8,8%.** Parseo de argumentos y formateo de salida sobre lógica
-  que está probada donde vive. El outlier honesto, y de bajo riesgo.
-- **`gateway` 54%, `store` 54%, `projection` 59%, `grammar` 52%.** Las garantías
-  que implementan están cubiertas a fondo; los caminos de error de los accesores
-  alrededor no.
-- **La UI está probada solo en su capa de modelo.** Esa capa es ya casi toda la
-  lógica — el modelo de grafos contra los mismos vectores de conformidad C2 que
-  usa el kernel, las operaciones de edición, el bypass, el fold de
-  conversación, los marcos y cada clave de traducción que el código pide. Lo que
-  no tiene nada es la parte que toca un navegador: los componentes, la captura
-  de audio y las vistas de sesiones.
-
-  La división es deliberada, no un plan a medio ejecutar. Todo lo que puede
-  producir IR que el kernel rechazaría es puro y está probado; la aritmética de
-  punteros y el CSS se verifican manejando un nodo de verdad y mirando. Los dos
-  bugs por los que se escribió la suite de i18n pasaron revisión y se
-  publicaron, que es el argumento para llevar más de la mitad-navegador a algo
-  mecánico.
-- **Las costuras entre componentes son el hueco real.** Cada bug preexistente que
-  apareció en la última ronda de trabajo — WebTransport sirviendo `/ws/skill` sin
-  autenticar, una ruta abierta elevando una credencial acotada, `/metrics`
-  público porque una regla comparaba una forma de ruta, `store.Open` sin crear su
-  propio directorio — estaba entre dos componentes que cada uno estaba bien
-  probado. La suite de conformidad ejercita contratos y los unit tests ejercitan
-  paquetes; nada ejercitaba las uniones.
 
 ## Deliberadamente fuera
 
+- **Un kernel de tiempo real duro.** Ver el inicio de este archivo. El lazo de
+  servo se queda donde está; lo que le llega es lo que esto controla.
 - **Un plano de control alojado.** El argumento de neutralidad solo funciona si
   el registry y el witness son cosas que puedes alojar tú.
 - **Un router de policy aprendido.** La policy está pensada para leerse de un
   vistazo por quien la audita. Un modelo que decide qué se gatea, no.
+- **Un CDN de video.** Segmentos estáticos y el borde de alguien más.
 - **Embeber roots TEE de fabricante en el binario.** Un root que no se puede
   rotar falla cerrado en el peor momento o abierto en el equivocado.

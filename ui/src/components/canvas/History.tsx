@@ -54,7 +54,7 @@ export function GraphHistory({ graphId, currentDigest, onRestore, onClose }: Pro
   }, [graphId]);
 
   return (
-    <div className="shortcuts__scrim" onPointerDown={onClose}>
+    <div className="scrim shortcuts__scrim" onPointerDown={onClose}>
       <div className="history" onPointerDown={(e) => e.stopPropagation()} role="dialog">
         <header className="shortcuts__head">
           <span>{t("studio.history.title", { graph: graphId })}</span>

@@ -1,11 +1,11 @@
 # Inicio rápido
 
-De cero a un nodo corriendo con un skill conectado, en tres terminales. Cada
+De cero a un nodo corriendo con un Expertise conectado, en tres terminales. Cada
 comando de aquí se ejecutó de punta a punta en una máquina limpia.
 
 [English version](QUICKSTART.md) · [Guía completa](GUIDE-ES.md) · [README](README-ES.md)
 
-**Necesitas:** Python 3.11+ para los skills, y Go 1.25+ solo si compilas el
+**Necesitas:** Python 3.11+ para los Expertises, y Go 1.25+ solo si compilas el
 kernel en vez de descargarlo. Sin CGO, sin Docker, sin base de datos, sin cuenta.
 
 ---
@@ -40,7 +40,7 @@ Imprime un banner. Dos líneas importan:
 **Abre la URL de `open` en el navegador.** Ese es el plano de control. Abre en
 **Estudio**, que es donde construyes un grafo, lo ejecutas y hablas con él — el
 lienzo, el panel de conversación y la actividad en vivo son una sola pantalla.
-Skills, proyecciones, grafos, sesiones y la referencia completa están al lado. El token viaja en el fragmento
+Expertises, proyecciones, grafos, sesiones y la referencia completa están al lado. El token viaja en el fragmento
 porque los navegadores nunca envían el fragmento al servidor, así que no acaba en
 los logs de acceso; la página lo guarda y lo borra de la barra de direcciones.
 
@@ -49,27 +49,27 @@ terminal corriendo.
 
 ---
 
-## 2 · Conecta un skill
+## 2 · Conecta un Expertise
 
 **Un nodo recién arrancado tiene el catálogo vacío.** `aura up` es el kernel y
-ningún skill: los skills son procesos aparte que se conectan *a* él. No va a
+ningún Expertise: los Expertises son procesos aparte que se conectan *a* él. No va a
 correr nada hasta que uno lo haga.
 
 Sí trae cuatro grafos — `echo`, `chat`, `plan` y `voice` — para que haya algo a
-lo que apuntar un skill en el primer arranque. Por eso el rail vivo del Estudio
+lo que apuntar un Expertise en el primer arranque. Por eso el rail vivo del Estudio
 tiene filas antes de que hayas dibujado nada, y por eso el comando del paso
 3 nombra `echo` sin registrarlo antes. Los grafos vienen sembrados; el catálogo
-de skills no.
+de Expertises no.
 
 ```bash
-cd skills/echo
+cd expertise/echo
 PYTHONPATH=../../sdk/python/src python main.py
 ```
 
 Deberías ver `registered:` en la salida. Sin configurar ningún token — el SDK lee
 `~/.aura/node.token` igual que el CLI.
 
-> Ejecútalo desde el directorio del propio skill. El SDK carga `skill.yaml` desde
+> Ejecútalo desde el directorio del propio Expertise. El SDK carga `expertise.yaml` desde
 > el directorio de trabajo, así que arrancarlo desde la raíz del repo no
 > encuentra el manifiesto.
 
@@ -107,7 +107,7 @@ credencial y responde con un código de salida:
 hola aura
 ```
 
-Ese viaje de ida y vuelta fue cliente → kernel → executor de grafos → skill →
+Ese viaje de ida y vuelta fue cliente → kernel → executor de grafos → Expertise →
 vuelta, sobre un WebSocket, con cada envelope registrado de forma durable antes
 de ser reconocido.
 
@@ -117,12 +117,12 @@ de ser reconocido.
 
 | | |
 |---|---|
-| **Dibujar un grafo** | Abre la vista **Lienzo**. Arrastra un skill de la paleta, cablea `client.text_out` a su entrada y regístralo. |
+| **Dibujar un grafo** | Abre la vista **Lienzo**. Arrastra un Expertise de la paleta, cablea `client.text_out` a su entrada y regístralo. |
 | **Leer la referencia** | La vista **Referencia** tiene todos los comandos, los cinco contratos y todos los esquemas — offline, sin red. |
 | **Poner tu app detrás** | [`examples/expose-app/`](examples/expose-app/) son seis líneas: expone dos funciones que ya existen, marca una con `write: true`, y el kernel la gatea y la sella. |
 | **Proteger un agente que ya corres** | `aura guard --config claude_desktop_config.json` pone tus servidores MCP detrás de un checkpoint. Sin levantar ningún runtime. |
 | **Ver qué se selló** | `aura verify` recalcula la cadena de hashes y las firmas del ledger solo desde el archivo de base de datos, sin kernel corriendo. |
-| **Publicar un skill** | `aura add <org/cat/name> --registry https://registry.deepaxiom.com` instala desde el registry público tras verificar hash y firma. Publicar necesita una credencial de publicador en la URL (`https://publisher:PASS@registry.deepaxiom.com`), que se entrega a petición — ver [el README](README-ES.md#4--un-registry-que-alojas-tú-y-skills-que-son-tuyas). Studio, el frente web para ello, está en `studio.deepaxiom.com`. |
+| **Publicar un Expertise** | `aura add <org/cat/name> --registry https://registry.deepaxiom.com` instala desde el registry público tras verificar hash y firma. Publicar necesita una credencial de publicador en la URL (`https://publisher:PASS@registry.deepaxiom.com`), que se entrega a petición — ver [el README](README-ES.md#un-registry-que-alojas-tú-y-expertises-que-son-tuyos). Studio, el frente web para ello, está en `studio.deepaxiom.com`. |
 
 ---
 
@@ -137,7 +137,7 @@ de ser reconocido.
 
 **`aura chat` sin `--graph` usa el grafo `chat`, que necesita un LLM.** Sin uno
 falla con `no connected skill provides capability "cognitive.llm.chat"`. Para eso
-arranca [`skills/llm-chat/`](skills/llm-chat/) — descarga un modelo. El grafo
+arranca [`expertise/llm-chat/`](expertise/llm-chat/) — descarga un modelo. El grafo
 `echo` es el que funciona en frío.
 
 **En PowerShell de Windows** las variables de entorno tienen otra sintaxis:
@@ -146,7 +146,7 @@ arranca [`skills/llm-chat/`](skills/llm-chat/) — descarga un modelo. El grafo
 $env:PYTHONPATH = "../../sdk/python/src"; python main.py
 ```
 
-**No pasa nada / `skills connected: 0`.** Mira la terminal del skill. Si dice
+**No pasa nada / `skills connected: 0`.** Mira la terminal del Expertise. Si dice
 `401`, no encontró credencial — ver abajo. Si dice `ConnectionRefused`, el nodo
 no está arriba.
 

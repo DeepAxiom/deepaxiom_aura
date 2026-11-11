@@ -1,0 +1,25 @@
+{
+  "v": "1",
+  "id": "01J9ZK3V7QABCDEFGHJKMNPQRS",
+  "cause_id": "01J9ZK2M1PABCDEFGHJKMNPQRS",
+  "session": "sess-8f3a",
+  "node": "eco",
+  "port": "text_out",
+  "seq": 7,
+  "idem": "sess-8f3a:eco:text_out:7",
+  "schema": "std/text@1",
+  "kind": "data",
+  "payload": {
+    "text": "hola",
+    "final": true
+  },
+  "attest": {
+    "engine": "llama.cpp",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+    "usage": {
+      "input_tokens": 900,
+      "output_tokens": 40,
+      "cached_input_tokens": 768
+    }
+  }
+}

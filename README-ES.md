@@ -1,308 +1,334 @@
-# Deep Axiom
+# AURA
 
-### Despliega asistentes y automatizaciones que corren en vivo — y puede demostrar qué hicieron.
+### El sistema operativo de los robots autónomos.
 
-[Descargar v0.3.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0) · [Inicio rápido](QUICKSTART-ES.md) · [Guía completa](GUIDE-ES.md) ·
-[English](README.md) · [Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos) ·
-[Roadmap](ROADMAP-ES.md) · **v0.3.0 — pre-1.0, pre-producción**
+Lo bastante rápido para estar dentro del lazo. Cada decisión trazable hasta lo
+que la argumentó. Nada actúa sobre el mundo sin que el nodo lo haya revisado
+antes.
+
+[Inicio rápido](QUICKSTART-ES.md) · [Guía completa](GUIDE-ES.md) · [Roadmap](ROADMAP-ES.md) ·
+[Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos) · [English](README.md) ·
+**v0.4.0 — pre-1.0, pre-producción**
+
+<!-- UI-HERO -->
+<p align="center"><img src="docs/media/studio-live.gif" alt="El plano de control: un grafo corriendo en vivo, tokens apareciendo en el nodo que los produce, una arista gateada hacia un Expertise motor" width="900"></p>
+<!-- /UI-HERO -->
 
 ---
 
-## Empieza sin adoptar nada
+## Qué es, y qué es hoy
 
-Tu agente ya llama a servidores MCP. Ponlos detrás de un checkpoint con un
-comando — sin runtime que levantar, sin puerto que elegir, sin reescribir nada:
+Una máquina que actúa por su cuenta tiene tres problemas. Percibir y moverse
+tienen buenas respuestas desde hace años — el middleware del robot y sus
+controladores. **Decidir** es más nuevo: los modelos son grandes, comparten un
+acelerador y se reemplazan cada pocos meses. Y **responder por lo que hizo** es
+el que nadie construye primero, lo cual es un error, porque un sistema que no
+fue diseñado para emitir esa evidencia no puede hacerlo después sin reconstruir
+cómo ejecuta.
+
+AURA es la capa para los dos últimos. Un solo binario que corre los modelos que
+deciden, lleva lo que ven y dicen como streams tipados en vivo, y se pone entre
+cada decisión y el actuador.
+
+**Lee esto antes que el resto.** Hoy es la capa de decisión, con la evidencia
+incorporada. No ha conducido un robot físico en nada de lo que este repositorio
+prueba, y el puente al middleware de un robot es el
+[primer punto del roadmap](ROADMAP-ES.md#el-robot-en-sí), no algo que exista.
+No es un controlador de tiempo real duro ni lo va a ser: el lazo de servo se
+queda en el robot. Lo que AURA controla es lo que a ese controlador se le
+*pide* hacer, y lo que el registro dice que hizo.
+
+Todo lo de abajo está construido y probado, salvo donde dice lo contrario.
+
+---
+
+## 1 · Rápido
+
+### Un sensor no termina
+
+Las herramientas por lotes disparan un trigger, corren una cadena una vez y la
+destruyen. Eso encaja con una sincronización nocturna y se rompe en cuanto el
+trabajo es *vivo* — una cámara, una conversación, un modelo respondiendo token
+a token.
+
+<p align="center"><img src="docs/media/mechanism-connection.svg" alt="Una ejecución por lotes arranca, corre y se destruye; una conexión se queda abierta y los envelopes fluyen por el grafo conforme se producen" width="820"></p>
+
+Texto, audio, fotogramas y eventos viajan como el mismo envelope tipado sobre
+una conexión que se queda abierta. Un nodo sirve **QUIC (WebTransport)** en el
+mismo número de puerto que su listener TCP, así que las tres clases de QoS son
+tres primitivas de transporte reales: `realtime` es un datagrama que no puede
+frenar ni ser frenado, `reliable` es un stream ordenado por arista, `bulk` tiene
+el suyo. Un peer que no alcanza UDP conserva el camino WebSocket. **Los
+deadlines son absolutos y se heredan** — un salto puede apretar uno, nunca
+extenderlo — y una entrega que ya va tarde se descarta en vez de calcularse
+para nadie.
+
+### Una sesión lenta solo se frena a sí misma
+
+Todas las sesiones a las que sirve un Expertise comparten su única conexión. El
+kernel ruteaba cada envelope en línea, así que una sesión cuyo consumidor se
+atrasaba frenaba a todas las demás de ese socket. Ahora cada sesión tiene su
+propia cola.
+
+<p align="center"><img src="docs/media/mechanism-mailbox.svg" alt="Con ruteo en línea una sesión bloqueada frena a las que vienen detrás en la misma conexión; con una cola por sesión solo espera la bloqueada" width="820"></p>
+
+Las sesiones nuevas van a la réplica que menos sesiones vivas lleva, contadas
+por el propio kernel. Y el `cancel` de un cliente no hace cola: adelanta a cada
+token que todavía espera detrás, y el kernel los suprime — aquí la cancelación
+es una garantía, no una petición.
+
+### Menos envelopes para las mismas palabras
+
+Un modelo emite un token cada pocos milisegundos, y cada uno era su propio
+envelope — un id, dos codificaciones, dos appends al log, una decisión de
+ruteo — para cuatro caracteres.
+
+<p align="center"><img src="docs/media/mechanism-coalescing.svg" alt="Muchos envelopes de un token se vuelven unos pocos más grandes con el mismo texto; el primer token nunca se retrasa" width="820"></p>
+
+El primer token sigue saliendo de inmediato; nada espera más de 25 ms. En un
+stream rápido eso fue **cerca de 50 envelopes en vez de 120, con texto
+idéntico**, en una corrida de punta a punta contra un nodo real.
+
+### Qué está medido, y qué no
+
+| | |
+|---|---|
+| Ruteo + durabilidad del kernel, un nodo, echo sobre loopback | 1 sesión: 1.504 msg/s, p50 0,58 ms · 200 sesiones: 1.908 msg/s, p50 63 ms (eran 344 msg/s, p50 489 ms antes del group commit). `kernel/cmd/loadgen` lo reproduce. |
+| Log causal de eventos | 1,5M eventos/s sobre segmentos append-only contra los 27k de SQLite con durabilidad igualada. |
+| Un nodo muerto reemplazado por su standby | 21–118 ms desde el kill hasta volver a contestar, Linux, mismo host. `scripts/failover_e2e.py`. |
+| Colas por sesión y agrupado bajo carga | **No medido.** Probado en corrección; el generador de carga existente no tiene consumidor lento y es un envelope por mensaje, así que no muestra ninguno. |
+| Percepción → decisión → efecto en un robot | **No medido.** Todavía no hay un robot en el lazo. |
+
+---
+
+## 2 · Cada decisión, trazable
+
+<p align="center"><img src="docs/media/mechanism-gate-ledger.svg" alt="Una entrega hacia un Expertise motor queda retenida en el gate del kernel para una persona con nombre, y luego se sella en un ledger encadenado por hash" width="820"></p>
+
+- **El gate es un invariante del kernel.** En las librerías de agentes la
+  interrupción vive en el código que escribiste, así que el código que se
+  olvida no tiene gate. Aquí el executor lo aplica en el único punto por el que
+  pasa toda entrega, guiado por la policy del nodo. Un grafo puede pedir *más*
+  escrutinio del que la policy exige, nunca menos.
+- **La entry nombra al humano que lo aprobó, y él lo firmó.** Con una clave que
+  el nodo nunca ha tenido, sobre digests de lo que realmente se le mostró — así
+  el registro dice que una persona consintió *esto*, no que alguien hizo clic.
+  Escrito como [Internet-Draft](spec/proposals/draft-signed-human-approval.md).
+- **Cada efecto se sella, no se registra.** Una cadena de hashes, comprometida
+  en una cabeza Merkle RFC 6962 que el nodo firma y un tercero puede
+  contrafirmar. `aura verify` lo recalcula todo desde el archivo de base de
+  datos solo, sin kernel corriendo.
+- **Nombra el modelo que lo argumentó.** Motor, modelo, revisión, cuantización,
+  parámetros de muestreo, semilla — y ahora los tokens que contó el motor —
+  atados a cada efecto que esa salida causó. La sustitución silenciosa de
+  modelos es un problema medido [[10]](#refs); aquí rompe hashes ya
+  comprometidos en una cadena append-only. Sigue siendo la palabra del
+  Expertise: una afirmación atada a sus consecuencias, no una prueba de lo que
+  se ejecutó.
+- **Se une a la traza que ya tienes.** Un `traceparent` W3C viaja en cada salto
+  de la cadena que inicia quien llama — llevado por el kernel, así que
+  sobrevive a un Expertise que nunca oyó hablar de él — y `aura up --otlp`
+  exporta spans mientras el nodo corre. Se muestrean sesiones enteras, nunca
+  árboles parciales, y los payloads nunca se exportan.
+
+<p align="center"><img src="docs/media/mechanism-trace.svg" alt="El contexto de traza de quien llama viaja por cada salto dentro del nodo y de vuelta, así los spans del nodo se unen a su traza" width="820"></p>
+
+Cuando alguien pregunta después, no llega con un hash. Llega con un rango de
+fechas:
+
+```bash
+aura audit --since 2026-07-01 --out q3.json   # qué actuó, quién lo autorizó, bajo qué policy
+aura audit --verify q3.json                   # cualquiera, en cualquier parte, sin nodo corriendo
+aura why <session>                            # qué pasó, narrado desde el log causal
+aura regress                                  # reproduce sesiones grabadas contra un modelo nuevo; compara los *efectos*
+```
+
+**La obligación ya está escrita.** El [Reglamento (UE) 2024/1689](https://artificialintelligenceact.eu/article/12/)
+exige el registro automático de eventos (Artículo 12) y la supervisión efectiva
+por personas físicas (Artículo 14) a los sistemas de IA de alto riesgo; sus
+fechas de aplicación las movió el [Reglamento (UE) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj)
+al 2 de diciembre de 2027 para los sistemas del Anexo III y al 2 de agosto de
+2028 para los embebidos en productos regulados. Se movió el calendario; el
+texto no. ISO/IEC 42001 pide la misma cadena de evidencia hoy.
+
+---
+
+## 3 · Seguro
+
+- **Lo que actúa sobre el mundo es un tipo.** Cada Expertise declara si
+  percibe, razona, recuerda, transforma o actúa (`motor`). La policy deniega
+  por defecto `motor.*`; la especulación se rechaza al cablear cualquier arista
+  hacia uno.
+- **Un Expertise no es el operador.** Una credencial acotada a una capability
+  puede conectarse, registrarse como esa capability y gastar los recibos que
+  reciba — y no puede registrar un grafo, leer el ledger ni inscribir un
+  aprobador.
+- **Un secreto se libera contra un recibo, no se tiene de forma ambiente.**
+  Saltarse el gate deja de ser una forma de evitar el escrutinio y pasa a ser
+  una forma de conseguir un 401.
+- **Un espectador recibe un ticket para una sesión y nada más.** Firmado, de
+  vida corta, válido en una sola ruta.
+- **Los Expertises `format: wasm` corren en un sandbox WASI real.** Los
+  `format: source` **no**: `--sandbox process` limpia el entorno y encierra el
+  directorio de trabajo, y no contiene código hostil. Hasta que llegue la
+  frontera de microVM, la posición honesta es *corre tus propios Expertises*,
+  no *instala los de un desconocido*.
+- **Los pesos en formato pickle se rechazan; las revisiones de modelo se
+  fijan** antes de descargar, así que lo atestiguado es lo que se bajó.
+
+Empieza aquí sin adoptar nada más — pon los servidores MCP que un agente ya usa
+tras la policy, el gate y el ledger de este nodo:
 
 ```bash
 aura guard --config claude_desktop_config.json
 ```
 
-```
-  no node on port 9080 — running an embedded kernel
-  ledger    every guarded call is sealed here
-
-  TOOL               CAPABILITY                   ON CALL
-  probe/read_thing   motor.mcp.probe.read_thing   human approval + sealed
-  probe/write_thing  motor.mcp.probe.write_thing  human approval + sealed
-
-  2 of 2 act on the world and are gated; the rest are read-only.
-```
-
-Cada llamada a herramienta que haga el agente pasa ahora por una policy que tú
-controlas, se detiene ante un humano si actúa sobre el mundo, y aterriza en un
-ledger encadenado por hash que se verifica sin conexión. Una herramienta está
-gateada salvo que su servidor demuestre que solo lee **y** tú decidas creerle —
-el default es estricto porque `readOnlyHint` es una afirmación del mismo servidor
-del que trata la llamada, y los metadatos de herramientas son la superficie de
-ataque documentada [[1]](#refs)[[2]](#refs): un análisis a gran escala del
-ecosistema MCP encuentra que el envenenamiento a nivel de descriptor es la
-vulnerabilidad de cliente más frecuente, y que la mayoría de los clientes la
-validan de forma insuficiente.
-
-La trampa, dicha de entrada: esto se sostiene exactamente hasta donde llegue tu
-control sobre la configuración del agente. No hay imposición en red.
-[Detalles](GUIDE-ES.md#proteger-las-tools-de-un-agente).
+Se sostiene exactamente hasta donde llegue tu control sobre la configuración
+del agente; no hay imposición en red. [Detalles](GUIDE-ES.md#proteger-las-tools-de-un-agente).
 
 ---
 
-## 1 · Despliega en tiempo real
+## 4 · Modelos: despliegue y optimización
 
-Cuando quieras más que un checkpoint, el mismo binario es un runtime. Describe lo
-que necesitas; lee el catálogo vivo, elige skills, compila un grafo y lo deja
-corriendo:
+Un robot es sobre todo un problema de despliegue de modelos con motores
+pegados.
+
+- **Un solo contrato para cada modelo.** Lenguaje, voz, visión — cualquier
+  modelo que envuelva un Expertise — tras el mismo manifiesto y los mismos
+  puertos, en local o en remoto. Cambiar uno cambia la colocación, no el grafo.
+- **Un solo juego de pesos para todo el nodo.** Apunta todo Expertise de
+  primera parte a un servidor compatible con OpenAI (`AURA_INFERENCE_URL`) y
+  comparten sus slots, su batching y su caché de prefijo en vez de cargar cada
+  uno una copia.
+- **Un prompt cuyo prefijo sobrevive a la conversación.** El historial se
+  recorta por bloques, así que una caché KV o la caché de prompts de un
+  proveedor sigue siendo válida entre compactaciones en vez de invalidarse en
+  cada turno.
+- **El costo en tokens como lo contó el motor**, aciertos de caché incluidos,
+  en la atestación y en `aura_tokens_total` — no una estimación a bytes/4.
+- **Un planner que no puede inventar una capability**: su decodificador queda
+  restringido por una gramática construida desde el catálogo vivo.
+- **Ajuste antes de descargar.** `model-fit` estima qué puede correr una
+  máquina; `model-manager` lo baja con la revisión fijada.
+
+Todavía no: que el nodo sea dueño de ese servidor de inferencia y lo supervise,
+cambiar un modelo sin reiniciar, producir un artefacto optimizado para un
+dispositivo en vez de elegir entre los descargados, y planificar varios modelos
+en un acelerador. El camino del servidor compartido está verificado contra un
+endpoint falso, no uno real. [Roadmap](ROADMAP-ES.md#modelos-despliegue-y-optimización).
+
+---
+
+## 5 · Video
+
+[`media/`](media/) es un segundo artefacto, `aura-media`, con su propia línea
+de versión — codificar ocupa un núcleo durante minutos y aprobar un efecto no
+puede hacer cola detrás de eso nunca.
+
+- **Reproducible mientras codifica.** Los segmentos se publican conforme
+  cierran; un activo tiene dirección segundos después de empezar, con progreso
+  reportado.
+- **Entra en vivo, sale HLS adaptativo.** Una transmisión RTMP se vuelve una
+  escalera con una ventana DVR que pasa a ser una grabación normal cuando la
+  transmisión termina; un emisor que se cae y se reconecta continúa la misma
+  transmisión.
+- **Fotogramas para modelos desde la misma decodificación que la
+  codificación.**
+- **Una audiencia sobre la sesión de al lado.** `GET /v1/watch` conecta
+  observadores de solo lectura a una sesión viva — ninguno capaz de frenarla, a
+  ninguno se le muestra un gate — con un ticket por espectador y el historial
+  reciente reproducido al entrar.
+
+Corrido de punta a punta contra ffmpeg real en Linux. No reproducido en un
+reproductor real; ningún encoder por hardware ha codificado un fotograma; la
+latencia en vivo está calculada, no medida. Para un robot la pieza que falta es
+la otra dirección — una cámara hacia un modelo en decenas de milisegundos, cosa
+que HLS nunca será. [Qué está construido y qué no](media/README.md).
+
+---
+
+## 6 · Un nodo que muere se reemplaza
 
 ```bash
-aura do "vigila la tabla de órdenes y mándame un mensaje cuando entre un reembolso mayor a $500"
+aura up --data /var/lib/aura                 # el nodo
+aura up --data /var/lib/aura --standby       # toma el relevo cuando el primero muere
 ```
 
-La escritura queda gateada porque actúa sobre el mundo. El grafo se queda arriba:
-Postgres empuja los cambios de fila conforme se confirman, y nada sondea.
-
-**La conexión es la unidad de trabajo, no la ejecución.** n8n, Zapier y Make
-disparan un trigger, corren una cadena una vez, y terminan. Eso encaja con una
-sincronización nocturna y se rompe en cuanto el trabajo es *vivo* — una
-conversación, un feed de video, una base de datos cambiando debajo, un modelo
-respondiendo token a token.
-
-|  | Herramientas por lotes | Deep Axiom |
-|---|---|---|
-| Unidad de trabajo | Una ejecución: arranca, corre, se destruye | Una **conexión** que se queda abierta |
-| Obtener datos | Sondear cada 5 minutos | La fuente **empuja**, conforme ocurre |
-| Un LLM respondiendo | Esperar la respuesta completa | Token a token; lo de abajo reacciona a media frase |
-| Audio / video | No soportado de verdad | PCM ritmado, transcripciones parciales, barge-in real |
-| Un paquete perdido | Frena todo lo que viene detrás (TCP) | Frena solo su propio carril (QUIC) |
-| Cancelar | Al mejor esfuerzo | Garantía del kernel — la salida de una cadena cancelada no llega a ningún lado |
-
-Texto, audio, documentos y eventos viajan como el mismo envelope tipado. Un nodo
-sirve **QUIC (WebTransport)** en el mismo número de puerto que su listener TCP,
-así que las tres clases de QoS se vuelven tres primitivas de transporte reales:
-`realtime` es un datagrama que no puede frenar ni ser frenado, `reliable` es un
-stream ordenado por arista, `bulk` tiene el suyo propio. Un peer que no alcanza
-UDP conserva el camino WebSocket sin cambios. **Los deadlines son absolutos y se
-heredan** — un salto puede apretarlos, nunca extenderlos.
-
-Un socket caído se reanuda: la ventana de deduplicación, los índices causales,
-los gates pendientes y los contadores por salto se reconstruyen desde el log de
-eventos, haya muerto el cliente o el kernel. Esa es la propiedad que la
-literatura de dataflow con estado llama transparencia ante fallos [[3]](#refs), y
-es la que un asistente *vivo* no puede no tener — no existe "vuelve a correr el
-job" para una conversación.
-
-### Vivo significa concurrente, y la concurrencia tiene que ayudar
-
-Cada envelope se registra de forma duradera antes de ser confirmado. Eso
-significaba una transacción por evento encolada en un único lock de escritura —
-200 sesiones concurrentes hacían *menos* trabajo total que una. El group commit
-(el trato que PostgreSQL y RocksDB hicieron hace décadas) mantiene a cada
-llamador esperando su propia durabilidad mientras todos los que ya esperaban se
-suman a la misma transacción.
-
-| Sesiones concurrentes | Antes | Después |
-|---|---|---|
-| 1 | 1.556 msg/s · p50 0,47 ms | 1.504 msg/s · p50 0,58 ms |
-| 50 | 365 msg/s · p50 96 ms | 1.631 msg/s · p50 19 ms |
-| 200 | 344 msg/s · p50 489 ms | **1.908 msg/s · p50 63 ms** |
-| 1.000 *(8 réplicas)* | *no conectaba* | **28.202 msg/s · p50 0,51 ms** |
-
-Lee la tabla por la forma, no por los números absolutos, y sabiendo qué mide: un
-skill echo sobre loopback, o sea el costo de ruteo y durabilidad del kernel sin
-trabajo real en el lazo. El throughput agregado divide round-trips entre tiempo
-de pared *incluyendo* el tiempo de conexión, lo cual favorece a las filas de alta
-concurrencia. La afirmación honesta es la de la fila del medio: con 200 sesiones
-el mismo nodo pasó de 344 msg/s a 1.908 y el p50 de 489 ms a 63, sin debilitar la
-durabilidad. `kernel/cmd/loadgen/` lo reproduce.
-
-Un profile de CPU encontró el resto, y no donde nadie suponía: la codificación
-JSON era el 1% del CPU mientras que **la E/S de archivos de SQLite era el 54%**.
-El log causal de eventos salió de SQLite hacia archivos de segmentos append-only
-con CRC por registro y escrituras agrupadas — 1,5M eventos/s contra los 27k de
-SQLite con durabilidad igualada, la forma que argumenta
-[Tidehunter](https://arxiv.org/abs/2602.01873) [[13]](#refs). Rota a los 128 MiB;
-`--event-log-max` reclama segmentos enteros del más viejo al más nuevo. El ledger
-de efectos se queda en SQLite a propósito: un bug en el log de eventos pierde
-historial de replay, un bug en el ledger pierde evidencia.
+El standby no abre nada que el nodo vivo esté escribiendo. En el mismo host ve
+que el proceso del líder ya no existe en vez de esperar un arrendamiento, y
+contesta como el *mismo nodo* — misma identidad, mismo ledger — en decenas de
+milisegundos. Los Expertises se reconectan solos; un cliente que se reconecta
+continúa su sesión desde el log causal. Lo que no sobrevive es perder la
+máquina: el standby necesita el directorio de datos.
+[Detalles](GUIDE-ES.md#lo-que-un-nodo-no-sobrevive).
 
 ---
 
-## 2 · Auditable — porque ya está especificado
+<!-- UI-SECTION -->
+## El plano de control
 
-La obligación está escrita y fechada. La fecha se movió; el texto no.
+Viene dentro del binario — `aura up`, y abre el puerto. Cada pantalla de abajo
+es la UI real contra un nodo corriendo. El tráfico sale de tres Expertises de
+prueba pequeños, etiquetados como pruebas en pantalla — el que emite texto
+reproduce un pasaje fijo y no es un modelo. Cómo se capturó
+cada una está en [`docs/media/README.md`](docs/media/README.md).
 
-**El [Reglamento (UE) 2024/1689](https://artificialintelligenceact.eu/article/12/)
-— el Reglamento de IA — exige esto a los sistemas de IA de alto riesgo desde el
-2 de diciembre de 2027.** Esa fecha era el 2 de agosto de 2026 hasta que el
-[Reglamento (UE) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj), el
-Digital Omnibus sobre IA, la aplazó — los sistemas autónomos del Anexo III al 2
-de diciembre de 2027, los sistemas embebidos del Anexo I al 2 de agosto de 2028.
-En vigor desde el 27 de julio de 2026.
+**Studio.** Construye un grafo y míralo correr: los envelopes avanzan por las
+aristas conforme se entregan, el texto aparece en el nodo que lo produce, y una
+arista gateada hacia un Expertise `motor` se ve gateada.
 
-**Lo que el Omnibus movió fue el calendario, no el requisito.** Los artículos 12
-y 14 sobreviven a la enmienda con su contenido intacto, y hablan directamente de
-lo que un runtime tiene que emitir:
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/studio-gate-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/media/studio-gate-light.png"><img src="docs/media/studio-gate-dark.png" alt="Studio con una entrega retenida en el gate de la arista hacia un Expertise motor" width="900"></picture></p>
 
-- El **Artículo 12** exige el registro *automático* de eventos durante todo el
-  ciclo de vida del sistema, al servicio de la identificación de riesgos
-  (Art. 79), la vigilancia poscomercialización (Art. 72) y la supervisión por
-  parte del responsable del despliegue (Art. 26(5)). Los responsables del
-  despliegue deben conservar esos logs al menos seis meses.
-- El **Artículo 14** exige que el sistema pueda ser supervisado de forma efectiva
-  por **personas físicas** mientras está en uso.
+**Pulse.** Lo que el nodo está haciendo ahora: sesiones vivas, tokens de
+entrada y salida como los contaron los motores, la tasa de acierto de la caché
+de prefijo, una barra por réplica con las sesiones que lleva, colas de
+despacho, observadores.
 
-Así que este README no te va a decir que el mundo se acaba en quince días. El
-argumento para construir la vía de evidencia ahora es más estrecho y, creemos,
-mejor: **un sistema que no fue diseñado para emitir esta evidencia no puede
-hacerlo después sin reconstruir cómo ejecuta.** Un rastro de auditoría es una
-propiedad de la ruta de ejecución, no una función atornillada a un costado — que
-es justamente la razón por la que el gate de más abajo es un invariante del
-kernel y no una llamada de librería. Meter eso a posteriori en un producto en
-marcha es la versión cara de este trabajo, y el aplazamiento es la ventana en la
-que la versión barata sigue disponible.
+<p align="center"><img src="docs/media/pulse-load.gif" alt="Pulse: sesiones vivas, tasas de tokens, caché de prefijo, carga por réplica" width="900"></p>
 
-**Y un reloj no se movió.** **ISO/IEC 42001** (cláusula 9.2) pide la misma cadena
-de evidencia para auditoría interna, está en vigor hoy, es certificable ya, y
-cada vez más es una condición de compra antes que una exigencia regulatoria. Las
-normas armonizadas que operacionalizarán el Artículo 12 — prEN 18229-1, ISO/IEC
-DIS 24970 — siguen en borrador, lo que significa que la forma de la evidencia se
-está decidiendo durante el aplazamiento, no antes de él.
+**Sesiones como trazas.** Cada sesión es su árbol causal — qué causó qué,
+cuándo, en qué puerto, a costa de cuántos tokens — con el id de traza al que se
+unió.
 
-Esto es lo que produce, y nada de ello vive en tu grafo:
+<p align="center"><img src="docs/media/session-waterfall.gif" alt="Una sesión mostrada como cascada causal" width="900"></p>
 
-- **El gate de aprobación es un invariante del kernel.** En las librerías de
-  agentes la interrupción vive en el código que escribiste, así que el código que
-  se olvida no tiene gate. Aquí el executor lo aplica en el único punto por el
-  que pasa toda entrega, guiado por la policy del nodo. Un grafo puede pedir
-  *más* escrutinio del que la policy exige, nunca menos — y donde la policy sí
-  deja que un grafo waivee un gate, la entry registra que fue el *grafo* quien lo
-  excusó y no el nodo, porque un grafo es un JSON que puede publicar cualquiera
-  que alcance la superficie de control.
-- **La entry nombra al humano que lo aprobó, y él lo firmó.** El Artículo 14 pide
-  supervisión de una persona física; un log que dice "un humano aprobó" no la
-  evidencia. El operador firma una declaración atada a esa entrega concreta con
-  una clave que el nodo nunca ha tenido, así que el aprobador no puede negarlo
-  después y el nodo no puede fabricarla. Esa firma también puede cubrir **lo que
-  tenía enfrente** — digests del documento renderizado, hasheados en la máquina de
-  quien aprueba —, para que el registro diga que una persona consintió *este*
-  texto y no sólo que alguien hizo clic sobre un identificador. Con
-  `require_approval_context`, una respuesta que no ata nada es una denegación.
-  Esa es la mitad de *"quién autorizó esto"* que todo audit trail se salta — incluido el propio
-  [draft de audit trail para agentes](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/)
-  de la IETF, que registra un id de operador pseudónimo sin firma y firma los
-  registros con la clave del *agente*. Escribimos el arreglo como un
-  [Internet-Draft](spec/proposals/draft-signed-human-approval.md).
-  Una advertencia que conviene leer antes de confiar en cualquier gate, el
-  nuestro incluido: el revisor no es un oráculo infinitamente disponible, y
-  calibrar *qué* acciones detener frente a un humano subjetivo y que se fatiga es
-  un problema abierto [[4]](#refs). Un gate que salta demasiado es un gate que
-  acaba sellándose sin leer.
-- **Un skill no es el operador.** `aura token issue --capability motor.erp.write`
-  acuña una credencial que puede conectarse, registrarse como *esa* capability y
-  gastar los recibos que reciba — y no puede registrar un grafo, leer el ledger
-  ni inscribir un aprobador. Una sola tabla ordenada decide qué alcanza cada
-  scope, denegando por defecto.
-- **La credencial de un skill se libera contra un recibo, no se tiene de forma
-  ambiente.** `aura secret set` pone la credencial en el kernel; se libera solo
-  contra el recibo de un efecto que acaba de pasar el checkpoint. Saltarse el
-  gate deja de ser una forma de evitar el escrutinio y pasa a ser una forma de
-  conseguir un 401. Esa misma forma sellada por capability es a la que converge
-  la literatura de computación confidencial para agentes [[5]](#refs)[[6]](#refs)
-  — un agente comprometido o un prompt filtrado nunca deberían ver una clave en
-  claro.
-- **Cada efecto se atestigua, no se registra.** Se sella en un registro
-  encadenado por hash, comprometido en una cabeza Merkle RFC 6962 que el nodo
-  firma y un tercero puede contrafirmar. `aura verify` recalcula cadena, árbol y
-  firmas desde el archivo de base de datos solo, sin kernel corriendo. Los discos
-  se llenan: por defecto un efecto que el nodo no pudo sellar se entrega igual y
-  el hueco se registra a gritos, y un nodo donde el ledger tiene que estar
-  completo pone `on_seal_failure: refuse`. El banner de arranque dice cuál rige.
-  Aplicar la construcción de Certificate Transparency a la ejecución de agentes
-  es una idea convergente, no solo nuestra [[7]](#refs)[[8]](#refs).
-- **Y ese tercero también rinde cuentas.** Un witness publica su propio log
-  append-only, firma su cabeza, y firma su respuesta a *hasta dónde has
-  respaldado a este nodo* — así que decirle una cosa a uno y otra a otro pasa a
-  ser dos declaraciones firmadas que no pueden ser ambas ciertas. El argumento de
-  fondo — que una autoridad a la que se puede pillar contradiciéndose no necesita
-  ser creída — tiene una década y sigue siendo el correcto [[9]](#refs).
-- **Cita el modelo que argumentó a favor, y dice cuánto creerle.** Un skill
-  atestigua engine, modelo, revisión, cuantización, parámetros de muestreo y
-  semilla, atados a cada efecto que esa salida causó. La sustitución silenciosa
-  de modelos es un problema documentado y medido en APIs de LLM desplegadas
-  [[10]](#refs), y esto hace que rompa hashes ya comprometidos en una cadena
-  append-only. Pero sigue siendo la palabra del skill. Donde el hardware puede
-  estrecharlo, el nonce del quote TEE **es** el hash de esa declaración concreta
-  — así que la evidencia es sobre *este* registro y no al lado, y editar la
-  declaración después lo rompe. Un verificador reporta `none`, `bound` o
-  `verified`, nunca un booleano. El costo ya es tolerable — 4–8% de throughput en
-  H100 con confidential compute, decreciendo con el batch [[11]](#refs) — que es
-  por qué el campo se mueve y por qué conviene leer sus propias revisiones antes
-  de creerle a cualquier vendor.
-- **`aura undo`** revierte un efecto por un puerto de compensación declarado. El
-  undo está gateado y sellado a su vez.
+**Evidencia.** El ledger, entry por entry: capability, decisión, quién aprobó,
+bajo qué policy, y si la cadena verifica.
 
-**Cuando llega el auditor**, no trae un hash de efecto ni un id de sesión. Trae un
-rango de fechas:
-
-```bash
-aura audit --since 2026-07-01 --out q3.json   # qué actuó, quién lo autorizó, bajo qué policy
-aura audit --verify q3.json                   # cualquiera, en cualquier parte, sin nodo corriendo
-```
-
-El reporte lleva los conteos, los documentos de policy distintos que estuvieron en
-vigor, un desglose por capability y por operador firmante, y un recibo portable
-por cada efecto gateado. `aura bundle` exporta una sesión como los materiales
-retenidos que un segundo lector necesita para re-derivar una atribución en vez de
-aceptarla — trayectoria, procedencia de artefactos con hashes, configuración del
-modelo — la forma de cuatro partes que argumenta un análisis de protocolos de
-evaluación de agentes tras encontrar que la mayoría de las trazas no sostienen
-las conclusiones que se extraen de ellas [[12]](#refs). `aura bom` emite un ML-BOM
-CycloneDX 1.6 de los modelos y skills que realmente corrieron, construido desde
-el ledger y no desde la configuración.
-
-**¿Vas a cambiar de modelo?** `aura regress` reproduce tus sesiones grabadas
-contra él y diffea los *efectos*, no las transcripciones — así "cambió la
-redacción" y "dejó de emitir el reembolso" dejan de ser el mismo resultado.
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/evidence-ledger-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/media/evidence-ledger-light.png"><img src="docs/media/evidence-ledger-dark.png" alt="El ledger de efectos con su resultado de verificación" width="900"></picture></p>
 
 ---
 
-## 3 · Dónde está parado, honestamente
+<!-- /UI-SECTION -->
 
-Lee esto antes de la siguiente sección, porque la siguiente sección te invita a
-correr código de otras personas.
+## Dónde está parado, honestamente
 
 | | |
 |---|---|
-| **Con pruebas** | Envelopes en streaming con QoS por arista sobre WebSocket y QUIC · el ledger y la verificación sin conexión · el gate como invariante del kernel · **identidad firmada del aprobador sellada en la entry, con lo que tenía enfrente dentro de la firma** · **credenciales de skill con alcance** · **el broker de credenciales** · **el log propio del witness, y un monitor que atrapa a uno reescribiéndolo** · cancelación · reanudación de sesión · replay determinista · **regresión a nivel de efectos** · **reportes de auditoría por periodo que se verifican solos** · puertos tipados con gramáticas compiladas · la frontera MCP en ambos sentidos · `aura guard` · skills Wasm en un sandbox real · CDC de Postgres · rotación y recuperación del log de eventos · **respaldo y restauración verificables** · **rotación de la clave de firma, con los checkpoints de la clave retirada aún verificando** |
-| **Verificado a mano** | Voz con barge-in · el planner (`aura do`) · `aura why` · exportación OpenTelemetry · ML-BOM |
-| **Todavía no** | Sin vista multidispositivo de una misma sesión viva · **sin failover si el nodo muere** — un proceso, y nada arranca un reemplazo (un nodo reiniciado *sí* reconstruye el estado de sesión desde el log de eventos, y un arrendamiento impide que otro arranque junto a uno vivo) · la evidencia TEE llega a `bound`, nunca a `verified` — la verificación de cadena del fabricante está declarada y rechazada, no stubbeada · los SDKs están empaquetados pero sin publicar |
+| **Con pruebas** | Envelopes en streaming con QoS por arista sobre WebSocket y QUIC · despacho por sesión y réplicas por carga · el gate como invariante del kernel · identidad firmada del aprobador sobre lo que se le mostró · el ledger y la verificación sin conexión · credenciales con alcance y el broker de credenciales · el log del witness y su monitor · cancelación · reanudación de sesión · relevo por standby · replay determinista y regresión a nivel de efectos · reportes de auditoría por periodo · contexto de traza y exportación de spans en vivo · uso de tokens reportado · observadores de solo lectura con tickets e historial · puertos tipados con gramáticas compiladas · la frontera MCP en ambos sentidos · Expertises Wasm en un sandbox real · CDC de Postgres · respaldo y restauración verificables · rotación de la clave de firma |
+| **Verificado a mano** | Voz con barge-in · el planner (`aura do`) · `aura why` · ML-BOM |
+| **Probado solo contra dobles** | El servidor de inferencia compartido · la caché de estado KV en proceso · la gramática del planner (no hay llama.cpp en CI) · los encoders de video por hardware (nunca corridos) |
+| **Todavía no** | Un puente al middleware de un robot · un paro a nivel de nodo · tramas binarias para datos de sensores · sobrevivir a la pérdida de la máquina · contención para `format: source` · evidencia TEE más allá de `bound` · SDKs e imagen de contenedor publicados · binarios firmados de 0.4 |
 
-**El hueco que más importa para lo que sigue: un skill `format: source` no está
-contenido.** `--sandbox process` limpia su entorno, encierra su directorio de
-trabajo y comprueba el egreso declarado antes de arrancar, lo cual frena fugas
-accidentales de credenciales y paseos casuales por el sistema de archivos. No
-frena código hostil en absoluto. `format: wasm` **sí** está genuinamente
-aislado, en un sandbox WASI real. Una frontera de verdad para skills source
-significa un microVM, que está declarado y rechazado al arrancar en vez de
-degradado en silencio.
+Una suite de conformidad de 67 verificaciones ejercita el kernel sobre el
+cable, y jobs de CI aparte demuestran que el ledger detecta manipulación
+editando una base de datos real a espaldas de un binario real, que un token con
+alcance no puede actuar como el operador, y que un nodo arrancado **con su auth
+por defecto** se puede conducir de punta a punta. Lee [Modelo de
+seguridad](GUIDE-ES.md#modelo-de-seguridad) antes de exponer un puerto, y [el
+roadmap](ROADMAP-ES.md) para lo que falta y por qué va en ese orden. Esto es
+pre-producción; trátalo como tal.
 
-`internal/` está en 71,5% de cobertura, `cmd/aura` en 8,8%, y la UI está probada
-en su capa de modelo — el modelo de grafos contra los propios vectores de
-conformidad C2 del kernel, más las operaciones de edición, el fold de
-conversación y cada clave de traducción — pero no en sus componentes. Una
-suite de conformidad de 59 verificaciones ejercita el kernel sobre el cable, y
-jobs de CI aparte demuestran que el ledger detecta manipulación editando una base
-de datos real a espaldas de un binario real, que un token con alcance no puede
-actuar como el operador, que el contenedor llega a healthy sobre un volumen
-vacío y drena con SIGTERM, y que un nodo arrancado **con su auth por defecto** se
-puede conducir de punta a punta — ese último existe porque todos los demás
-carriles arrancan con `--no-auth`, y por ese hueco se colaron tres bugs de
-credenciales. Lee [Modelo de
-seguridad](GUIDE-ES.md#modelo-de-seguridad) antes de exponer un puerto, y [el roadmap](ROADMAP-ES.md) para lo que falta y a
-quién le bloquea. Esto es pre-producción; trátalo como tal.
+**Sobre el nombre.** Lo que las versiones anteriores llamaban *skill* es un
+**Expertise**: una función tipada, en ejecución, experta en una sola cosa — no
+un prompt que se le entrega a un modelo. Todo identificador anterior sigue
+funcionando (`skill.yaml`, `/ws/skill`, `/v1/skills`, `Skill`).
 
 ---
 
-## 4 · Un registry que alojas tú, y skills que son tuyas
+## Un registry que alojas tú, y Expertises que son tuyos
 
-Los skills se distribuyen por un registry **federable** — cualquiera aloja uno
+Los Expertises se distribuyen por un registry **federable** — cualquiera aloja uno
 con `aura registry serve`, exactamente como un registry de contenedores. Eso es
 lo que hace que la neutralidad del ecosistema sea algo que puedes comprobar en
 vez de algo que prometemos.
@@ -349,17 +375,17 @@ HTTP pública de arriba, nunca por disco, que es donde viven los vínculos
 trust-on-first-use. No confundir con la **vista Studio** del plano de control del
 propio nodo, que es donde construyes y corres grafos; comparten nombre, no cosa.
 
-**El SDK es Apache-2.0**, así que un skill que escribas y vendas no carga
+**El SDK es Apache-2.0**, así que un Expertise que escribas y vendas no carga
 obligación de copyleft, nunca. Dado el hueco de aislamiento de arriba, el pitch
 honesto de hoy es *publica y aloja los tuyos* y no *instala código de
 desconocidos* — la distribución, la firma y el descubrimiento son reales y están
 probados; el sandbox que haría seguro un catálogo público todavía no está.
 
-**Los diez skills en [`skills/`](skills/) son demos.** Existen para mostrar la
-forma de un skill y darle a un nodo frío algo que correr — no para ser un
+**Los diez Expertises en [`expertise/`](expertise/) son demos.** Existen para mostrar la
+forma de un Expertise y darle a un nodo frío algo que correr — no para ser un
 catálogo, y no para que dependas de ellos en producción; por eso llevan el org
 `example/` en todos sus manifiestos. Copia el más cercano y reemplázalo. Empieza
-por [`skills/echo/`](skills/echo/), unas 100 líneas.
+por [`expertise/echo/`](expertise/echo/), unas 100 líneas.
 
 ---
 
@@ -408,10 +434,11 @@ Dos endpoints que un orquestador necesita:
 | `GET /readyz` | Abierto, porque una probe no tiene credencial. Más estricto que `/healthz`: responde solo cuando el store y el ledger son usables, así un rolling deploy no manda tráfico a un nodo que está arriba pero no funciona. |
 | `GET /metrics` | Texto Prometheus, **autenticado** — las series incluyen conteos de sesiones vivas, tamaño del ledger y la cola de aprobaciones pendientes. `aura_store_batch_mean` es la de capacidad: cerca del tope del batch significa que el commit es tu techo y más escritores no ayudarían. |
 
-**Lo que esto no sobrevive es que el nodo muera.** Un proceso, sin failover; el
-log de eventos sobrevive, el estado de ruteo vivo no. Contesta eso con honestidad
-antes de desplegar: si AURA se cae, ¿tu app degrada o se detiene? Si degrada, esto
-es desplegable hoy. Si se detiene, lee primero [el roadmap](ROADMAP-ES.md).
+**Lo que esto no sobrevive es perder la máquina.** A un nodo que muere lo
+reemplaza un standby en el mismo host (sección 6); una máquina que muere se
+lleva el directorio de datos. Contesta eso con honestidad antes de desplegar:
+si esta máquina desaparece, ¿tu app degrada o se detiene? Si se detiene, lee
+primero [el roadmap](ROADMAP-ES.md).
 
 **Los SDKs están empaquetados y sin publicar.** `@deepaxiom/aura` y `aura-sdk`
 existen, compilan y tienen tests; todavía no hay `npm install` para ellos, así que
@@ -424,10 +451,10 @@ aura connect --openapi ./crm.yaml   # cada operación se vuelve un skill
 ```
 
 De solo lectura por defecto, con dry-run y promoción por operación antes de que
-nada escriba. Los webhooks entran, los skills `sensorial` envuelven sistemas que
-empujan, y los skills de inversión de control marcan *hacia afuera* para correr
+nada escriba. Los webhooks entran, los Expertises `sensorial` envuelven sistemas que
+empujan, y los Expertises de inversión de control marcan *hacia afuera* para correr
 detrás de NAT sin puertos de entrada. En las fronteras: un **servidor MCP** (cada
-skill es una herramienta para Claude Code o Cursor, y `tools/call` hace
+Expertise es una herramienta para Claude Code o Cursor, y `tools/call` hace
 streaming), una tarjeta de descubrimiento A2A, y exportación OpenTelemetry del
 árbol causal.
 
@@ -441,7 +468,9 @@ después. Esa forma está escrita como
 
 ## 60 segundos
 
-Hay binarios firmados para Linux, macOS y Windows en amd64 y arm64 en la
+**0.4 todavía no tiene release firmada** — compílalo desde el código, más
+abajo. Los binarios firmados para Linux, macOS y Windows en amd64 y arm64 siguen
+siendo los de la
 [release v0.3.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0). Verifica antes de correr — la firma
 sobre `SHA256SUMS` demuestra quién construyó el archivo, y solo entonces vale la
 pena comprobar la suma ([cómo](SECURITY.md#verifying-a-release)):
@@ -468,13 +497,13 @@ go build -o aura ./cmd/aura     # Go 1.25+, sin CGO, sin servicios externos
 Un binario, 18,6 MB — la compilación stripped de la página de release y del
 contenedor; un `go build` local sin stripping ronda los 26. Sin cuenta, sin
 nube, sin Postgres, sin broker, sin clúster. `aura up` es el runtime completo y ningún
-skill: los skills son procesos aparte que se conectan *a* él, así que un nodo
+Expertise: los Expertises son procesos aparte que se conectan *a* él, así que un nodo
 recién arrancado es un kernel funcionando con el catálogo vacío y cuatro grafos
 sembrados — `echo`, `chat`, `plan` y `voice` — a los que apuntar uno.
 
 ```bash
-pip install -r skills/llm-chat/requirements.txt
-cd skills/llm-chat && PYTHONPATH=../../sdk/python/src python main.py
+pip install -r expertise/llm-chat/requirements.txt
+cd expertise/llm-chat && PYTHONPATH=../../sdk/python/src python main.py
 aura chat "explica la contrapresión"    # responde token por token
 ```
 
@@ -512,9 +541,9 @@ y dejó por lo demás intactos los artículos 12 y 14).
 ---
 
 **Licencia.** La especificación y los SDKs son Apache-2.0 — construye un kernel
-conforme, escribe y vende skills, sin obligación de copyleft nunca. Eso incluye
+conforme, escribe y vende Expertises, sin obligación de copyleft nunca. Eso incluye
 las partes que una segunda implementación más necesitaría: el contrato del
-ledger, el protocolo de witness, y una suite de conformidad de 59 verificaciones
+ledger, el protocolo de witness, y una suite de conformidad de 67 verificaciones
 con la que demostrar el cumplimiento. Un verificador vale menos cuantas menos
 cosas puede verificar, y un ancla vale menos cuantas menos partes acuden a ella —
 ninguna de las dos es buena cosa para poseer. El kernel y la UI son AGPLv3, con

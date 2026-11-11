@@ -69,3 +69,12 @@ func CleanKey(key string) (string, error) {
 	}
 	return key, nil
 }
+
+// TreeDeleter is the optional ability to remove everything under a prefix. It
+// is not part of Store because not every backend can do it in one call, and a
+// caller that needs it asks with a type assertion and carries on without it
+// when the answer is no: overwriting is always available, deleting first is
+// only tidier.
+type TreeDeleter interface {
+	DeleteTree(ctx context.Context, prefix string) error
+}

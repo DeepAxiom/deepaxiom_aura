@@ -1,8 +1,13 @@
+import type { NodeStats } from "../lib/stats";
 import type {
+  Approval,
   Envelope,
   GraphIR,
   GraphRevision,
   Health,
+  LedgerEntry,
+  LedgerHead,
+  LedgerVerify,
   Projection,
   SessionMeta,
   SkillConfig,
@@ -50,35 +55,130 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
   return token ? { ...(extra ?? {}), Authorization: `Bearer ${token}` } : (extra ?? {});
 }
 
-/** fetch with the node token attached. */
-function call(path: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(path, { ...init, headers: authHeaders(init.headers) });
+/**
+ * Whether the node is reachable and whether it accepts us. The shell shows the
+ * states differently because the remedies are different: start the node, or
+ * paste a token.
+ */
+export type Link = "unknown" | "ok" | "unauthorized" | "unreachable";
+
+let link: Link = "unknown";
+const linkListeners = new Set<(l: Link) => void>();
+
+function setLink(next: Link): void {
+  if (next === link) return;
+  link = next;
+  for (const fn of linkListeners) fn(next);
 }
 
-async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
+export function currentLink(): Link {
+  return link;
+}
+
+export function onLink(fn: (l: Link) => void): () => void {
+  linkListeners.add(fn);
+  return () => { linkListeners.delete(fn); };
+}
+
+/** An HTTP failure, with the kernel's own error text as the message. */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * The route does not exist on this node.
+ *
+ * Not a 404: the kernel's `GET /` catch-all answers an unknown path with the
+ * UI's own HTML and a 200, so a node older than a route says "here is a web
+ * page" rather than "not found". Anything that is not JSON is this.
+ */
+export class Unsupported extends Error {}
+
+/** fetch with the node token attached. */
+async function call(path: string, init: RequestInit = {}): Promise<Response> {
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers: authHeaders(init.headers) });
+  } catch (e) {
+    setLink("unreachable");
+    throw new Error((e as Error).message || "node unreachable");
+  }
+  setLink(res.status === 401 ? "unauthorized" : "ok");
+  return res;
+}
+
+async function json<T>(res: Response, okStatuses: number[] = []): Promise<T> {
+  const isJSON = (res.headers.get("Content-Type") ?? "").includes("json");
+  if (!res.ok && !okStatuses.includes(res.status)) {
+    const body = isJSON ? await res.json().catch(() => ({})) : {};
     if (res.status === 401) {
-      throw new Error(
+      throw new ApiError(401,
         (body as { error?: string }).error ??
           "unauthorized — open the URL `aura up` printed, or paste the node token",
       );
     }
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new ApiError(res.status, (body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
+  if (!isJSON) throw new Unsupported("this node does not serve that route");
   return res.json() as Promise<T>;
+}
+
+/** Null instead of a throw when the node predates the route. */
+async function optional<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch (e) {
+    if (e instanceof Unsupported || (e instanceof ApiError && e.status === 404)) return null;
+    throw e;
+  }
+}
+
+/**
+ * `/v1/expertise` is the current name for `/v1/skills`; a node older than the
+ * rename only serves the latter. Decided once per page load, on first use.
+ */
+let catalogBase: "/v1/expertise" | "/v1/skills" | null = null;
+
+async function catalog(): Promise<SkillManifest[]> {
+  if (catalogBase === null) {
+    const list = await optional(call("/v1/expertise").then((r) => json<SkillManifest[] | null>(r)));
+    if (list !== null) {
+      catalogBase = "/v1/expertise";
+      return list;
+    }
+    // `null` is also what an empty catalog can decode to; the Content-Type
+    // check in json() is what tells the two apart, so reaching here with a
+    // JSON null means the route exists.
+    const probe = await call("/v1/expertise");
+    if ((probe.headers.get("Content-Type") ?? "").includes("json")) {
+      catalogBase = "/v1/expertise";
+      return [];
+    }
+    catalogBase = "/v1/skills";
+  }
+  return (await call(catalogBase).then((r) => json<SkillManifest[] | null>(r))) ?? [];
 }
 
 export const api = {
   health: () => call("/healthz").then((r) => json<Health>(r)),
 
-  skills: () => call("/v1/skills").then((r) => json<SkillManifest[]>(r)),
+  /** GET /v1/stats; null on a node that predates it. */
+  stats: () => optional(call("/v1/stats").then((r) => json<NodeStats>(r))),
+
+  /** The Expertise catalog: one manifest per connection. */
+  expertise: catalog,
+  /** Same call under its wire name, for code written before the rename. */
+  skills: catalog,
 
   skillConfig: (id: string) =>
-    call(`/v1/skills/config?id=${encodeURIComponent(id)}`).then((r) => json<SkillConfig>(r)),
+    call(`${catalogBase ?? "/v1/skills"}/config?id=${encodeURIComponent(id)}`).then((r) => json<SkillConfig>(r)),
 
   updateSkillConfig: (id: string, patch: Record<string, unknown>) =>
-    call(`/v1/skills/config?id=${encodeURIComponent(id)}`, {
+    call(`${catalogBase ?? "/v1/skills"}/config?id=${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -113,7 +213,38 @@ export const api = {
 
   sessionEvents: (id: string) =>
     call(`/v1/sessions/${encodeURIComponent(id)}/events`)
-      .then((r) => json<{ session: string; events: Envelope[] }>(r)),
+      .then((r) => json<{ session: string; events: Envelope[] | null; timestamps?: number[] | null }>(r)),
+
+  sessionLedger: (id: string) =>
+    optional(call(`/v1/sessions/${encodeURIComponent(id)}/ledger`)
+      .then((r) => json<{ entries: LedgerEntry[] | null }>(r)))
+      .then((d) => d?.entries ?? []),
+
+  /** A page of sealed effects. Null when this node keeps no ledger. */
+  ledger: (fromSeq = 1, limit = 200) =>
+    optional(call(`/v1/ledger?from_seq=${fromSeq}&limit=${limit}`)
+      .then((r) => json<{ entries: LedgerEntry[] | null; returned: number; total: number }>(r)))
+      .then((d) => (d ? { entries: d.entries ?? [], total: d.total } : null)),
+
+  /** Recompute the chain. 409 is an answer ("not sound"), not a failure. */
+  ledgerVerify: () => call("/v1/ledger/verify").then((r) => json<LedgerVerify>(r, [409])),
+
+  ledgerHead: () => optional(call("/v1/ledger/head").then((r) => json<LedgerHead>(r))),
+
+  ledgerEntry: (hash: string) =>
+    call(`/v1/ledger/entries/${encodeURIComponent(hash)}`).then((r) => json<LedgerEntry>(r)),
+
+  /** Gates waiting on a human who is not holding the session socket. */
+  approvals: () =>
+    optional(call("/v1/approvals").then((r) => json<{ approvals: Approval[] | null }>(r)))
+      .then((d) => (d ? d.approvals ?? [] : null)),
+
+  resolveApproval: (id: string, approve: boolean) =>
+    call(`/v1/approvals/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approve }),
+    }).then((r) => json<{ id: string; approved: boolean; signed_by: string }>(r)),
 
   projections: () =>
     call("/v1/projections")

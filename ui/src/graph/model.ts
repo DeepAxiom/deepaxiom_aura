@@ -337,7 +337,7 @@ export function autoLayout(nodes: CanvasNode[], edges: CanvasEdge[]): CanvasNode
     byColumn.set(d, [...(byColumn.get(d) ?? []), n]);
   }
 
-  const COL_W = NODE_W + 110;
+  const COL_W = NODE_W + 84;
   const ROW_H = 190;
   const out: CanvasNode[] = [];
   for (const [col, group] of [...byColumn.entries()].sort((a, b) => a[0] - b[0])) {

@@ -103,6 +103,12 @@ class Attestation:
     output_sha256: str = ""
     energy: Energy | None = None
     tee: Any = None
+    # C5 v1.2, additive: what the engine counted for this inference —
+    # `input_tokens`, `output_tokens`, `cached_input_tokens`. Reported, never
+    # estimated here: the kernel already has an estimate (bytes/4), and the
+    # point of this field is to be the number that estimate is checked
+    # against. Omitted when the engine reports nothing.
+    usage: dict[str, int] | None = None
 
     def to_wire(self) -> dict:
         if not self.engine:
@@ -123,6 +129,18 @@ class Attestation:
             wire["energy"] = self.energy.to_wire()
         if self.tee is not None:
             wire["tee"] = self.tee
+        if self.usage:
+            usage = {}
+            for key in ("input_tokens", "output_tokens", "cached_input_tokens"):
+                value = self.usage.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ValueError(
+                        f"usage.{key} must be a non-negative integer, got {value!r}")
+                usage[key] = value
+            if usage:
+                wire["usage"] = usage
 
         encoded = json.dumps(wire, separators=(",", ":"), sort_keys=True)
         if len(encoded.encode("utf-8")) > MAX_ATTESTATION_BYTES:

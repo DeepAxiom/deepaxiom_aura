@@ -101,6 +101,9 @@ type Principal struct {
 	// Empty for the operator, who may register anything.
 	Capability string
 	Label      string
+	// Session is the one session a ScopeWatch principal may observe. Set only
+	// by a watch ticket; see ticket.go.
+	Session string
 }
 
 // IsOperator reports whether this principal holds the node's own authority.
@@ -139,6 +142,7 @@ var skillRoutes = []struct {
 	// The skill socket itself. Registration is bound to the token's capability
 	// inside the handshake — see Principal.MayRegister.
 	{method: http.MethodGet, path: "/ws/skill", why: "the skill's own connection"},
+	{method: http.MethodGet, path: "/ws/expertise", why: "the same connection, under its current name"},
 	// Redeeming a receipt for the credentials that effect authorized. This is
 	// the reason the broker exists and the one call a skill must be able to
 	// make; it is safe here because the receipt, not the token, is what
@@ -150,12 +154,19 @@ var skillRoutes = []struct {
 	// A skill's own runtime config, hot-applied over its connection. Reading it
 	// discloses the skill's own declared parameters and nothing about the node.
 	{method: http.MethodGet, path: "/v1/skills/config/", prefix: true, why: "its own declared config"},
+	{method: http.MethodGet, path: "/v1/expertise/config/", prefix: true, why: "the same, under its current name"},
 }
 
 // Allows reports whether a principal may make this request.
 func (p Principal) Allows(method, path string) bool {
 	if p.IsOperator() {
 		return true
+	}
+	if p.Scope == ScopeWatch {
+		// One route, and the handler holds it to the one session the ticket
+		// names. Nothing else, ever: this is the credential that ends up in a
+		// browser in an audience.
+		return method == http.MethodGet && path == "/v1/watch"
 	}
 	if p.Scope != ScopeSkill {
 		return false

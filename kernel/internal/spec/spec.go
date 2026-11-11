@@ -6,7 +6,7 @@
 package spec
 
 // Version is the product version (spec/VERSION).
-const Version = "0.3.0"
+const Version = "0.4.0"
 
 // EffectType is the skill type whose edges act on the world, and so the
 // one the authorization policy treats specially.

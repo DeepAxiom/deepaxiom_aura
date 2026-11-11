@@ -37,6 +37,18 @@ import (
 // machine with no database.
 func Pool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
+	pool := Empty(t)
+	if err := db.Migrate(context.Background(), pool); err != nil {
+		t.Fatalf("applying the schema: %v", err)
+	}
+	return pool
+}
+
+// Empty is Pool without the schema applied: a schema of this test's own with
+// nothing in it. It is for the tests that are about the schema itself — what
+// happens when the current DDL meets a database an older release created.
+func Empty(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	dsn := os.Getenv("AURA_MEDIA_TEST_DSN")
 	if dsn == "" {
 		t.Skip("AURA_MEDIA_TEST_DSN is not set; skipping the tests that need Postgres")
@@ -60,10 +72,6 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	pool, err := db.Open(ctx, scoped, 16)
 	if err != nil {
 		t.Fatalf("connecting to schema %s: %v", schema, err)
-	}
-	if err := db.Migrate(ctx, pool); err != nil {
-		pool.Close()
-		t.Fatalf("applying the schema: %v", err)
 	}
 
 	t.Cleanup(func() {

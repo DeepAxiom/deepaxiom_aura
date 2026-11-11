@@ -1,6 +1,6 @@
 # C5 — Inference Attestation (frozen contract)
 
-**Protocol major: 1 · Status: v1.1 — FROZEN (2026-08-18: hardware evidence in `tee`, with the nonce-binding rule that makes a quote be about one declaration — additive; base v1.0 frozen 2026-08-15, initial release, Phase 4). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.2 — FROZEN (2026-11-11: optional `usage` block, the token counts the engine reported — additive; 2026-08-18: hardware evidence in `tee`, with the nonce-binding rule that makes a quote be about one declaration — additive; base v1.0 frozen 2026-08-15, initial release, Phase 4). Changes: additive only; breaking = new major via RFC.**
 
 C4 answers *what acted on the world, and who authorized it*. It does not answer
 the question that comes next in any real incident review: **what produced the
@@ -20,9 +20,9 @@ C5 is one small record and one binding rule.
 
 **Stated first, because everything below is worthless if this is misread.**
 
-An attestation is **an assertion by a skill**, cryptographically bound to the
+An attestation is **an assertion by an Expertise**, cryptographically bound to the
 effects it led to and to the moment it was made. It is **not** proof that the
-skill told the truth. A skill that lies about which model it ran produces a
+Expertise told the truth. An Expertise that lies about which model it ran produces a
 sealed, chained, signed record of a lie.
 
 What a conforming implementation guarantees is narrower, and still useful:
@@ -32,7 +32,7 @@ What a conforming implementation guarantees is narrower, and still useful:
 | The claim cannot be altered after the fact | That the claim was true when made |
 | The claim cannot be detached from the effects it caused | That the model named is the model that ran |
 | The claim cannot be backdated or reordered | That no other model also contributed |
-| A verifier needs neither the node nor its operator | Anything about the skill's internal honesty |
+| A verifier needs neither the node nor its operator | Anything about the Expertise's internal honesty |
 
 Closing the remaining gap requires hardware attestation — a TEE quote binding a
 measurement of the process that actually executed the model. The `tee` field
@@ -45,13 +45,13 @@ three levels applies rather than a boolean.
 Implementations MUST NOT describe C5 output as proof of what executed. The
 phrase this specification uses, and that tooling should echo, is: *who claimed
 what, when, and what it caused — verifiable; whether the claim was true — only
-as far as you trust the skill that made it.*
+as far as you trust the Expertise that made it.*
 
 ---
 
 ## The attestation record
 
-A skill MAY attach one attestation to any envelope it emits (C3 `attest`,
+An Expertise MAY attach one attestation to any envelope it emits (C3 `attest`,
 additive). The record is JSON:
 
 ```json
@@ -87,9 +87,9 @@ additive). The record is JSON:
 ## Hardware evidence (v1.1)
 
 The section above states the limit this one narrows: an attestation is an
-assertion, and a skill that lies produces a sealed record of a lie. A Trusted
+assertion, and an Expertise that lies produces a sealed record of a lie. A Trusted
 Execution Environment can constrain that, because a quote is signed by hardware
-the skill does not control.
+the Expertise does not control.
 
 A quote on its own, however, proves very little here. "This process runs in an
 enclave" is a claim about a process, and the question C5 asks is about a
@@ -106,13 +106,13 @@ can tell a fresh quote from a replayed one. That field is what binds the two:
 > the SHA-256 of the attestation record with its `tee` member removed, keys
 > sorted, rendered as compact JSON, hex-encoded.
 
-A skill computes its declaration, hashes it, asks the hardware to quote that
+An Expertise computes its declaration, hashes it, asks the hardware to quote that
 hash, and attaches the result. A verifier recomputes the hash from the record it
 holds and compares. A quote taken on another machine, at another moment, or for
 another model's run carries a different nonce and fails — so the evidence is
 *about* the declaration rather than merely next to it. Editing the declaration
 after the quote was taken breaks it in the same way, which is the property that
-matters most: a skill cannot quote an honest configuration and then ship a
+matters most: an Expertise cannot quote an honest configuration and then ship a
 different one.
 
 This canonicalisation is the one place in this contract where a JSON object is
@@ -154,7 +154,7 @@ implementation MUST report one of:
 
 | Level | Means |
 |---|---|
-| `none` | No `tee` block. The claim is the skill's word. |
+| `none` | No `tee` block. The claim is the Expertise's word. |
 | `bound` | A quote is present and its nonce binds this exact record. Checkable offline by anyone, with no vendor roots. Proves the evidence was produced for this declaration — **not** that the hardware is genuine. |
 | `verified` | The quote's signature also chains to a vendor root the verifier was configured with. |
 
@@ -203,6 +203,37 @@ order of magnitude in trustworthiness, and a field carrying only the number
 would launder an estimate into a measurement the first time it reached a
 sustainability report. A consumer that accepts only hardware counters can
 filter on `source`; one that accepts estimates knows what it is accepting.
+
+### Usage (v1.2)
+
+```json
+{ "input_tokens": 900, "output_tokens": 40, "cached_input_tokens": 768 }
+```
+
+What the engine counted for this inference. All three members are optional
+non-negative integers:
+
+| Member | Meaning |
+|---|---|
+| `input_tokens` | Prompt tokens, cached or not. |
+| `output_tokens` | Tokens generated. |
+| `cached_input_tokens` | The part of `input_tokens` the engine served from a prefix cache instead of evaluating. |
+
+**Reported, never estimated.** An Expertise MUST take these from the engine — a
+provider's `usage` object, a local runtime's own counter — and MUST omit the
+block when the engine reports nothing. A kernel already has an estimate of its
+own (the reference kernel charges a context budget at bytes/4); the entire
+value of this block is that it is the number that estimate is checked against,
+and a count an Expertise made up would be indistinguishable from a measured one in
+exactly the place budgets get set from.
+
+Like every other member it is an assertion by the Expertise. It is hashed with the
+rest of the record, so two otherwise identical inferences with different
+counts are two attestations.
+
+A kernel MAY meter these (the reference kernel exposes
+`aura_tokens_total{kind=...}`), and MUST treat the sum as a floor: an Expertise that
+attests no usage contributes nothing to it.
 
 ---
 
@@ -272,10 +303,10 @@ attestations it cites.
 
 ## What this contract deliberately does not specify
 
-- **Which skills should attest.** Any skill MAY. Restricting it to `cognitive`
-  would be wrong: a `sensorial` ASR skill's model matters to a downstream
+- **Which Expertises should attest.** Any Expertise MAY. Restricting it to `cognitive`
+  would be wrong: a `sensorial` ASR Expertise's model matters to a downstream
   effect for exactly the same reason.
-- **Attestation cadence.** A streaming skill SHOULD attest once per logical
+- **Attestation cadence.** A streaming Expertise SHOULD attest once per logical
   reply rather than once per token — the record describes the inference, and
   implementations de-duplicate identical records anyway — but nothing here
   makes that normative.

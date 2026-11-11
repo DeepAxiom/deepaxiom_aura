@@ -1,16 +1,16 @@
 # Contributing to AURA
 
 AURA is the kernel, SDK, and three frozen contracts (`spec/`) that
-everything else in this repo — the skills, the control-plane UI — is built
+everything else in this repo — the Expertises, the control-plane UI — is built
 on top of. This doc covers contributing to *that core*: the Go kernel, the
 Python SDK, and the spec itself.
 
 **Want to add a device integration or a new capability instead?** You need
-none of this. Writing a skill requires no changes to the core at all: copy
-[`skills/echo/`](skills/echo/) — the minimal worked example, no model and no
-credentials — or a skill wrapping a real external system like
-[`skills/postgres-cdc/`](skills/postgres-cdc/), and read
-[Writing a skill](GUIDE.md#writing-a-skill-the-sdk). Most people who want to
+none of this. Writing an Expertise requires no changes to the core at all: copy
+[`expertise/echo/`](expertise/echo/) — the minimal worked example, no model and no
+credentials — or an Expertise wrapping a real external system like
+[`expertise/postgres-cdc/`](expertise/postgres-cdc/), and read
+[Writing an Expertise](GUIDE.md#writing-an-expertise-the-sdk). Most people who want to
 build something on AURA want that, not this guide.
 
 **This is pre-1.0 (v0.1.0).** The project's central bet — a runtime that is
@@ -29,11 +29,11 @@ have no automated tests at all.
 |---|---|---|---|
 | `kernel/` | Go | AGPLv3 or commercial | Executor, routing, gateway, projections, registry, federation |
 | `media/` | Go | AGPLv3 or commercial | `aura-media`: the media subsystem — queue, ffmpeg pipeline, HLS packaging, object store. Its own module and its own version line, and it runs beside a node rather than inside one |
-| `sdk/python/` | Python | Apache-2.0 | The `aura` package every skill imports |
+| `sdk/python/` | Python | Apache-2.0 | The `aura` package every Expertise imports |
 | `sdk/node/` | TypeScript | Apache-2.0 | `@deepaxiom/aura` — types are generated from `spec/schemas`, never hand-edited |
 | `spec/` | Markdown + JSON Schema | Apache-2.0 | C1 (manifest), C2 (graph IR), C3 (channel protocol) |
 | `ui/` | TypeScript/React | AGPLv3 or commercial | Control-plane frontend |
-| `skills/` | Python | AGPLv3 or commercial | First-party skills (echo, llm-chat, asr, tts, sentence-chunker, planner, model-manager, memory-context, postgres-cdc) |
+| `expertise/` | Python | AGPLv3 or commercial | First-party Expertises (echo, llm-chat, asr, tts, sentence-chunker, planner, model-manager, memory-context, postgres-cdc) |
 
 See [`LICENSE.md`](LICENSE.md) for the exact, authoritative map before
 opening a PR — what license your change falls under depends on which
@@ -53,7 +53,7 @@ and that line disagree, that line is right. Frozen is not a suggestion:
   (open an issue describing the change, the reason the existing contract
   can't express it, and the migration story) before any code lands.
 - If you're adding a capability that fits within the existing contracts —
-  which is almost always true, see the skill-authoring guide above — you
+  which is almost always true, see the Expertise-authoring guide above — you
   don't need to touch `spec/` at all.
 
 ## Building and testing
@@ -100,8 +100,8 @@ locally first.
   the kernel embeds that directory at build time, so a source-only PR
   leaves the running binary out of sync with what you wrote.
 - Prefer a mock or a reproducible local test over "trust me, it works" —
-  the first-party skills hold themselves to that standard (see
-  [`skills/postgres-cdc/`](skills/postgres-cdc/), whose replication parser is
+  the first-party Expertises hold themselves to that standard (see
+  [`expertise/postgres-cdc/`](expertise/postgres-cdc/), whose replication parser is
   tested as a pure function and whose end-to-end path is tested against a
   real Docker `postgres:16`, not mocked); PRs to the core should too.
 - Keep commits scoped — one behavioral change per PR is easier to review
@@ -111,5 +111,5 @@ locally first.
 
 By contributing, you agree your change is licensed under the terms of the
 file it lands in (Apache-2.0 for `spec/`/`sdk/`, AGPLv3 for
-`kernel/`/`ui/`/`skills/` unless you've arranged commercial terms) — see
+`kernel/`/`ui/`/`expertise/` unless you've arranged commercial terms) — see
 [`LICENSE.md`](LICENSE.md) for the full, current map.

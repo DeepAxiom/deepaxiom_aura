@@ -32,6 +32,7 @@ import (
 	"aura/kernel/internal/lease"
 	"aura/kernel/internal/ledger"
 	"aura/kernel/internal/mcpsrv"
+	"aura/kernel/internal/otel"
 	"aura/kernel/internal/projection"
 	"aura/kernel/internal/registry"
 	"aura/kernel/internal/store"
@@ -63,6 +64,17 @@ type nodeOptions struct {
 	MemoryBudget     int64
 	EventLogMaxBytes int64
 	MaxSessions      int
+	// SessionMailbox is the per-session dispatch queue depth. Zero routes
+	// inline on the producer's read loop, which is what an embedded node and
+	// every caller before this option get; `aura up` sets it. See
+	// executor/mailbox.go.
+	SessionMailbox int
+	// OTLPEndpoint, when set, exports spans to that collector while the node
+	// runs. OTLPSample is the fraction of sessions exported (whole sessions,
+	// never partial trees); OTLPHeaders ride on every export.
+	OTLPEndpoint string
+	OTLPSample   float64
+	OTLPHeaders  map[string]string
 	// LeaseTTL is how long this node's claim on the data directory stays valid
 	// without a renewal. Zero takes lease.DefaultTTL.
 	//
@@ -75,9 +87,16 @@ type nodeOptions struct {
 	// LeaseWait bounds how long to wait for a dead predecessor's claim to
 	// expire. Zero derives it from LeaseTTL. A supervisor restarting a crashed
 	// node needs this to exceed the TTL, or the replacement refuses.
-	LeaseWait   time.Duration
-	SkillConfig map[string]map[string]any
-	Log         *slog.Logger
+	LeaseWait time.Duration
+	// Standby makes this node wait, without bound, for the data directory's
+	// current writer to die, and take over when it does — instead of refusing
+	// because the directory is held. StandbyStop ends the wait.
+	// StandbyWatching is told once which holder is being stood by for.
+	Standby         bool
+	StandbyStop     <-chan struct{}
+	StandbyWatching func(lease.Info)
+	SkillConfig     map[string]map[string]any
+	Log             *slog.Logger
 }
 
 // Startup is how long each phase of buildNode took.
@@ -108,6 +127,9 @@ type node struct {
 	Policy   *executor.Policy
 	Registry *registry.Registry
 	Manager  *executor.Manager
+	// Traces is the live span exporter, nil unless the node was given a
+	// collector.
+	Traces *otel.Exporter
 
 	// WriteLease is this process's claim on the data directory. Its Lost()
 	// channel is a shutdown signal, not advice: another process taking over
@@ -116,6 +138,9 @@ type node struct {
 
 	// Startup is what building this node cost, phase by phase.
 	Startup Startup
+	// Takeover says how a standby came to hold the lease. Zero for a node
+	// that was not started as one.
+	Takeover lease.StandbyResult
 
 	// Token is the operator's bearer token, empty when NoAuth. Created reports
 	// whether this run is the one that minted it.
@@ -130,6 +155,12 @@ type node struct {
 // node can start immediately instead of waiting out the TTL. Order matters:
 // the lease row lives in the database the store is about to close.
 func (n *node) Close() error {
+	// Before the store: the exporter observes the store's appends, and
+	// flushing it after the store closed would flush nothing new anyway.
+	if n.Traces != nil {
+		n.Store.SetEventObserver(nil)
+		n.Traces.Close()
+	}
 	if n.WriteLease != nil {
 		if err := n.WriteLease.Release(); err != nil {
 			return errors.Join(err, n.Store.Close())
@@ -168,7 +199,11 @@ func buildNode(opt nodeOptions) (*node, error) {
 	}
 	buildStarted := time.Now()
 	storeStarted := time.Now()
-	st, err := store.OpenWith(opt.DataDir, store.Options{EventLogMaxBytes: opt.EventLogMaxBytes})
+	// The event log is not opened yet: recovery truncates a torn tail, which
+	// only the directory's writer may do. It is opened below, once the lease
+	// says this process is that writer.
+	st, err := store.OpenWith(opt.DataDir, store.Options{
+		EventLogMaxBytes: opt.EventLogMaxBytes, DeferEventLog: true})
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +229,15 @@ func buildNode(opt nodeOptions) (*node, error) {
 	if leaseWait == 0 {
 		leaseWait = leaseTTL + 5*time.Second
 	}
-	writeLease, waited, err := st.AcquireWriteLeaseWaiting(leaseTTL, leaseWait)
+	var writeLease *lease.Holder
+	var waited time.Duration
+	var takeover lease.StandbyResult
+	if opt.Standby {
+		writeLease, takeover, err = st.AcquireWriteLeaseStandby(leaseTTL, opt.StandbyStop, opt.StandbyWatching)
+		waited = takeover.Waited
+	} else {
+		writeLease, waited, err = st.AcquireWriteLeaseWaiting(leaseTTL, leaseWait)
+	}
 	timing.LeaseWait = waited
 	if err != nil {
 		st.Close()
@@ -216,6 +259,13 @@ func buildNode(opt nodeOptions) (*node, error) {
 		st.Close()
 		return nil, err
 	}
+
+	// Now this process is the writer, and only now is the event log opened.
+	logStarted := time.Now()
+	if err := st.OpenEventLog(); err != nil {
+		return fail(err)
+	}
+	timing.Store += time.Since(logStarted)
 
 	// The ledger is not optional. An attestation issued by a node that failed
 	// to open its own ledger would be worse than no ledger — it would be
@@ -286,6 +336,20 @@ func buildNode(opt nodeOptions) (*node, error) {
 	reg := registry.New()
 	mgr := executor.NewManager(reg, st, mode, policy, ldg, log)
 	mgr.SetMaxSessions(opt.MaxSessions)
+	mgr.SetMailboxDepth(opt.SessionMailbox)
+
+	var traces *otel.Exporter
+	if opt.OTLPEndpoint != "" {
+		traces, err = otel.NewExporter(otel.Config{
+			Endpoint: opt.OTLPEndpoint, Headers: opt.OTLPHeaders,
+			SampleRatio: opt.OTLPSample, Version: version,
+			NodeID: ident.ID, Log: log,
+		})
+		if err != nil {
+			return fail(err)
+		}
+		st.SetEventObserver(traces.Observe)
+	}
 	mgr.SetApprovers(roster)
 
 	proj := projection.NewManager(
@@ -317,14 +381,16 @@ func buildNode(opt nodeOptions) (*node, error) {
 		// that generates cannot emit a shape the port would reject.
 		Grammars:   grammar.NewRegistry(),
 		ConfigFile: opt.SkillConfig,
+		Traces:     traces,
 	}
 
 	timing.Total = time.Since(buildStarted)
 	return &node{
 		WriteLease: writeLease,
 		Startup:    timing,
+		Takeover:   takeover,
 		Gateway:    gw, Identity: ident, Store: st, Ledger: ldg, Policy: policy,
-		Registry: reg, Manager: mgr,
+		Registry: reg, Manager: mgr, Traces: traces,
 		Token: token, Created: created,
 		scheme: scheme, wsScheme: wsScheme, port: opt.Port,
 	}, nil

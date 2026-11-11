@@ -33,6 +33,7 @@ import (
 	"aura/kernel/internal/grammar"
 	"aura/kernel/internal/identity"
 	"aura/kernel/internal/ledger"
+	"aura/kernel/internal/otel"
 	"aura/kernel/internal/projection"
 	"aura/kernel/internal/registry"
 	"aura/kernel/internal/spec"
@@ -45,8 +46,10 @@ type Gateway struct {
 	Reg  *registry.Registry
 	St   *store.Store
 	Mgr  *executor.Manager
-	Proj *projection.Manager
-	Adm  *Admission
+	// Traces is the live span exporter; nil when the node exports none.
+	Traces *otel.Exporter
+	Proj   *projection.Manager
+	Adm    *Admission
 	// Ldg is the node's effect ledger (C4). Nil is accepted so a Gateway built
 	// for a test that has nothing to do with attestation still constructs —
 	// the ledger routes and the /healthz summary simply omit themselves.
@@ -84,6 +87,8 @@ type Gateway struct {
 	// allowlist. Nil means an unauthenticated node, which only --no-auth
 	// produces and which prints a warning at startup.
 	Auth *Auth
+	// noAuthTickets signs watch tickets on a Gateway built without an Auth.
+	noAuthTickets ticketKeys
 	// ConfigFile is the optional --config file layer: skill id -> declared
 	// key -> value. Lower priority than a store override, higher than a
 	// manifest default. Nil/empty means no file was given.
@@ -158,9 +163,18 @@ func (g *Gateway) Handler() http.Handler {
 	handle("PUT /v1/secrets", g.putSecret)
 	handle("DELETE /v1/secrets/{name}", g.deleteSecret)
 	handle("POST /v1/secrets/resolve", g.resolveSecret)
+	handle("GET /v1/stats", g.stats)
 	handle("GET /v1/skills", g.listSkills)
 	handle("GET /v1/skills/config", g.getSkillConfig)
 	handle("PUT /v1/skills/config", g.putSkillConfig)
+	// The same three routes under the name the product now uses. What this
+	// runtime calls an Expertise was called a skill when these paths were
+	// first served, and "skill" has since come to mean a prompt handed to a
+	// model, which these are not. The old paths stay, permanently: they are
+	// in deployed clients and SDKs, and a rename is not a reason to break one.
+	handle("GET /v1/expertise", g.listSkills)
+	handle("GET /v1/expertise/config", g.getSkillConfig)
+	handle("PUT /v1/expertise/config", g.putSkillConfig)
 	handle("GET /v1/graphs", g.listGraphs)
 	handle("GET /v1/graphs/{id}", g.getGraph)
 	handle("GET /v1/graphs/{id}/revisions", g.listGraphRevisions)
@@ -202,9 +216,13 @@ func (g *Gateway) Handler() http.Handler {
 	handle("GET /v1/ledger/receipt/{hash}", g.ledgerReceipt)
 	handle("GET /v1/ledger/attestations/{hash}", g.ledgerAttestation)
 	handle("POST /v1/skills/wasm", g.registerWasmSkill)
+	handle("POST /v1/expertise/wasm", g.registerWasmSkill)
 	handle("POST /hooks/{name}", g.receiveHook)
 	handle("GET /ws/skill", g.skillWS)
+	handle("GET /ws/expertise", g.skillWS) // alias; see /v1/expertise above
 	handle("GET /v1/stream", g.clientWS)
+	handle("GET /v1/watch", g.watchWS)
+	handle("POST /v1/watch/tickets", g.issueWatchTicket)
 
 	// Auth wraps the whole mux rather than decorating each route: a route
 	// added later is authenticated by default, which is the failure mode worth
@@ -666,6 +684,22 @@ func keepAlive(conn *websocket.Conn, w *wsWriter) func() {
 	return func() { close(stop) }
 }
 
+// TrySend offers a frame without waiting, and reports whether it was queued.
+// For a watcher, which must never be able to slow the session it observes.
+func (w *wsWriter) TrySend(raw []byte) bool {
+	select {
+	case <-w.done:
+		return false
+	default:
+	}
+	select {
+	case w.ch <- raw:
+		return true
+	default:
+		return false
+	}
+}
+
 // Send queues a frame on the lane its edge declared. Anything that is not
 // explicitly realtime is treated as reliable, including `bulk`, whose
 // behaviour C3 names but does not define.
@@ -1062,22 +1096,42 @@ func parseClientFrame(raw []byte, sessionID string, seq *uint64) (channel.Envelo
 		if env.Node == "" {
 			env.Node = executor.ClientRef
 		}
+		// C3 v1.7: a malformed trace context is dropped here, at the edge,
+		// rather than refused. Tracing must never be why a delivery fails, and
+		// dropping it now keeps a junk string out of the causal log.
+		if !channel.ValidTraceparent(env.Trace) {
+			env.Trace = ""
+		}
 		return env, env.Validate()
 	}
 	// Shorthand path: wrap into a std/text@1 envelope.
 	var shorthand struct {
 		Text string `json:"text"`
+		// Trace lets the two-field shorthand join a caller's trace too.
+		Trace string `json:"trace"`
 	}
 	if err := json.Unmarshal(raw, &shorthand); err != nil || strings.TrimSpace(shorthand.Text) == "" {
 		return env, fmt.Errorf(`frame must be a C3 envelope or {"text": "..."}`)
 	}
 	*seq++
 	payload, _ := json.Marshal(map[string]any{"text": shorthand.Text, "final": true})
+	id := channel.NewID()
 	env = channel.Envelope{
-		V: channel.ProtocolMajor, ID: channel.NewID(), Session: sessionID,
+		V: channel.ProtocolMajor, ID: id, Session: sessionID,
 		Node: executor.ClientRef, Port: "text_out", Seq: *seq,
-		Idem:   fmt.Sprintf("%s:client:text_out:%d", sessionID, *seq),
+		// Keyed on the envelope id, not on the per-socket counter. The counter
+		// restarts at 1 on every connection, so a client that reconnected to a
+		// resumed session — after a network drop, or after a standby took over
+		// from a dead node — sent "<session>:client:text_out:1" again, the
+		// resumed dedup window recognised it, and the first thing the user said
+		// after reconnecting was silently discarded as a duplicate. Shorthand
+		// has no way to retry with the same key anyway, so the key only has to
+		// be unique, and the id is.
+		Idem:   fmt.Sprintf("%s:client:text_out:%s", sessionID, id),
 		Schema: "std/text@1", Kind: channel.KindData, Payload: payload,
+	}
+	if channel.ValidTraceparent(shorthand.Trace) {
+		env.Trace = shorthand.Trace
 	}
 	return env, nil
 }

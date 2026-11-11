@@ -2,10 +2,10 @@
 
 TypeScript client for the [AURA runtime](../../README.md). Two things:
 
-- **`createNode()`** — expose functions your app already has as skills.
+- **`createNode()`** — expose functions your app already has as Expertises.
 - **`openSession()`** — drive a graph from a frontend or a script.
 
-No runtime dependencies: it uses the WebSocket built into Node 20+ and the
+No runtime dependencies: it uses the WebSocket built into Node 22+ and the
 browser. Types are generated from `spec/schemas/`, the same frozen JSON Schemas
 the kernel and the conformance suite use, so they cannot drift from the wire.
 
@@ -15,7 +15,7 @@ A declarative connector is for systems you cannot change (see "Connecting
 existing software" in the [README](../../README.md)). This is the other
 half: when the code is yours, the cheapest integration is the app
 announcing itself. There is no spec to write and no adapter to maintain — the
-function that already exists becomes the skill.
+function that already exists becomes the Expertise.
 
 ```ts
 import { createNode } from "@deepaxiom/aura";
@@ -59,7 +59,7 @@ actually produces. Reach for `ctx.raw` if you need the untouched
 
 Whatever you return is wrapped as `{ ok: true, status: 200, body: <return> }`.
 A thrown error becomes `{ ok: false, status: 500, error }` — the caller asked a
-question and gets an answer it can act on, and your skill stays connected.
+question and gets an answer it can act on, and your Expertise stays connected.
 
 `ctx.cancelled` is true once the caller has abandoned the chain. Checking it is
 optional: the kernel already refuses to route anything from a cancelled chain,

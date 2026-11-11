@@ -79,17 +79,17 @@ func cmdPublish(args []string) {
 		}
 	}
 	if len(rest) < 1 {
-		fatal(fmt.Errorf("usage: aura publish <skill-dir> [--registry <url>]"))
+		fatal(fmt.Errorf("usage: aura publish <expertise-dir> [--registry <url>]"))
 	}
 	dir := rest[0]
 
-	manifestRaw, err := os.ReadFile(filepath.Join(dir, "skill.yaml"))
+	manifestRaw, manifestName, err := readManifestFile(dir)
 	if err != nil {
-		fatal(fmt.Errorf("no skill.yaml in %s: %w", dir, err))
+		fatal(err)
 	}
 	var manifest map[string]any
 	if err := yaml.Unmarshal(manifestRaw, &manifest); err != nil {
-		fatal(fmt.Errorf("invalid skill.yaml: %w", err))
+		fatal(fmt.Errorf("invalid %s: %w", manifestName, err))
 	}
 
 	artifact, files, err := zipSkillDir(dir)
@@ -253,13 +253,13 @@ func cmdRun(args []string) {
 	sort.Strings(names)
 	dir := filepath.Join(base, names[len(names)-1])
 
-	manifestRaw, err := os.ReadFile(filepath.Join(dir, "skill.yaml"))
+	manifestRaw, manifestName, err := readManifestFile(dir)
 	if err != nil {
-		fatal(fmt.Errorf("no skill.yaml in %s: %w", dir, err))
+		fatal(err)
 	}
 	var manifest map[string]any
 	if err := yaml.Unmarshal(manifestRaw, &manifest); err != nil {
-		fatal(fmt.Errorf("invalid skill.yaml: %w", err))
+		fatal(fmt.Errorf("invalid %s: %w", manifestName, err))
 	}
 
 	// A wasm skill is never a separate OS process — it is hosted inside the
@@ -387,6 +387,21 @@ func zipSkillDir(dir string) ([]byte, int, error) {
 	})
 	if err != nil {
 		return nil, 0, err
+	}
+	// A package that only carries the manifest under its current name also
+	// gets it under the old one, so a node or SDK that predates the rename can
+	// install and run what this one published. See manifestfile.go.
+	if raw, name, merr := readManifestFile(dir); merr == nil && name == manifestFile {
+		if _, serr := os.Stat(filepath.Join(dir, legacyManifestFile)); serr != nil {
+			w, err := zw.Create(legacyManifestFile)
+			if err != nil {
+				return nil, 0, err
+			}
+			if _, err := w.Write(raw); err != nil {
+				return nil, 0, err
+			}
+			files++
+		}
 	}
 	if err := zw.Close(); err != nil {
 		return nil, 0, err

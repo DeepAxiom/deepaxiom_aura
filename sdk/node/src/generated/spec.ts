@@ -1,7 +1,7 @@
 // Code generated from spec/enums.yaml and spec/VERSION. DO NOT EDIT.
 // Regenerate with: python scripts/gen_ssot.py
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 
 /** The skill type whose edges act on the world. */
 export const EFFECT_TYPE = "motor";

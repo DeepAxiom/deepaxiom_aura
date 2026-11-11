@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"aura/kernel/internal/spec"
@@ -272,7 +273,28 @@ type Live struct {
 	// the declared class of the edge the message travels on (C3 rule 4): it
 	// decides whether a slow receiver blocks the producer or loses frames.
 	Send func(raw []byte, qos string) error
+
+	// load is how many live sessions are wired to this connection. The kernel
+	// counts it itself — a session acquires its replicas when it starts and
+	// releases them when it ends — so choosing the quieter replica needs no
+	// load report from the skill and therefore no protocol change.
+	load atomic.Int64
 }
+
+// Acquire records one more live session on this connection.
+func (l *Live) Acquire() { l.load.Add(1) }
+
+// Release gives one back.
+func (l *Live) Release() {
+	if l.load.Add(-1) < 0 {
+		// Never negative: a double release must not make this replica look
+		// emptier than an idle one and attract every new session.
+		l.load.Store(0)
+	}
+}
+
+// Load is the number of live sessions currently wired to this connection.
+func (l *Live) Load() int64 { return l.load.Load() }
 
 // Registry is the in-memory live registry (persistence is the store's job).
 type Registry struct {
@@ -392,9 +414,15 @@ func (r *Registry) Resolve(use, capability string) (*Live, error) {
 // they depend on. Spreading *sessions* is what scales. Spreading individual
 // envelopes would scale nothing and break the skills that remember.
 //
-// Least-loaded would handle uneven session lifetimes better and needs a load
-// signal from each skill, which is a protocol change. Round-robin already turns
-// a hard ceiling into a linear one.
+// Among replicas, the one carrying the fewest live sessions wins, and the
+// rotation only breaks ties. Plain round-robin assumed sessions are alike, and
+// they are not: a voice call lasts an hour and a webhook lasts a second, so
+// after a while one replica holds every long session and the next long one
+// still lands on it one time in N. The load is counted by the kernel as
+// sessions start and end (Live.Acquire/Release) rather than reported by the
+// skill, so this needed no protocol change — and when every replica carries
+// the same load, which is the case on an idle node and in any caller that
+// never acquires, the choice is exactly the old rotation.
 func (r *Registry) pick(capability string, candidates []*Live) *Live {
 	if len(candidates) == 1 {
 		return candidates[0]
@@ -421,7 +449,15 @@ func (r *Registry) pick(capability string, candidates []*Live) *Live {
 	n := r.rr[key]
 	r.rr[key] = n + 1
 	r.rrMu.Unlock()
-	return replicas[int(n%uint64(len(replicas)))]
+	start := int(n % uint64(len(replicas)))
+	best := replicas[start]
+	for i := 1; i < len(replicas); i++ {
+		c := replicas[(start+i)%len(replicas)]
+		if c.Load() < best.Load() {
+			best = c
+		}
+	}
+	return best
 }
 
 // ResolvePreferred is Resolve with the node's routing preferences applied
@@ -508,6 +544,50 @@ func (r *Registry) Catalog() []Manifest {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// Instance is one live connection, as the control plane reports it.
+type Instance struct {
+	ID         string
+	Capability string
+	Type       string
+	// Load is how many live sessions are wired to this connection.
+	Load      int64
+	Connected time.Time
+}
+
+// Instances lists every live connection, grouped by package id and oldest
+// connection first within a package, so the same replica keeps the same
+// position from one reading to the next.
+func (r *Registry) Instances() []Instance {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Instance, 0, len(r.byConn))
+	conns := make([]string, 0, len(r.byConn))
+	for conn, l := range r.byConn {
+		out = append(out, Instance{ID: l.Manifest.ID, Capability: l.Manifest.Capability,
+			Type: l.Manifest.Type, Load: l.Load(), Connected: l.Connected})
+		conns = append(conns, conn)
+	}
+	idx := make([]int, len(out))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.Slice(idx, func(a, b int) bool {
+		x, y := out[idx[a]], out[idx[b]]
+		if x.ID != y.ID {
+			return x.ID < y.ID
+		}
+		if !x.Connected.Equal(y.Connected) {
+			return x.Connected.Before(y.Connected)
+		}
+		return conns[idx[a]] < conns[idx[b]]
+	})
+	sorted := make([]Instance, len(out))
+	for i, j := range idx {
+		sorted[i] = out[j]
+	}
+	return sorted
 }
 
 // CatalogJSON is Catalog marshalled once, for handlers.

@@ -54,9 +54,18 @@ export function Minimap({ nodes, heightOf, view, surface, onJump }: Props) {
   };
   const vp = toMap(viewWorld.x, viewWorld.y);
 
+  // Everything is already on screen: a map of what you can see is noise.
+  if (
+    viewWorld.x <= minX && viewWorld.y <= minY &&
+    viewWorld.x + viewWorld.w >= maxX && viewWorld.y + viewWorld.h >= maxY
+  ) {
+    return null;
+  }
+
   return (
     <svg
       className="minimap"
+      aria-hidden
       width={MAP_W}
       height={MAP_H}
       onPointerDown={(e) => {

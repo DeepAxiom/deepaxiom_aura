@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -46,68 +45,13 @@ func ProbeArgs(input string) []string {
 //
 // The output directory must already contain one subdirectory per rendition,
 // named as the rendition is: ffmpeg expands %v but does not create directories.
+//
+// This is the argv 0.1.0 shipped, and it is kept exactly: it is what the
+// worker falls back to when the newer single-invocation path fails, and a
+// fallback is only worth having if it is the thing that was already proven.
+// Everything newer is HLSJob with more of its fields set.
 func HLSArgs(input, outDir string, ladder []Rendition, src Media) []string {
-	fps := src.FrameRate
-	if fps <= 0 || fps > 240 {
-		fps = 30
-	}
-	gop := int(math.Round(fps * SegmentSeconds))
-	if gop < 1 {
-		gop = 1
-	}
-
-	args := []string{
-		"-hide_banner",
-		"-nostdin",
-		"-loglevel", "error",
-		"-y",
-		"-i", input,
-	}
-	for range ladder {
-		args = append(args, "-map", "0:v:0")
-		if src.HasAudio {
-			args = append(args, "-map", "0:a:0")
-		}
-	}
-	args = append(args,
-		"-c:v", "libx264",
-		"-preset", "veryfast",
-		"-profile:v", "main",
-		"-pix_fmt", "yuv420p",
-		"-g", strconv.Itoa(gop),
-		"-keyint_min", strconv.Itoa(gop),
-		"-sc_threshold", "0",
-	)
-	if src.HasAudio {
-		args = append(args, "-c:a", "aac", "-ar", "48000", "-ac", "2")
-	}
-	for i, r := range ladder {
-		idx := strconv.Itoa(i)
-		// scale=-2:H keeps the aspect ratio and lands on an even width, which
-		// yuv420p requires; -1 would round to odd and fail the encode.
-		args = append(args,
-			"-filter:v:"+idx, fmt.Sprintf("scale=-2:%d", r.Height),
-			"-b:v:"+idx, fmt.Sprintf("%dk", r.VideoKbps),
-			"-maxrate:v:"+idx, fmt.Sprintf("%dk", r.VideoKbps*11/10),
-			"-bufsize:v:"+idx, fmt.Sprintf("%dk", r.VideoKbps*2),
-		)
-		if src.HasAudio {
-			args = append(args, "-b:a:"+idx, fmt.Sprintf("%dk", r.AudioKbps))
-		}
-	}
-	args = append(args,
-		"-var_stream_map", VarStreamMap(ladder, src.HasAudio),
-		"-master_pl_name", MasterPlaylist,
-		"-f", "hls",
-		"-hls_time", strconv.Itoa(SegmentSeconds),
-		"-hls_playlist_type", "vod",
-		"-hls_segment_type", "fmp4",
-		"-hls_flags", "independent_segments",
-		"-hls_fmp4_init_filename", "init.mp4",
-		"-hls_segment_filename", path.Join(filepath.ToSlash(outDir), "%v", "seg_%05d.m4s"),
-		path.Join(filepath.ToSlash(outDir), "%v", "index.m3u8"),
-	)
-	return args
+	return HLSJob{Input: input, OutDir: outDir, Ladder: ladder, Source: src}.Args()
 }
 
 // VarStreamMap names each variant so %v expands to the rendition name rather
@@ -268,4 +212,21 @@ func tail(s string, n int) string {
 		return s
 	}
 	return "..." + s[len(s)-n:]
+}
+
+// HasEncoder reports whether this ffmpeg was built with an encoder. Being
+// built with a hardware encoder is not the same as having the hardware; that
+// can only be found by encoding, and the worker's fallback is what covers it.
+func (r Runner) HasEncoder(ctx context.Context, name string) error {
+	out, err := r.output(ctx, r.ffmpeg(), []string{"-hide_banner", "-loglevel", "error", "-encoders"})
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("this ffmpeg was not built with the %s encoder; `ffmpeg -encoders` lists the ones it has", name)
 }

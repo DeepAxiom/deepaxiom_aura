@@ -4,7 +4,7 @@
 the enforceable text lives in [`LICENSE-AGPL-3.0.txt`](LICENSE-AGPL-3.0.txt) and
 [`LICENSE-APACHE-2.0.txt`](LICENSE-APACHE-2.0.txt), unmodified from the canonical
 FSF/ASF originals. The main source directories (`kernel/`, `media/`, `ui/`,
-`sdk/`, `skills/`, `spec/`) also carry their own short `LICENSE` file pointing back here,
+`sdk/`, `expertise/`, `spec/`) also carry their own short `LICENSE` file pointing back here,
 so the applicable terms are never more than one directory away from the code
 they cover.
 
@@ -15,7 +15,7 @@ different jobs, so they carry different licenses:
 
 - The **standard must stay unconditionally open**, or the whole pitch of a
   neutral, federable ecosystem collapses. Anyone — including a competitor —
-  must be free to build a conformant kernel, SDK, or skill against it with zero
+  must be free to build a conformant kernel, SDK, or Expertise against it with zero
   friction and zero obligation. That is `spec/` and `sdk/`.
 - The **kernel is the thing a cloud provider could otherwise take, host, and
   sell back to our own users without ever contributing anything back.**
@@ -29,24 +29,24 @@ different jobs, so they carry different licenses:
 | Path | License | SPDX |
 |---|---|---|
 | `spec/` — the C1/C2/C3 contracts, schemas, conformance suite | Apache-2.0 | `Apache-2.0` |
-| `sdk/` — the skill-authoring SDK(s) | Apache-2.0 | `Apache-2.0` |
+| `sdk/` — the Expertise-authoring SDK(s) | Apache-2.0 | `Apache-2.0` |
 | `scripts/` — build/release tooling | Apache-2.0 | `Apache-2.0` |
 | `kernel/` — the `aura` binary (the AURA kernel architecture) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | `ui/` — the control-plane frontend, embedded into the kernel binary | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | `media/` — the `aura-media` binary (the media subsystem: transcode, package, frames) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
-| `skills/` — first-party skills (echo, llm-chat, asr, tts, sentence-chunker, planner, model-manager, memory-context, postgres-cdc) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
+| `expertise/` — first-party Expertises (echo, llm-chat, asr, tts, sentence-chunker, planner, model-manager, memory-context, postgres-cdc) | AGPL-3.0-or-later¹ | `AGPL-3.0-or-later` |
 | Documentation at the repo root (this file, `README.md`, `README-ES.md`, `GUIDE.md`, `GUIDE-ES.md`, `ROADMAP.md`, `ROADMAP-ES.md`, `CONTRIBUTING.md`) | Apache-2.0 | `Apache-2.0` |
 
 ¹ A commercial license is available in place of AGPLv3 for anyone who does not
-want its obligations — see below. Third-party skills you write yourself against
-the `sdk/` are **not** covered by this row: you license your own skill code
+want its obligations — see below. Third-party Expertises you write yourself against
+the `sdk/` are **not** covered by this row: you license your own Expertise code
 however you choose, provided it doesn't ship modified copies of `kernel/`,
-`media/`, `ui/`, or the first-party skills.
+`media/`, `ui/`, or the first-party Expertises.
 
 **What this means in practice:**
-- Writing and distributing your own skills (proprietary or open) against the
+- Writing and distributing your own Expertises (proprietary or open) against the
   `sdk/` — no AGPL obligation, ever. That is the entire point of keeping the
-  SDK Apache-2.0: the ecosystem has to be safe for commercial skill authors.
+  SDK Apache-2.0: the ecosystem has to be safe for commercial Expertise authors.
 - Self-hosting the kernel, modifying it, running it inside your own
   organization — no obligation to publish anything, AGPL only triggers on
   distributing or offering the modified software to others over a network.
@@ -57,7 +57,7 @@ however you choose, provided it doesn't ship modified copies of `kernel/`,
 ## Commercial license
 
 Deep Axiom offers a commercial license that replaces the AGPLv3 obligations on
-`kernel/`, `media/`, `ui/`, and `skills/` with ordinary commercial terms (no source
+`kernel/`, `media/`, `ui/`, and `expertise/` with ordinary commercial terms (no source
 disclosure requirement, no copyleft on your modifications). It exists for:
 
 - Cloud/hosting providers who want to offer the kernel as a managed service

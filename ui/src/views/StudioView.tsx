@@ -52,7 +52,7 @@ import {
   addNote, cycleColor, loadNotes, moveNote, patchNote,
   removeNote, resizeNote, saveNotes, type Note,
 } from "../graph/notes";
-import { curve, portAnchor } from "../graph/geometry";
+import { BACK_DROP, BACK_LANE, BACK_SWING, curve, edgeMid, isBackward, portAnchor } from "../graph/geometry";
 import {
   type CanvasEdge,
   type CanvasGraph,
@@ -94,7 +94,13 @@ import {
   undo,
 } from "../graph/editor";
 import { useLiveGraphs } from "../hooks/useLiveGraphs";
-import { useRunActivity } from "../hooks/useRunActivity";
+import { useRunActivity, useSessionTail } from "../hooks/useRunActivity";
+import { navigate, replaceRoute } from "../app/store";
+import {
+  IconAlert, IconCode, IconCopy, IconFit, IconHistory, IconKeyboard, IconLock, IconMinus, IconPlay,
+  IconPanel, IconPlus, IconRedo, IconTidy, IconTrace, IconTrash, IconUndo,
+} from "../components/Icons";
+import { fmtCompact } from "../lib/format";
 
 type Item =
   | { kind: "status"; text: string; key: string }
@@ -113,7 +119,7 @@ const EMPTY_GRAPH: CanvasGraph = {
   origin: { kind: "declared" },
 };
 
-export function StudioView() {
+export function StudioView({ active = true, graphArg }: { active?: boolean; graphArg?: string } = {}) {
   const { t } = useTranslation();
   const surfaceRef = useRef<HTMLDivElement>(null);
 
@@ -128,6 +134,8 @@ export function StudioView() {
   const [mode, setMode] = useState("local");
   const [paletteQuery, setPaletteQuery] = useState("");
   const [showIR, setShowIR] = useState(false);
+  /** The catalog column can be folded away: a wide graph needs the width more. */
+  const [showPalette, setShowPalette] = useState(() => localStorage.getItem("aura.studio.palette") !== "off");
   /**
    * Which pane the right column shows.
    *
@@ -173,13 +181,36 @@ export function StudioView() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [items, setItems] = useState<Item[]>([]);
   const execWS = useRef<WebSocket | null>(null);
+  /** The session this view started itself (Run), once the kernel names it. */
+  const [ownSession, setOwnSession] = useState<string | null>(null);
+  /** The session the Run panel is holding, when it is talking to a graph. */
+  const [panelSession, setPanelSession] = useState<{ id: string; graph: string } | null>(null);
 
   const running = phase === "planning" || phase === "executing";
   const editable = !running;
-  const { activity, observe, reset: resetActivity } = useRunActivity(running);
-  // Pause the catalogue poll while a session runs: its envelopes already say
-  // what is happening, and polling on top would be duplicated work.
-  const live = useLiveGraphs(!running);
+  const { activity, observe, reset: resetActivity } = useRunActivity(active);
+  const live = useLiveGraphs(active);
+
+  /**
+   * Which session the canvas is showing. In order: one this view started, the
+   * one the Run panel is talking to, else the newest live session of the open
+   * graph — started by anyone: `aura chat`, a webhook, another tab.
+   */
+  const watched = useMemo(
+    () => (graph.graphId ? live.liveSessions.find((x) => x.graph_id === graph.graphId)?.session_id ?? null : null),
+    [live.liveSessions, graph.graphId],
+  );
+  const tailId = ownSession ?? (panelSession && panelSession.graph === graph.graphId ? panelSession.id : null) ?? watched;
+  // Keep showing the last session after it ends, until another one starts:
+  // the final state of a run is the thing you came to look at.
+  const [shownSession, setShownSession] = useState<string | null>(null);
+  useEffect(() => {
+    if (!tailId || tailId === shownSession) return;
+    resetActivity();
+    setShownSession(tailId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tailId]);
+  const tail = useSessionTail(active ? shownSession : null, observe);
 
   /* ── gestures ──────────────────────────────────────────────────── */
 
@@ -305,6 +336,17 @@ export function StudioView() {
     [graph.nodes, portsByRef],
   );
 
+  /** Each right-to-left edge gets its own lane under the graph, in edge order. */
+  const lanes = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const e of graph.edges) {
+      const a = anchor(e.fromRef, e.fromPort, "out");
+      const b = anchor(e.toRef, e.toPort, "in");
+      if (a && b && isBackward(a, b)) out.set(e.id, out.size);
+    }
+    return out;
+  }, [graph.edges, anchor]);
+
   /* ── viewport ──────────────────────────────────────────────────── */
 
   /** Re-lay the graph. One definition: the button, the menu and T all call it. */
@@ -318,17 +360,31 @@ export function StudioView() {
     if (!r || !graph.nodes.length) return;
     const xs = graph.nodes.map((n) => n.x);
     const ys = graph.nodes.map((n) => n.y);
-    // Backward edges bow out by half the gap measured face to face, so the
-    // reply hop every graph has would be clipped by a node-box-only fit.
-    const bow = Math.max(60, (Math.max(...xs) - Math.min(...xs) + NODE_W) * 0.5);
+    // An edge that runs right-to-left (the reply hop most graphs have) swings
+    // out past the node boxes and runs below them, so a node-box-only fit
+    // would clip it. Measured from the edges actually present: padding every
+    // graph for its worst possible edge left a simple chain drawn at a third
+    // of the size it could be.
+    let bow = 28;
+    let drop = 0;
+    for (const e of graph.edges) {
+      const from = anchor(e.fromRef, e.fromPort, "out");
+      const to = anchor(e.toRef, e.toPort, "in");
+      if (from && to && isBackward(from, to)) { bow = BACK_SWING + lanes.size * 8; drop = BACK_DROP + lanes.size * BACK_LANE; }
+    }
     const left = Math.min(...xs) - bow;
-    const top = Math.min(...ys);
+    const top = Math.min(...ys) - 28;
     const w = Math.max(...xs) + NODE_W + bow - left;
-    const h = Math.max(...graph.nodes.map((n) => n.y + heightOf(n))) - top;
-    const k = Math.min(1.4, Math.min((r.width - 48) / w, (r.height - 48) / h));
+    // Room under the lowest node for the text it streams while running.
+    const h = Math.max(...graph.nodes.map((n) => n.y + heightOf(n))) + Math.max(104, drop) - top;
+    const k = Math.min(1.25, Math.min((r.width - 48) / w, (r.height - 48) / h));
     const scale = Number.isFinite(k) && k > 0.15 ? k : 1;
-    setView({ k: scale, x: 24 - left * scale, y: 24 - top * scale });
-  }, [graph.nodes, heightOf]);
+    setView({
+      k: scale,
+      x: (r.width - w * scale) / 2 - left * scale,
+      y: Math.max(24, (r.height - h * scale) / 2) - top * scale,
+    });
+  }, [graph.nodes, graph.edges, heightOf, anchor, lanes]);
 
   const zoomBy = (factor: number) => {
     const k = Math.min(2.2, Math.max(0.2, view.k * factor));
@@ -729,9 +785,14 @@ export function StudioView() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Mounted but not on screen: the keys belong to whichever view is.
+      if (!active) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      // A dialog or the command palette is open above the canvas.
+      if (document.querySelector(".scrim")) return;
       const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "k") return;
       if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); doUndo(); return; }
       if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
         e.preventDefault(); doRedo(); return;
@@ -760,6 +821,7 @@ export function StudioView() {
       // Unmodified letters, so they cannot collide with a browser shortcut.
       if (mod || e.altKey) return;
       if (e.key === "?") { e.preventDefault(); setShowKeys(true); return; }
+      if (e.key === "/") { e.preventDefault(); document.querySelector<HTMLInputElement>(".palette__search")?.focus(); return; }
       if (e.key.toLowerCase() === "f") { e.preventDefault(); fit(); return; }
       if (e.key.toLowerCase() === "t") { e.preventDefault(); tidy(); return; }
       if (e.key.toLowerCase() === "n") { e.preventDefault(); doAddNote(centre()); return; }
@@ -770,7 +832,7 @@ export function StudioView() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [doUndo, doRedo, doCopy, doPaste, doDuplicate, doDelete, doCopyIR, doPasteIR,
-      doAddNote, doDisable, doGroup, editable, graph, menu, quick, renaming]);
+      doAddNote, doDisable, doGroup, editable, graph, menu, quick, renaming, active]);
 
   /* ── graph lifecycle ───────────────────────────────────────────── */
 
@@ -782,12 +844,50 @@ export function StudioView() {
       setSel(EMPTY_SELECTION);
       setStatus(null);
       resetActivity();
+      setOwnSession(null);
+      setShownSession(null);
       setItems([]);
       setPhase("idle");
+      if (active) replaceRoute("studio", id);
     } catch (e) {
       setStatus({ kind: "err", text: (e as Error).message });
     }
-  }, [resetActivity]);
+  }, [resetActivity, active]);
+
+  // A deep link (#/studio/<graph>) or the command palette asks for a graph.
+  useEffect(() => {
+    if (graphArg && graphArg !== graph.graphId) void load(graphArg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphArg]);
+
+  useEffect(() => {
+    const onAction = (e: Event) => {
+      const what = (e as CustomEvent).detail;
+      if (what === "keys") setShowKeys(true);
+      if (what === "new" && !running) {
+        setGraph(EMPTY_GRAPH);
+        setHistory(EMPTY_HISTORY);
+        setSel(EMPTY_SELECTION);
+        setOwnSession(null);
+        setShownSession(null);
+        resetActivity();
+        replaceRoute("studio");
+      }
+    };
+    window.addEventListener("aura:studio", onAction);
+    return () => window.removeEventListener("aura:studio", onAction);
+  }, [running, resetActivity]);
+
+  // The side pane changes width with its tab; fit once it has settled, so the
+  // graph is not left half under the pane it just made room for.
+  useEffect(() => {
+    const timer = setTimeout(fit, 240);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [side, showPalette]);
+
+  // Hidden views have no size; fit again when this one comes back.
+  useEffect(() => { if (active) fit(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [active]);
 
   useEffect(() => { fit(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [graph.graphId]);
 
@@ -834,11 +934,13 @@ export function StudioView() {
     ws.onmessage = (ev) => {
       const env = JSON.parse(ev.data) as Envelope;
       const p = (env.payload ?? {}) as Record<string, unknown>;
-      observe(env); // cheap: map writes, no render — the frame loop publishes
 
       switch (env.kind) {
         case "status":
           if (p.state === "ready") {
+            // The canvas follows the session through its event log, not this
+            // socket: the socket only carries what reaches the client.
+            if (typeof p.session === "string") setOwnSession(p.session);
             // Pins first, and only before any data: the kernel refuses a pin
             // frame once a session has started producing, because one session
             // id describing two different graphs is a log nobody can read.
@@ -882,7 +984,7 @@ export function StudioView() {
   const runGoal = async () => {
     const text = goal.trim();
     if (!text || running) return;
-    setItems([]); setStatus(null); resetActivity(); setPhase("planning");
+    setItems([]); setStatus(null); resetActivity(); setOwnSession(null); setPhase("planning");
     try {
       const p = await requestPlan(text);
       setGraph(fromIR(p.graph));       // complete, because this is when it exists
@@ -899,7 +1001,7 @@ export function StudioView() {
   /** Run what is on the canvas, without asking the planner for anything. */
   const runCanvas = async () => {
     if (running || errors || !graph.graphId) return;
-    setItems([]); setStatus(null); resetActivity(); setPhase("executing");
+    setItems([]); setStatus(null); resetActivity(); setOwnSession(null); setPhase("executing");
     try {
       await api.registerGraph(toIR(graph));
       const inputs = (portsByRef.get("client")?.egress ?? [])
@@ -954,6 +1056,16 @@ export function StudioView() {
     );
   }, [catalog, paletteQuery]);
 
+  /**
+   * The open graph, when a typed message can reach it: registered on the node
+   * and wired from `client.text_out`. That is what the Run panel talks to.
+   */
+  const talkable =
+    graph.graphId && live.graphs.includes(graph.graphId) &&
+    graph.edges.some((e) => e.fromRef === "client" && e.fromPort === "text_out")
+      ? graph.graphId
+      : null;
+
   const centre = () => toWorld(
     (surfaceRef.current?.getBoundingClientRect().left ?? 0) + surfaceSize.w / 2,
     (surfaceRef.current?.getBoundingClientRect().top ?? 0) + surfaceSize.h / 2,
@@ -966,12 +1078,13 @@ export function StudioView() {
         <input
           className="input studio__goal"
           placeholder={t("studio.placeholder")}
+          aria-label={t("studio.placeholder")}
           value={goal}
           disabled={running}
           onChange={(e) => setGoal(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && runGoal()}
         />
-        <button className="btn" onClick={runGoal} disabled={!goal.trim() || running}>
+        <button className="btn btn--primary" onClick={runGoal} disabled={!goal.trim() || running}>
           {running ? t("studio.running") : t("studio.run")}
         </button>
         <span className={`studio__phase studio__phase--${phase}`}>{t(`studio.phase.${phase}`)}</span>
@@ -983,38 +1096,52 @@ export function StudioView() {
           className="input studio__id"
           value={graph.graphId}
           placeholder={t("studio.graphId")}
+          aria-label={t("studio.graphId")}
           disabled={!editable}
           onChange={(e) => setGraph((g) => ({ ...g, graphId: e.target.value }))}
         />
-        <select className="select studio__open" value="" onChange={(e) => e.target.value && load(e.target.value)}>
+        <select className="select studio__open" value="" aria-label={t("studio.open")} onChange={(e) => e.target.value && load(e.target.value)}>
           <option value="">{t("studio.open")}</option>
           {live.graphs.map((id) => <option key={id} value={id}>{id}</option>)}
         </select>
 
         <span className="studio__sep" />
-        <button className="iconbtn" onClick={doUndo} disabled={!history.past.length} title={t("studio.undo")}>↶</button>
-        <button className="iconbtn" onClick={doRedo} disabled={!history.future.length} title={t("studio.redo")}>↷</button>
-        <button className="iconbtn" onClick={doDuplicate} disabled={!editable || !sel.nodes.length} title={t("studio.duplicate")}>⧉</button>
-        <button className="iconbtn" onClick={doDelete} disabled={!editable || (!sel.nodes.length && !sel.edges.length)} title={t("studio.delete")}>🗑</button>
+        <button className="iconbtn" onClick={doUndo} disabled={!history.past.length} title={t("studio.undo")} aria-label={t("studio.undo")}><IconUndo size={15} /></button>
+        <button className="iconbtn" onClick={doRedo} disabled={!history.future.length} title={t("studio.redo")} aria-label={t("studio.redo")}><IconRedo size={15} /></button>
+        <button className="iconbtn" onClick={doDuplicate} disabled={!editable || !sel.nodes.length} title={t("studio.duplicate")} aria-label={t("studio.duplicate")}><IconCopy size={15} /></button>
+        <button className="iconbtn" onClick={doDelete} disabled={!editable || (!sel.nodes.length && !sel.edges.length)} title={t("studio.delete")} aria-label={t("studio.delete")}><IconTrash size={15} /></button>
 
         <span className="studio__sep" />
-        <button className="iconbtn" onClick={() => zoomBy(1 / 1.2)} title={t("studio.zoomOut")}>−</button>
+        <button className="iconbtn" onClick={() => zoomBy(1 / 1.2)} title={t("studio.zoomOut")} aria-label={t("studio.zoomOut")}><IconMinus size={15} /></button>
         <span className="studio__zoom">{Math.round(view.k * 100)}%</span>
-        <button className="iconbtn" onClick={() => zoomBy(1.2)} title={t("studio.zoomIn")}>+</button>
-        <button className="btn btn--ghost btn--sm" onClick={fit}>{t("studio.fit")}</button>
+        <button className="iconbtn" onClick={() => zoomBy(1.2)} title={t("studio.zoomIn")} aria-label={t("studio.zoomIn")}><IconPlus size={15} /></button>
+        <button className="iconbtn" onClick={fit} title={`${t("studio.fit")} (F)`} aria-label={t("studio.fit")}><IconFit size={15} /></button>
+        <button className="iconbtn" disabled={!editable} onClick={tidy} title={`${t("studio.tidy")} (T)`} aria-label={t("studio.tidy")}><IconTidy size={15} /></button>
+
+        <span className="studio__sep" />
         <button
-          className="btn btn--ghost btn--sm"
-          disabled={!editable}
-          onClick={tidy}
+          className="iconbtn"
+          title={t("studio.irTitle")}
+          aria-label={t("studio.ir")}
+          aria-pressed={showIR}
+          onClick={() => { setIrDraft(JSON.stringify(toIR(graph), null, 2)); setShowIR((x) => !x); }}
         >
-          {t("studio.tidy")}
+          <IconCode size={15} />
         </button>
+        <button className="iconbtn" disabled={!graph.graphId} onClick={() => setShowHistory(true)} title={`${t("studio.keys.history")} (H)`} aria-label={t("studio.keys.history")}><IconHistory size={15} /></button>
         <button
-          className="btn btn--ghost btn--sm"
-          onClick={() => { setIrDraft(JSON.stringify(toIR(graph), null, 2)); setShowIR((s) => !s); }}
+          className="iconbtn"
+          aria-pressed={showPalette}
+          title={t("studio.togglePalette")}
+          aria-label={t("studio.togglePalette")}
+          onClick={() => setShowPalette((v) => {
+            localStorage.setItem("aura.studio.palette", v ? "off" : "on");
+            return !v;
+          })}
         >
-          {t("studio.ir")}
+          <IconPanel size={15} />
         </button>
+        <button className="iconbtn" onClick={() => setShowKeys(true)} title={`${t("studio.shortcuts")} (?)`} aria-label={t("studio.shortcuts")}><IconKeyboard size={15} /></button>
 
         <span className="studio__spacer" />
         {(errors > 0 || warns > 0) && (
@@ -1023,23 +1150,39 @@ export function StudioView() {
             {warns > 0 && <span className="finding-dot finding-dot--warn">{warns}</span>}
           </span>
         )}
-        <button className="btn btn--ghost btn--sm" onClick={runCanvas} disabled={running || !!errors || !graph.graphId}>
-          {t("studio.runCanvas")}
+        {shownSession && (
+          <button
+            className={`watch ${tailId ? "watch--live" : ""}`}
+            onClick={() => navigate("sessions", shownSession)}
+            title={t("studio.watch.help")}
+          >
+            <span className="dot dot--live" aria-hidden />
+            <span className="watch__id">{shownSession}</span>
+            <span className="watch__n">{t("studio.watch.events", { count: tail.events })}</span>
+            <IconTrace size={13} />
+          </button>
+        )}
+        <button className="btn btn--sm" onClick={runCanvas} disabled={running || !!errors || !graph.graphId} title={t("studio.runCanvasHelp")}>
+          <IconPlay size={12} />{t("studio.runCanvas")}
         </button>
-        <button className="btn btn--sm" onClick={register} disabled={!editable || !!errors}>
+        <button className="btn btn--primary btn--sm" onClick={register} disabled={!editable || !!errors}>
           {t("studio.register")}
         </button>
       </div>
 
       {status && (
-        <div className={status.kind === "ok" ? "canvas-status--ok" : "error-banner"}>{status.text}</div>
+        <div className={`studio__status studio__status--${status.kind}`} role={status.kind === "err" ? "alert" : "status"}>
+          <span>{status.text}</span>
+          <button className="btn btn--ghost btn--sm" onClick={() => setStatus(null)}>{t("common.close")}</button>
+        </div>
       )}
 
       <div className="studio__body">
-        <aside className="palette">
+        <aside className="palette" hidden={!showPalette}>
           <input
             className="input palette__search"
             placeholder={t("studio.searchSkills")}
+            aria-label={t("studio.searchSkills")}
             value={paletteQuery}
             onChange={(e) => setPaletteQuery(e.target.value)}
           />
@@ -1100,7 +1243,7 @@ export function StudioView() {
             setView({ k, x: mx - (mx - view.x) * (k / view.k), y: my - (my - view.y) * (k / view.k) });
           }}
         >
-          <div className="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+          <div className={`canvas-world ${view.k < 0.42 ? "canvas-world--far" : ""}`} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
             {/* Frames sit under the notes, which sit under the graph. Both are
                 annotation; neither may cover what it annotates. */}
             {groups.map((gr) => (
@@ -1176,22 +1319,35 @@ export function StudioView() {
                 const b = anchor(e.toRef, e.toPort, "in");
                 if (!a || !b) return null;
                 const bad = findings.some((f) => f.edgeId === e.id && f.severity === "error");
-                const waiting = activity.nodes[e.toRef] === "waiting";
+                const key = `${e.fromRef}.${e.fromPort}->${e.toRef}.${e.toPort}`;
+                const holding = activity.holding.includes(key);
+                const hot = activity.hot.includes(key);
+                const d = curve(a, b, lanes.get(e.id) ?? 0);
                 const cls = [
                   "cedge",
                   isSelected(sel, "edge", e.id) ? "cedge--sel" : "",
                   bad ? "cedge--bad" : "",
                   e.gate === "human-approval" ? "cedge--gated" : "",
                   e.speculative ? "cedge--spec" : "",
-                  activity.nodes[e.fromRef] === "active" ? "cedge--hot" : "",
-                  waiting ? "cedge--holding" : "",
+                  e.qos === "realtime" ? "cedge--realtime" : "",
+                  (activity.edges[key] ?? 0) > 0 ? "cedge--used" : "",
+                  hot ? "cedge--hot" : "",
+                  holding ? "cedge--holding" : "",
                 ].join(" ");
                 return (
                   <g key={e.id}>
-                    <path className={cls} d={curve(a, b)} />
+                    <path className={cls} d={d} />
+                    {hot && [0, 1, 2].map((i) => (
+                      <circle
+                        key={i}
+                        className="cedge__particle"
+                        r={3}
+                        style={{ offsetPath: `path("${d}")`, animationDelay: `${-i * 0.3}s` }}
+                      />
+                    ))}
                     <path
                       className="cedge__hit"
-                      d={curve(a, b)}
+                      d={d}
                       onPointerDown={(ev) => {
                         ev.stopPropagation();
                         setSel(select(sel, "edge", e.id, ev.shiftKey));
@@ -1206,12 +1362,6 @@ export function StudioView() {
                         });
                       }}
                     />
-                    {e.gate === "human-approval" && (
-                      <circle
-                        className={`cedge__gate ${waiting ? "cedge__gate--waiting" : ""}`}
-                        cx={(a.x + b.x) / 2} cy={(a.y + b.y) / 2} r={5}
-                      />
-                    )}
                   </g>
                 );
               })}
@@ -1226,6 +1376,43 @@ export function StudioView() {
                 />
               )}
             </svg>
+
+            {/* What an edge declares and what it has carried, at its midpoint.
+                HTML rather than SVG text: a chip is a label with a tooltip. */}
+            {graph.edges.map((e) => {
+              const a = anchor(e.fromRef, e.fromPort, "out");
+              const b = anchor(e.toRef, e.toPort, "in");
+              if (!a || !b) return null;
+              const key = `${e.fromRef}.${e.fromPort}->${e.toRef}.${e.toPort}`;
+              const crossed = activity.edges[key] ?? 0;
+              const holding = activity.holding.includes(key);
+              const problems = findings.filter((f) => f.edgeId === e.id && f.severity !== "info");
+              const gated = e.gate === "human-approval";
+              if (!gated && !e.qos && !e.speculative && !crossed && !problems.length && !e.deadline_ms) return null;
+              return (
+                <div
+                  key={`chip-${e.id}`}
+                  className={`echip ${holding ? "echip--holding" : ""}`}
+                  style={{ left: edgeMid(a, b, lanes.get(e.id) ?? 0).x, top: edgeMid(a, b, lanes.get(e.id) ?? 0).y }}
+                  onPointerDown={(ev) => { ev.stopPropagation(); setSel({ nodes: [], edges: [e.id] }); setSide("auto"); }}
+                >
+                  {problems.length > 0 && (
+                    <span className={`echip__i echip__i--${problems.some((f) => f.severity === "error") ? "err" : "warn"}`} title={problems.map((f) => f.message).join("\n")}>
+                      <IconAlert size={10} />
+                    </span>
+                  )}
+                  {gated && (
+                    <span className="echip__i echip__i--gate" title={t(holding ? "studio.edge.holding" : "studio.edge.gate")}>
+                      <IconLock size={10} />{holding ? t("studio.edge.held") : t("studio.edge.gateShort")}
+                    </span>
+                  )}
+                  {e.speculative && <span className="echip__i echip__i--spec" title={t("studio.inspector.speculativeHelp")}>{t("studio.edge.spec")}</span>}
+                  {e.qos && <span className={`echip__i echip__i--${e.qos}`} title={t(`studio.edge.qos.${e.qos}`)}>{e.qos}</span>}
+                  {e.deadline_ms ? <span className="echip__i" title={t("studio.inspector.deadlineHelp")}>{e.deadline_ms}ms</span> : null}
+                  {crossed > 0 && <span className="echip__i echip__i--n" title={t("studio.edge.crossed", { count: crossed })}>{fmtCompact(crossed)}</span>}
+                </div>
+              );
+            })}
 
             {graph.nodes.map((n) => (
               <div
@@ -1249,16 +1436,15 @@ export function StudioView() {
                   selected={isSelected(sel, "node", n.ref)}
                   dropTargets={dropTargets}
                   candidates={candidateCount(n, skills)}
+                  findings={findings.filter((f) => f.nodeRef === n.ref)}
+                  count={activity.counts[n.ref] ?? 0}
+                  stream={activity.text[n.ref]}
+                  usage={activity.usage[n.ref]}
                   onPointerDown={onNodePointerDown}
                   onSelect={() => undefined}
                   onPortDown={onPortDown}
                   onPortUp={onPortUp}
                 />
-                {(activity.counts[n.ref] ?? 0) > 0 && (
-                  <span className="livenode__count" style={{ left: n.x, top: n.y - 9 }}>
-                    {activity.counts[n.ref]}
-                  </span>
-                )}
                 {renaming?.ref === n.ref && (
                   <input
                     className="input noderename"
@@ -1323,12 +1509,12 @@ export function StudioView() {
               className={`studio__tab ${side === "converse" ? "studio__tab--on" : ""}`}
               onClick={() => setSide("converse")}
             >
-              {t("studio.tabConverse")}
+              {t("studio.tabRun")}
             </button>
           </div>
 
           {side === "converse" ? (
-            <ConversePanel />
+            <ConversePanel preferGraph={talkable} onSession={setPanelSession} />
           ) : (
           <div className="studio__pane">
           {inspecting ? (

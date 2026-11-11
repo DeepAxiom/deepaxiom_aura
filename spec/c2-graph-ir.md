@@ -39,7 +39,7 @@ Conforms to `schemas/graph-ir.schema.json`.
 - **`edges[].deadline_ms`** — v1.2, optional. How long a delivery here is worth
   waiting for. See rule 7.
 - **`edges[].priority`** — v1.2, optional integer, higher wins. Orders
-  preemption when two chains contend for one skill.
+  preemption when two chains contend for one Expertise.
 - **`context_budget`** — v1.2, optional. A cap, in estimated tokens, on the
   context a session of this graph may accumulate. See rule 8.
 
@@ -48,22 +48,22 @@ Conforms to `schemas/graph-ir.schema.json`.
 1. The executor validates the IR against the schema and against the registry (every `resolve` must be satisfiable or degradable) BEFORE instantiating a session.
 2. Schema compatibility of ports connected by an edge is validated at instantiation: `from.schema` must be compatible with `to.schema` (same ref and major).
 3. Once compiled, a planner-generated graph is indistinguishable from a declared one: same permissions, same replay, same debugger.
-4. `gate`s are a property of the graph, not skill code: the kernel holds the message, emits the question through `client.text_in` (schema `std/confirmation@1`), and resumes with the answer.
-5. **Motor-gate invariant.** An edge whose destination resolves to a skill of type `motor` (one that acts on the world) always carries a `human-approval` gate, whatever the IR says. The kernel applies this at session instantiation, so it holds identically for declared graphs, planner output, a visual editor, or any future producer. In `local` and `site` modes an omitted gate is added; in `published` mode the session is refused instead, because on a public network silently repairing the graph would hide an authoring mistake. An explicitly declared gate is preserved, never doubled.
+4. `gate`s are a property of the graph, not Expertise code: the kernel holds the message, emits the question through `client.text_in` (schema `std/confirmation@1`), and resumes with the answer.
+5. **Motor-gate invariant.** An edge whose destination resolves to an Expertise of type `motor` (one that acts on the world) always carries a `human-approval` gate, whatever the IR says. The kernel applies this at session instantiation, so it holds identically for declared graphs, planner output, a visual editor, or any future producer. In `local` and `site` modes an omitted gate is added; in `published` mode the session is refused instead, because on a public network silently repairing the graph would hide an authoring mistake. An explicitly declared gate is preserved, never doubled.
 
-   The rule is aimed at **omission** — a graph reaching a skill that acts on the world without its author ever considering the question. An author who has considered it may say so with `gate: "none"`, and the kernel adds nothing. That is not a loophole but the point: it turns an invisible default into a deliberate, greppable line in the graph that a reviewer can find. Some motor skills are unusable otherwise — speech synthesis is `motor`, and an assistant that asked permission before every spoken clause would not be one.
+   The rule is aimed at **omission** — a graph reaching an Expertise that acts on the world without its author ever considering the question. An author who has considered it may say so with `gate: "none"`, and the kernel adds nothing. That is not a loophole but the point: it turns an invisible default into a deliberate, greppable line in the graph that a reviewer can find. Some motor Expertises are unusable otherwise — speech synthesis is `motor`, and an assistant that asked permission before every spoken clause would not be one.
 
 6. **The speculation invariant.** An edge may declare `speculative: true`,
    asking the executor to deliver it on partial upstream output and to discard
    the result if the producer's final output differs. **A conforming
    implementation MUST refuse a graph that declares `speculative` on an edge
-   whose destination resolves to a skill of type `motor`.**
+   whose destination resolves to an Expertise of type `motor`.**
 
    This is the motor-gate invariant (rule 5) seen from another angle: the type
-   of skill that must wait for a human is the type that must never run ahead of
+   of Expertise that must wait for a human is the type that must never run ahead of
    certainty, because a discarded effect is not discarded. C1's five types are
    an *effect type system*, so "is this safe to run early?" is answered by the
-   manifest — statically, for every skill in the graph — rather than by the
+   manifest — statically, for every Expertise in the graph — rather than by the
    author's judgement or by a heuristic. Refused rather than silently ignored:
    an author who wrote `speculative` on an edge that sends an email has
    misunderstood something, and dropping the flag would leave them believing
@@ -91,7 +91,7 @@ Conforms to `schemas/graph-ir.schema.json`.
    converted to an absolute instant at the hop that declares it and travels on
    the envelope (C3 `deadline`). A downstream hop MAY tighten it and MUST NOT
    extend it: a chain given 200ms cannot grant itself more by adding hops. A
-   receiving skill is expected to **degrade** — fewer beams, a smaller model, a
+   receiving Expertise is expected to **degrade** — fewer beams, a smaller model, a
    coarser quantization — rather than abort, because a worse answer in time
    beats a better one after nobody is listening. An implementation MAY drop a
    `data` delivery whose deadline has already passed, and MUST NOT drop a
@@ -99,10 +99,10 @@ Conforms to `schemas/graph-ir.schema.json`.
    waiting forever is worse than a late answer.
 
 8. **The context budget is the kernel's to enforce.** When a graph declares
-   `context_budget`, the executor accounts every `data` delivery into a skill
+   `context_budget`, the executor accounts every `data` delivery into an Expertise
    against it and refuses the delivery once it is exhausted. It lives here
-   rather than in a skill's config for the same reason gates live in the
-   executor: a budget enforced by the skill holds only for skills that
+   rather than in an Expertise's config for the same reason gates live in the
+   executor: a budget enforced by the Expertise holds only for Expertises that
    remembered to implement it, and the failure mode differs everywhere — a
    truncation in one, a 413 in another, silent data loss in a third.
 

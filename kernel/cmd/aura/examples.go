@@ -76,11 +76,11 @@ type liveCatalog interface {
 
 // skillID reads a skill directory's declared id.
 //
-// Read rather than derived from the directory name: `skills/model-fit` is
+// Read rather than derived from the directory name: `expertise/model-fit` is
 // `example/sensorial/model-fit`, and any rule mapping one to the other is a
 // rule that breaks the first time somebody renames a folder.
 func skillID(dir string) string {
-	raw, err := os.ReadFile(filepath.Join(dir, "skill.yaml"))
+	raw, _, err := readManifestFile(dir)
 	if err != nil {
 		return ""
 	}
@@ -117,14 +117,38 @@ func replicas(live liveCatalog) []string {
 	return out
 }
 
+// defaultExamplesDir is where the example Expertise live in this repository.
+// It was `skills/` until the rename; a checkout that predates it still has
+// that directory, and the default follows it there.
+const (
+	defaultExamplesDir = "expertise"
+	legacyExamplesDir  = "skills"
+)
+
+// examplesDirOrLegacy maps the default directory to its old name when only
+// the old one exists. An explicit --examples-dir is never second-guessed.
+func examplesDirOrLegacy(dir string) string {
+	if dir != defaultExamplesDir {
+		return dir
+	}
+	if _, err := os.Stat(dir); err == nil {
+		return dir
+	}
+	if _, err := os.Stat(legacyExamplesDir); err == nil {
+		return legacyExamplesDir
+	}
+	return dir
+}
+
 // startExamples launches every skill under dir, in parallel, and reports what
 // happened. The returned func stops them; it is safe to call with no children.
 func startExamples(dir, wsURL, token string, live liveCatalog) (func(), []exampleResult, []string) {
+	dir = examplesDirOrLegacy(dir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return func() {}, []exampleResult{{
 			name:   filepath.Base(dir),
-			reason: fmt.Sprintf("no skills directory at %s — run from the repo root, or pass --examples-dir", dir),
+			reason: fmt.Sprintf("no examples directory at %s — run from the repo root, or pass --examples-dir", dir),
 		}}, nil
 	}
 

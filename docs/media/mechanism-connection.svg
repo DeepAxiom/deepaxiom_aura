@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" role="img" aria-labelledby="t d">
+<title id="t">The connection as the unit of work</title>
+<desc id="d">Two panels. Left, a batch run: a trigger fires, a chain of steps runs once, the result arrives whole at the end, the run tears down, and new data waits at the source until the next poll. Right, a connection that stays open: a source pushes typed envelopes through a graph continuously, the reply text grows token by token, and the downstream node reacts to each envelope while the stream is still in progress.</desc>
+<style>
+svg{--bg:#f6f6f3;--pn:#fff;--bd:#d9d9d2;--tx:#17191c;--dm:#4f5661;--ft:#7a818c;--ac:#4d7c0f;--af:#a6d92c;--gt:#b45309;--er:#c8322f;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+@media (prefers-color-scheme:dark){svg{--bg:#0d0e10;--pn:#15171a;--bd:#2a2e34;--tx:#e8eaed;--dm:#a2a9b3;--ft:#6f7782;--ac:#b8e83a;--af:#b8e83a;--gt:#f0a429;--er:#f0524f}}
+.bg{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+.pn{fill:var(--pn);stroke:var(--bd);stroke-width:1.5}
+.bx{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+text{fill:var(--tx);font-size:13px}
+.cap{fill:var(--ft);font-size:12px;letter-spacing:.12em;font-weight:600}
+.h{font-size:15px;font-weight:600}
+.s{fill:var(--dm);font-size:12.5px}
+.f{fill:var(--ft);font-size:12px}
+.m{font-family:ui-monospace,"SF Mono","Cascadia Code",Consolas,Menlo,monospace;font-size:12px}
+.c{text-anchor:middle}.e{text-anchor:end}
+.ln{stroke:var(--bd);stroke-width:1.5}
+.lv{stroke:var(--ac);stroke-width:1.5}
+.on{fill:none;stroke:var(--tx);stroke-width:2}
+.t{animation-duration:12s;animation-iteration-count:infinite;animation-timing-function:linear}
+.a0{animation-name:a0}.a1{animation-name:a1}.a2{animation-name:a2}.a3{animation-name:a3}
+@keyframes a0{0%,3%{opacity:0}5%,9%{opacity:1}12%,100%{opacity:0}}
+@keyframes a1{0%,9%{opacity:0}11%,19%{opacity:1}21%,100%{opacity:0}}
+@keyframes a2{0%,19%{opacity:0}21%,29%{opacity:1}31%,100%{opacity:0}}
+@keyframes a3{0%,29%{opacity:0}31%,37%{opacity:1}40%,100%{opacity:0}}
+.rs{animation-name:rs}@keyframes rs{0%,37%{opacity:0}39%,93%{opacity:1}97%,100%{opacity:0}}
+.ph{animation-name:ph}@keyframes ph{0%,5%{opacity:0}7%,36%{opacity:1}38%,100%{opacity:0}}
+.td{animation-name:td}@keyframes td{0%,4%{opacity:.3}6%,44%{opacity:1}48%,100%{opacity:.3}}
+.sa{animation-name:sa}@keyframes sa{0%,4%{opacity:0}6%,44%{opacity:1}47%,100%{opacity:0}}
+.sb{animation-name:sb}@keyframes sb{0%,3%{opacity:1}5%,46%{opacity:0}49%,100%{opacity:1}}
+.pb{fill:var(--dm);transform-box:fill-box;transform-origin:left center;animation-name:pb}
+@keyframes pb{0%{transform:scaleX(1);opacity:1}4%{transform:scaleX(1);opacity:0}5%{transform:scaleX(0);opacity:0}6%,47%{transform:scaleX(0);opacity:1}100%{transform:scaleX(1);opacity:1}}
+.wd{fill:var(--dm)}
+.w1{animation-name:w1}.w2{animation-name:w2}.w3{animation-name:w3}
+@keyframes w1{0%,3%{opacity:1}5%,57%{opacity:0}59%,100%{opacity:1}}
+@keyframes w2{0%,3%{opacity:1}5%,71%{opacity:0}73%,100%{opacity:1}}
+@keyframes w3{0%,3%{opacity:1}5%,85%{opacity:0}87%,100%{opacity:1}}
+.ev{fill:var(--af);stroke:var(--ac);stroke-width:1;animation:mv 1s linear infinite}
+.d5{animation-delay:-.5s}
+@keyframes mv{to{transform:translateX(62px)}}
+.pl{fill:none;stroke:var(--ac);stroke-width:2.5;animation:pl 1s linear -.5s infinite}
+@keyframes pl{0%{opacity:1}60%,100%{opacity:0}}
+.k{fill-opacity:0}
+.k1{animation-name:k1}.k2{animation-name:k2}.k3{animation-name:k3}.k4{animation-name:k4}.k5{animation-name:k5}.k6{animation-name:k6}.k7{animation-name:k7}.k8{animation-name:k8}.k9{animation-name:k9}.k10{animation-name:k10}
+@keyframes k1{0%,12.4%{fill-opacity:0}12.5%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k2{0%,20.7%{fill-opacity:0}20.8%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k3{0%,29.1%{fill-opacity:0}29.2%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k4{0%,37.4%{fill-opacity:0}37.5%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k5{0%,45.7%{fill-opacity:0}45.8%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k6{0%,54.1%{fill-opacity:0}54.2%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k7{0%,62.4%{fill-opacity:0}62.5%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k8{0%,70.7%{fill-opacity:0}70.8%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k9{0%,79.1%{fill-opacity:0}79.2%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@keyframes k10{0%,87.4%{fill-opacity:0}87.5%,95%{fill-opacity:1}98%,100%{fill-opacity:0}}
+@media (prefers-reduced-motion:reduce){*{animation-play-state:paused!important}.t{animation-delay:-7s!important}}
+</style>
+<rect class="bg" x=".75" y=".75" width="958.5" height="418.5" rx="12"/>
+<text class="cap" x="24" y="32">THE CONNECTION IS THE UNIT OF WORK</text>
+
+<rect class="pn" x="24" y="48" width="444" height="348" rx="8"/>
+<text class="h" x="44" y="78">batch run</text>
+<text class="s" x="44" y="98">a run: starts, executes, tears down</text>
+<text class="m e t sa" x="448" y="78">run active</text>
+<text class="m e t sb" x="448" y="78" style="fill:var(--ft)">torn down</text>
+<rect class="bx" x="44" y="124" width="80" height="40" rx="8"/>
+<text class="m c" x="84" y="148">trigger</text>
+<rect class="on t a0" x="44" y="124" width="80" height="40" rx="8"/>
+<g class="t td">
+<path class="ln" d="M124 144H152M232 144H260M340 144H368"/>
+<rect class="bx" x="152" y="124" width="80" height="40" rx="8"/>
+<rect class="bx" x="260" y="124" width="80" height="40" rx="8"/>
+<rect class="bx" x="368" y="124" width="80" height="40" rx="8"/>
+<text class="m c" x="192" y="148">step 1</text>
+<text class="m c" x="300" y="148">step 2</text>
+<text class="m c" x="408" y="148">output</text>
+</g>
+<rect class="on t a1" x="152" y="124" width="80" height="40" rx="8"/>
+<rect class="on t a2" x="260" y="124" width="80" height="40" rx="8"/>
+<rect class="on t a3" x="368" y="124" width="80" height="40" rx="8"/>
+<text class="f" x="44" y="190">result: whole, at the end</text>
+<rect class="bx" x="44" y="198" width="404" height="40" rx="8"/>
+<text class="f t ph" x="58" y="223">waiting for the whole reply</text>
+<text class="t rs" x="58" y="223" font-size="14">A refund of $612 just landed on order 4417.</text>
+<text class="f" x="44" y="278">idle until the next poll</text>
+<rect x="44" y="288" width="404" height="6" rx="3" fill="var(--bd)"/>
+<rect class="t pb" x="44" y="288" width="404" height="6" rx="3"/>
+<text class="f" x="44" y="330">new data waits at the source</text>
+<circle class="wd t w1" cx="50" cy="352" r="5"/>
+<circle class="wd t w2" cx="68" cy="352" r="5"/>
+<circle class="wd t w3" cx="86" cy="352" r="5"/>
+
+<rect class="pn" x="492" y="48" width="444" height="348" rx="8"/>
+<text class="h" x="512" y="78">connection</text>
+<text class="s" x="512" y="98">stays open; the source pushes as it happens</text>
+<text class="m e" x="916" y="78" style="fill:var(--ac)">open</text>
+<path class="lv" d="M596 144H672M756 144H832"/>
+<rect class="bx" x="512" y="124" width="84" height="40" rx="8" style="stroke:#4ea8f5"/>
+<rect class="bx" x="672" y="124" width="84" height="40" rx="8" style="stroke:#a78bfa"/>
+<rect class="bx" x="832" y="124" width="84" height="40" rx="8"/>
+<text class="m c" x="554" y="148">source</text>
+<text class="m c" x="714" y="148">cognitive</text>
+<text class="m c" x="874" y="148">downstream</text>
+<rect class="pl" x="832" y="124" width="84" height="40" rx="8"/>
+<rect class="ev" x="596" y="139" width="14" height="10" rx="2"/>
+<rect class="ev d5" x="756" y="139" width="14" height="10" rx="2"/>
+<text class="f" x="512" y="190">downstream reacts token by token, mid-stream</text>
+<rect class="bx" x="512" y="198" width="404" height="40" rx="8"/>
+<text x="526" y="223" font-size="14"><tspan class="k t k1">A</tspan><tspan class="k t k2"> refund</tspan><tspan class="k t k3"> of</tspan><tspan class="k t k4"> $612</tspan><tspan class="k t k5"> just</tspan><tspan class="k t k6"> landed</tspan><tspan class="k t k7"> on</tspan><tspan class="k t k8"> order</tspan><tspan class="k t k9"> 4417</tspan><tspan class="k t k10">.</tspan></text>
+<text class="f" x="512" y="278">connection open; nothing polls</text>
+<rect x="512" y="288" width="404" height="6" rx="3" fill="var(--af)" stroke="var(--ac)" stroke-width="1"/>
+<text class="f" x="512" y="330">every hop carries the same typed envelope</text>
+<text class="m" x="512" y="356" style="fill:var(--dm)">{ schema: "std/text@1", kind: "data", seq: 7 }</text>
+</svg>

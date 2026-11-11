@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" width="960" height="480" role="img" aria-labelledby="t d">
+<title id="t">Kernel gate and sealed effect ledger</title>
+<desc id="d">A data envelope heading into a motor Expertise reaches the kernel's Effect Checkpoint and is held. The kernel sends a confirm_request to the session's client, where the operator grace approves; a confirm_response returns. The kernel then appends entry seq 43 to the ledger, with prev equal to the hash of entry 42, the capability, decision gate, outcome delivered, payload_sha256 and the approver, and delivers a new envelope carrying receipt, the hash of that entry, to the motor Expertise. Entry 42 shows a gated delivery that was denied: one entry, nothing delivered.</desc>
+<style>
+svg{--bg:#f6f6f3;--pn:#fff;--bd:#d9d9d2;--tx:#17191c;--dm:#4f5661;--ft:#7a818c;--ac:#4d7c0f;--af:#a6d92c;--gt:#b45309;--er:#c8322f;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+@media (prefers-color-scheme:dark){svg{--bg:#0d0e10;--pn:#15171a;--bd:#2a2e34;--tx:#e8eaed;--dm:#a2a9b3;--ft:#6f7782;--ac:#b8e83a;--af:#b8e83a;--gt:#f0a429;--er:#f0524f}}
+.bg{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+.pn{fill:var(--pn);stroke:var(--bd);stroke-width:1.5}
+.bx{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+text{fill:var(--tx);font-size:13px}
+.cap{fill:var(--ft);font-size:12px;letter-spacing:.12em;font-weight:600}
+.h{font-size:14px;font-weight:600}
+.s{fill:var(--dm);font-size:12.5px}
+.f{fill:var(--ft);font-size:12px}
+.m{font-family:ui-monospace,"SF Mono","Cascadia Code",Consolas,Menlo,monospace;font-size:12px}
+.m text{font-size:12px}
+.k{fill:var(--ft)}.hv{fill:var(--ac);font-weight:600}
+.c{text-anchor:middle}.e{text-anchor:end}
+.ln{stroke:var(--bd);stroke-width:1.5;fill:none}
+.ar{fill:var(--bd)}
+.oa{fill:none;stroke:var(--ac);stroke-width:2}
+.og{fill:none;stroke:var(--gt);stroke-width:2}
+.gt{fill:var(--gt)}.act{fill:var(--ac)}
+.dot{fill:var(--gt)}
+.t{animation-duration:12s;animation-iteration-count:infinite;animation-timing-function:linear}
+.ea{animation-name:ea}@keyframes ea{0%{opacity:0;transform:translateX(0)}2%{opacity:1;transform:translateX(0)}12%,62%{opacity:1;transform:translateX(98px)}65%,100%{opacity:0;transform:translateX(98px)}}
+.eh{animation-name:eh}@keyframes eh{0%,12%{opacity:0}13.5%,61%{opacity:1}64%,100%{opacity:0}}
+.c1{animation-name:c1}@keyframes c1{0%,11%{opacity:0}12%,17%{opacity:1}19%,100%{opacity:0}}
+.c2{animation-name:c2}@keyframes c2{0%,15%{opacity:0}17%,47%{opacity:1}49%,100%{opacity:0}}
+.c3{animation-name:c3}@keyframes c3{0%,47%{opacity:0}49%,61%{opacity:1}63%,100%{opacity:0}}
+.c4{animation-name:c4}@keyframes c4{0%,61%{opacity:0}63%,76%{opacity:1}78%,100%{opacity:0}}
+.rq{animation-name:rq}@keyframes rq{0%,16%{opacity:0;transform:translateY(0)}17%{opacity:1;transform:translateY(0)}25%{opacity:1;transform:translateY(-44px)}27%,100%{opacity:0;transform:translateY(-44px)}}
+.rql{animation-name:rql}@keyframes rql{0%,16%{opacity:0}17%,44%{opacity:1}47%,100%{opacity:0}}
+.hq{animation-name:hq}@keyframes hq{0%,25%{opacity:0}27%,92%{opacity:1}95%,100%{opacity:0}}
+.hn{animation-name:hn}@keyframes hn{0%,24%{opacity:1}26%,94%{opacity:0}96%,100%{opacity:1}}
+.ap{animation-name:ap}@keyframes ap{0%,37%{opacity:0}38%,92%{opacity:1}95%,100%{opacity:0}}
+.rs{animation-name:rs}@keyframes rs{0%,38%{opacity:0;transform:translateY(0)}39%{opacity:1;transform:translateY(0)}47%{opacity:1;transform:translateY(44px)}49%,100%{opacity:0;transform:translateY(44px)}}
+.rsl{animation-name:rsl}@keyframes rsl{0%,38%{opacity:0}39%,60%{opacity:1}63%,100%{opacity:0}}
+.sp{stroke:var(--ac);stroke-width:1.5;fill:none;stroke-dasharray:376;animation-name:sp}@keyframes sp{0%,48%{stroke-dashoffset:376;opacity:1}54%,92%{stroke-dashoffset:0;opacity:1}95%,100%{stroke-dashoffset:0;opacity:0}}
+.en{animation-name:en}@keyframes en{0%,53%{opacity:0}55%,93%{opacity:1}96%,100%{opacity:0}}
+.es{animation-name:es}@keyframes es{0%,52%{opacity:1}54%,95%{opacity:0}97%,100%{opacity:1}}
+.eb{animation-name:eb}@keyframes eb{0%,62%{opacity:0;transform:translateX(0)}63.5%{opacity:1;transform:translateX(0)}73%,92%{opacity:1;transform:translateX(108px)}95%,100%{opacity:0;transform:translateX(108px)}}
+.rc{animation-name:rc}@keyframes rc{0%,62%{opacity:0}64%,92%{opacity:1}95%,100%{opacity:0}}
+.dv{animation-name:dv}@keyframes dv{0%,72%{opacity:0}73%,92%{opacity:1}95%,100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){*{animation-play-state:paused!important}.t{animation-delay:-9.6s!important}}
+</style>
+<rect class="bg" x=".75" y=".75" width="958.5" height="478.5" rx="12"/>
+<text class="cap" x="24" y="32">KERNEL GATE + SEALED LEDGER</text>
+
+<text class="f" x="32" y="66">only deliveries into motor.* are sealed;</text>
+<text class="f" x="32" y="84">other traffic stays in the causal event log</text>
+<text class="f" x="610" y="66">deny: one entry is sealed with outcome denied;</text>
+<text class="f" x="610" y="84">nothing is delivered</text>
+
+<rect class="pn" x="330" y="44" width="260" height="80" rx="8"/>
+<text class="h" x="346" y="65">client · operator grace</text>
+<text class="f t hn" x="346" y="88">nothing pending</text>
+<g class="t hq">
+<text class="m" x="346" y="86">Approve delivery to erp.in?</text>
+<rect class="bx" x="346" y="96" width="70" height="20" rx="6"/>
+<rect class="bx" x="424" y="96" width="50" height="20" rx="6"/>
+<text class="m c" x="381" y="110">approve</text>
+<text class="m c" x="449" y="110">deny</text>
+</g>
+<rect class="oa t ap" x="346" y="96" width="70" height="20" rx="6"/>
+
+<path class="ln" d="M420 168V124M500 124V168"/>
+<path class="ar" d="M415 131l5-7 5 7zM495 161l5 7 5-7z"/>
+<circle class="dot t rq" cx="420" cy="168" r="4.5"/>
+<circle class="dot t rs" cx="500" cy="124" r="4.5"/>
+<text class="m e gt t rql" x="408" y="151">confirm_request</text>
+<text class="m gt t rsl" x="512" y="151">confirm_response</text>
+
+<path class="ln" d="M180 216H330M590 216H760"/>
+<path class="ar" d="M323 211l7 5-7 5zM753 211l7 5-7 5z"/>
+<rect class="pn" x="330" y="168" width="260" height="96" rx="8"/>
+<text class="h" x="346" y="188">kernel · Effect Checkpoint</text>
+<rect class="bx" x="346" y="196" width="112" height="22" rx="6"/>
+<rect class="bx" x="462" y="196" width="112" height="22" rx="6"/>
+<rect class="bx" x="346" y="226" width="112" height="22" rx="6"/>
+<rect class="bx" x="462" y="226" width="112" height="22" rx="6"/>
+<text class="m c" x="402" y="211">1 classify</text>
+<text class="m c" x="518" y="211">2 authorize</text>
+<text class="m c" x="402" y="241">3 attest</text>
+<text class="m c" x="518" y="241">4 deliver</text>
+<rect class="oa t c1" x="346" y="196" width="112" height="22" rx="6"/>
+<rect class="og t c2" x="462" y="196" width="112" height="22" rx="6"/>
+<rect class="oa t c3" x="346" y="226" width="112" height="22" rx="6"/>
+<rect class="oa t c4" x="462" y="226" width="112" height="22" rx="6"/>
+
+<rect class="pn" x="32" y="184" width="148" height="64" rx="8" style="stroke:#a78bfa"/>
+<text class="h c" x="106" y="211">Expertise</text>
+<text class="m c" x="106" y="231" style="fill:var(--dm)">cognitive</text>
+<rect class="pn" x="760" y="184" width="168" height="64" rx="8" style="stroke:#f9735b"/>
+<text class="h c" x="844" y="211">Expertise</text>
+<text class="m c" x="844" y="231" style="fill:var(--dm)">motor.erp.write</text>
+<rect class="oa t dv" x="760" y="184" width="168" height="64" rx="8"/>
+
+<g class="t ea">
+<rect class="bx" x="184" y="205" width="44" height="22" rx="5" style="fill:var(--pn);stroke:var(--dm)"/>
+<rect class="og t eh" x="184" y="205" width="44" height="22" rx="5"/>
+<text class="m c" x="206" y="220">data</text>
+</g>
+<text class="c gt t eh" x="255" y="197" font-size="12.5">held, not delivered</text>
+<g class="t eb">
+<rect x="596" y="205" width="52" height="22" rx="5" fill="var(--pn)" stroke="var(--ac)" stroke-width="1.5"/>
+<path d="M640 205.75h3a4.25 4.25 0 0 1 4.25 4.25v12a4.25 4.25 0 0 1-4.25 4.25h-3z" fill="var(--ac)"/>
+<text class="m c" x="618" y="220">data</text>
+</g>
+<text class="m c act t rc" x="675" y="197">receipt: sha256:c41d…</text>
+
+<path class="t sp" d="M460 264V290H793V304"/>
+<path class="act t en" d="M788 300l5 8 5-8z"/>
+<text class="f" x="474" y="283">Seal(): append entry, return its hash as receipt</text>
+<text class="f" x="32" y="298">ledger: each entry's prev is the previous entry's hash</text>
+
+<g class="m">
+<rect class="pn" x="32" y="308" width="270" height="156" rx="8"/>
+<text class="k" x="46" y="330">seq</text><text x="160" y="330">41</text>
+<text class="k" x="46" y="346">prev</text><text x="160" y="346">sha256:07be…</text>
+<text class="k" x="46" y="362">capability</text><text x="160" y="362">motor.mail.send</text>
+<text class="k" x="46" y="378">decision</text><text x="160" y="378">allow</text>
+<text class="k" x="46" y="394">outcome</text><text x="160" y="394">delivered</text>
+<text class="k" x="46" y="410">payload_sha256</text><text x="160" y="410">e3a1…</text>
+<path class="ln" d="M32 438H302"/>
+<text class="k" x="46" y="455">hash(entry)</text><text class="hv" x="160" y="455">sha256:5d10…</text>
+
+<rect class="pn" x="345" y="308" width="270" height="156" rx="8"/>
+<text class="k" x="359" y="330">seq</text><text x="473" y="330">42</text>
+<text class="k" x="359" y="346">prev</text><text class="hv" x="473" y="346">sha256:5d10…</text>
+<text class="k" x="359" y="362">capability</text><text x="473" y="362">motor.erp.write</text>
+<text class="k" x="359" y="378">decision</text><text x="473" y="378">gate</text>
+<text class="k" x="359" y="394">outcome</text><text x="473" y="394">denied</text>
+<text class="k" x="359" y="410">payload_sha256</text><text x="473" y="410">70cf…</text>
+<path class="ln" d="M345 438H615"/>
+<text class="k" x="359" y="455">hash(entry)</text><text class="hv" x="473" y="455">sha256:9f2a…</text>
+
+<rect class="t es" x="658" y="308" width="270" height="156" rx="8" fill="none" stroke="var(--bd)" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text class="k c t es" x="793" y="390">next entry: seq 43</text>
+<g class="t en">
+<rect class="pn" x="658" y="308" width="270" height="156" rx="8" style="stroke:var(--ac)"/>
+<text class="k" x="672" y="330">seq</text><text x="786" y="330">43</text>
+<text class="k" x="672" y="346">prev</text><text class="hv" x="786" y="346">sha256:9f2a…</text>
+<text class="k" x="672" y="362">capability</text><text x="786" y="362">motor.erp.write</text>
+<text class="k" x="672" y="378">decision</text><text x="786" y="378">gate</text>
+<text class="k" x="672" y="394">outcome</text><text x="786" y="394">delivered</text>
+<text class="k" x="672" y="410">payload_sha256</text><text x="786" y="410">b5b3…</text>
+<text class="k" x="672" y="426">approver</text><text x="786" y="426">grace (signed)</text>
+<path class="ln" d="M658 438H928"/>
+<text class="k" x="672" y="455">hash(entry)</text><text class="hv" x="786" y="455">sha256:c41d…</text>
+<path d="M615 451C640 451 632 342 652 342" fill="none" stroke="var(--ac)" stroke-width="1.5"/>
+<path class="act" d="M650 337l8 5-8 5z"/>
+</g>
+<path d="M302 451C327 451 319 342 339 342" fill="none" stroke="var(--ac)" stroke-width="1.5"/>
+<path class="act" d="M337 337l8 5-8 5z"/>
+</g>
+</svg>

@@ -19,19 +19,20 @@ Exits 0 when conformant; 1 with the list of failures.
 
 ## Coverage
 
-59 checks in total, in these sections:
+67 checks in total, in these sections:
 
 | Section | Checks |
 |---|---|
-| Vectors vs the C1/C2/C3 JSON Schemas | valid/invalid manifests, IRs, and envelopes (15) |
+| Vectors vs the C1/C2/C3 JSON Schemas | valid/invalid manifests, IRs, and envelopes (19) — including a `trace` context and an attested `usage` block, well-formed and not |
 | Vectors vs the `std` payload schemas | valid/invalid text, transcript, audio-chunk (10) |
 | Health | protocol and IR majors declared |
 | C1 | rejection of invalid manifests (missing description, unknown protocol, port without schema); registration and catalog |
 | C2 | rejection of invalid IR (duplicate refs, ghost refs, unknown major); graph registration |
-| C3 | round-trip with causality (`cause_id`), complete envelope to the skill, FIFO, at-least-once dedup by `idem`, event log with causal closure |
+| C3 | round-trip with causality (`cause_id`), complete envelope to the Expertise, FIFO, at-least-once dedup by `idem`, event log with causal closure |
 | Resolution | missing capability → explained error; incompatible schemas on an edge → session rejected |
 | Gates | `confirm_request` → approve delivers / deny produces an error |
-| C3 — cancel | cancel reaches a skill past the first hop, carries the `cause_id` that skill recognises, and nothing from the cancelled chain reaches the client |
+| C3 — cancel | cancel reaches an Expertise past the first hop, carries the `cause_id` that Expertise recognises, and nothing from the cancelled chain reaches the client |
+| C3 — trace (v1.7) | a client's `traceparent` reaches the Expertise and comes back on the reply though the Expertise never echoed it; a chain with none carries no field; a malformed one is dropped and the delivery still happens |
 
 ## Vector convention
 

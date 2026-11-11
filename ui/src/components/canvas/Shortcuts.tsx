@@ -39,6 +39,7 @@ export const SHORTCUTS: { id: string; keys: string }[] = [
   { id: "disable", keys: "D" },
   { id: "frame", keys: "G" },
   { id: "history", keys: "H" },
+  { id: "search", keys: "/" },
   { id: "help", keys: "?" },
 ];
 
@@ -57,7 +58,7 @@ export function Shortcuts({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   return (
-    <div className="shortcuts__scrim" onPointerDown={onClose}>
+    <div className="scrim shortcuts__scrim" onPointerDown={onClose}>
       <div className="shortcuts" onPointerDown={(e) => e.stopPropagation()} role="dialog">
         <header className="shortcuts__head">
           <span>{t("studio.shortcuts")}</span>

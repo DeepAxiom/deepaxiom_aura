@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: no CGO, single-binary friendly
@@ -34,6 +35,14 @@ type Store struct {
 	// The effect ledger deliberately stays in SQLite: a bug here loses replay
 	// history, a bug there loses evidence.
 	evlog *seglog.Log
+	// evlogDir and evlogOpt are what OpenEventLog needs when the log's
+	// opening was deferred until the write lease was held.
+	evlogDir string
+	evlogOpt seglog.Options
+	// eventObserver, when set, is offered every appended event — the live
+	// trace exporter. An atomic pointer so the hottest write path in the
+	// kernel pays one load and a nil check when nobody is listening.
+	eventObserver atomic.Pointer[EventObserver]
 	// w batches the two writes that sit on the delivery path — the causal
 	// event log and the effect ledger — into shared transactions. See
 	// groupcommit.go for why this costs no durability and no ordering.
@@ -86,6 +95,10 @@ type Options struct {
 	// EventLogSegmentBytes is the rotation threshold. Zero means the seglog
 	// default. Exposed mainly so tests can rotate without writing 128 MiB.
 	EventLogSegmentBytes int64
+	// DeferEventLog leaves the causal event log closed until OpenEventLog is
+	// called. A node sets it so the log is opened only after the write lease
+	// is held; see OpenEventLog for why opening it earlier is unsafe.
+	DeferEventLog bool
 }
 
 // OpenWith opens the embedded state with explicit options.
@@ -138,18 +151,43 @@ func OpenWith(dataDir string, opt Options) (*Store, error) {
 	// synchronous=FULL means the operator asked for durability across a power
 	// cut; the event log honours the same request rather than quietly keeping
 	// the weaker guarantee.
-	evlog, err := seglog.OpenWith(dataDir, seglog.Options{
+	s.evlogDir = dataDir
+	s.evlogOpt = seglog.Options{
 		Sync:         sync == "FULL" || sync == "EXTRA",
 		SegmentBytes: opt.EventLogSegmentBytes,
 		MaxBytes:     opt.EventLogMaxBytes,
-	})
-	if err != nil {
+	}
+	if opt.DeferEventLog {
+		return s, nil
+	}
+	if err := s.OpenEventLog(); err != nil {
 		s.w.Close()
 		db.Close()
 		return nil, err
 	}
-	s.evlog = evlog
 	return s, nil
+}
+
+// OpenEventLog opens the causal event log of a store opened with
+// DeferEventLog. A no-op if it is already open.
+//
+// Opening the log is not a read. Recovery scans the active segment and
+// truncates a torn tail, which is exactly right for the process that owns the
+// directory and exactly wrong for any other: a second process doing it while
+// the writer is mid-append can cut off a record that was about to be
+// complete. So a node takes the write lease first and opens the log only once
+// it is the writer — which is also what lets a standby wait beside a live
+// leader, indefinitely, without touching a file it could damage.
+func (s *Store) OpenEventLog() error {
+	if s.evlog != nil {
+		return nil
+	}
+	evlog, err := seglog.OpenWith(s.evlogDir, s.evlogOpt)
+	if err != nil {
+		return err
+	}
+	s.evlog = evlog
+	return nil
 }
 
 // EventLogStats reports what the causal event log is holding on disk and in
@@ -750,10 +788,34 @@ func (s *Store) LoadSkillConfig(skillID string) (map[string]any, error) {
 // has it, and re-decoding JSON on the hottest write path in the kernel to
 // recover a field it just serialised is work for nothing.
 func (s *Store) AppendEvent(session, msgID, causeID, kind string, envelope []byte) error {
-	return s.evlog.Append(seglog.Entry{
+	ts := time.Now().UnixMilli()
+	err := s.evlog.Append(seglog.Entry{
 		Session: session, MsgID: msgID, CauseID: causeID, Kind: kind,
-		TS: time.Now().UnixMilli(), Envelope: envelope,
+		TS: ts, Envelope: envelope,
 	})
+	// After the append and only on success: an observer sees what the log
+	// holds, never something the log refused.
+	if err == nil {
+		if obs := s.eventObserver.Load(); obs != nil {
+			(*obs)(session, envelope, ts)
+		}
+	}
+	return err
+}
+
+// EventObserver is told about every event the causal log accepted. It runs on
+// the delivery path, so it must return immediately — hand the bytes to a
+// queue and do the work elsewhere. The slice must not be modified.
+type EventObserver func(session string, envelope []byte, tsMillis int64)
+
+// SetEventObserver installs (or, with nil, removes) the observer. Safe to call
+// while events are flowing.
+func (s *Store) SetEventObserver(fn EventObserver) {
+	if fn == nil {
+		s.eventObserver.Store(nil)
+		return
+	}
+	s.eventObserver.Store(&fn)
 }
 
 // SessionEvents returns the raw envelopes of a session in causal-log order,
@@ -781,6 +843,23 @@ func (s *Store) SessionEvents(session string, limit int) ([]json.RawMessage, []i
 		times = append(times, e.TS)
 	}
 	return out, times, nil
+}
+
+// SessionEventsTail returns the last `limit` envelopes of a session's causal
+// log, oldest first. See seglog.Log.SessionTail.
+func (s *Store) SessionEventsTail(session string, limit int) ([]json.RawMessage, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	entries, err := s.evlog.SessionTail(session, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]json.RawMessage, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, json.RawMessage(e.Envelope))
+	}
+	return out, nil
 }
 
 // legacySessionEvents reads the pre-seglog events table.
@@ -1365,6 +1444,15 @@ func (s *Store) AcquireWriteLease(ttl time.Duration) (*lease.Holder, error) {
 // it. See lease.AcquireWaiting.
 func (s *Store) AcquireWriteLeaseWaiting(ttl, maxWait time.Duration) (*lease.Holder, time.Duration, error) {
 	return lease.AcquireWaiting(s.db, ttl, maxWait)
+}
+
+// AcquireWriteLeaseStandby is for a node that stands ready to replace a live
+// one: it waits without bound and takes over the moment the holder's
+// heartbeat expires or its process is known to be gone. See
+// lease.AcquireStandby.
+func (s *Store) AcquireWriteLeaseStandby(ttl time.Duration, stop <-chan struct{},
+	watching func(lease.Info)) (*lease.Holder, lease.StandbyResult, error) {
+	return lease.AcquireStandby(s.db, ttl, stop, watching)
 }
 
 // WriteLeaseHolder reports who currently holds this directory, without taking

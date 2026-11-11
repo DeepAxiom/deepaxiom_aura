@@ -2,17 +2,15 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"aura/kernel/internal/channel"
+	"aura/kernel/internal/otel"
 )
 
 // cmdTrace — export a session's causal event log as OpenTelemetry traces
@@ -78,18 +76,11 @@ func cmdTrace(args []string) {
 
 // spanID derives a stable OTel id from an envelope id (16 hex chars);
 // traceID from the session (32 hex chars). OTLP/JSON encodes ids as hex.
-func spanID(envelopeID string) string {
-	sum := sha256.Sum256([]byte("span:" + envelopeID))
-	return hex.EncodeToString(sum[:8])
-}
+func spanID(envelopeID string) string { return otel.SpanID(envelopeID) }
 
-func traceID(session string) string {
-	sum := sha256.Sum256([]byte("trace:" + session))
-	return hex.EncodeToString(sum[:16])
-}
+func traceID(session string) string { return otel.TraceID(session) }
 
 func buildOTLP(session string, events []json.RawMessage, times []int64) map[string]any {
-	tid := traceID(session)
 	spans := make([]map[string]any, 0, len(events))
 	known := map[string]bool{}
 	var parsed []channel.Envelope
@@ -100,59 +91,38 @@ func buildOTLP(session string, events []json.RawMessage, times []int64) map[stri
 			known[e.ID] = true
 		}
 	}
+	// C3 v1.7: a chain whose client supplied a trace context is exported
+	// under that trace, so it joins the caller's instead of standing alone.
+	traces := otel.ChainTraces(parsed)
 	for i, e := range parsed {
-		ts := time.Now().UnixMilli()
+		var ts int64
 		if i < len(times) && times[i] > 0 {
 			ts = times[i]
 		}
-		startNano := ts * int64(time.Millisecond)
-		name := e.Kind
-		if e.Node != "" {
-			name = e.Node
-			if e.Port != "" {
-				name += "." + e.Port
-			}
-			name += " " + e.Kind
-		}
-		span := map[string]any{
-			"traceId":           tid,
-			"spanId":            spanID(e.ID),
-			"name":              name,
-			"kind":              1, // SPAN_KIND_INTERNAL
-			"startTimeUnixNano": fmt.Sprint(startNano),
-			"endTimeUnixNano":   fmt.Sprint(startNano + int64(time.Millisecond)),
-			"attributes": []map[string]any{
-				strAttr("aura.kind", e.Kind),
-				strAttr("aura.node", e.Node),
-				strAttr("aura.port", e.Port),
-				strAttr("aura.schema", e.Schema),
-				strAttr("aura.envelope_id", e.ID),
-				strAttr("aura.payload", payloadPreview(e.Payload, 200)),
-			},
-		}
-		// Parent span = causal parent, when it exists in this session.
-		if e.CauseID != "" && known[e.CauseID] {
-			span["parentSpanId"] = spanID(e.CauseID)
+		in := otel.SpanInput{
+			Session: session, Envelope: e, TSMillis: ts,
+			// Parent span = causal parent, when it exists in this session.
+			ParentKnown: e.CauseID != "" && known[e.CauseID],
+			Trace:       traces[e.ID],
+			Payload:     payloadPreview(e.Payload, 200),
 		}
 		if e.Kind == channel.KindError {
-			span["status"] = map[string]any{"code": 2, "message": payloadPreview(e.Payload, 120)}
+			in.ErrorMessage = payloadPreview(e.Payload, 120)
 		}
-		spans = append(spans, span)
+		spans = append(spans, otel.Span(in))
 	}
-	return map[string]any{
-		"resourceSpans": []map[string]any{{
-			"resource": map[string]any{"attributes": []map[string]any{
-				strAttr("service.name", "aura"),
-				strAttr("aura.session", session),
-			}},
-			"scopeSpans": []map[string]any{{
-				"scope": map[string]any{"name": "aura.causal-log", "version": version},
-				"spans": spans,
-			}},
-		}},
-	}
+	return otel.Document(
+		[]map[string]any{strAttr("aura.session", session)}, version, spans)
 }
 
-func strAttr(key, value string) map[string]any {
-	return map[string]any{"key": key, "value": map[string]any{"stringValue": value}}
+func strAttr(key, value string) map[string]any { return otel.StrAttr(key, value) }
+
+// firstNonEmpty returns the first argument that is not blank.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

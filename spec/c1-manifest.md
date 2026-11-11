@@ -1,11 +1,11 @@
-# C1 — Skill Manifest (frozen contract)
+# C1 — Expertise Manifest (frozen contract)
 
 **Protocol major: 1 · Status: v1.7 — FROZEN (2026-09-04: `std/image-study@1` and `std/imaging-finding@1` added — additive, the imaging reader; 2026-09-04: `std/media-asset@1` added — additive, the media subsystem; v1.6 2026-09-02: `std/confirmation@1` gained optional `context_required`, so a gate can say what an approval must bind before a person answers rather than after — additive, C4 v1.7; v1.5 2026-08-02: `std/db-change@1` added — additive, Phase 3 Postgres CDC; 2026-08-02: `std/confirmation@1` gained optional `to_ref`/`to_port` — additive, Phase 2 session resume; 2026-08-01: `compensates` added — additive; 2026-08-01: the `std` namespace became executable JSON Schemas, `std/transcript@1` added, `std/audio-chunk@1` gained optional `channels`/`seq`/`ref` — all additive; 2026-07-30: `config` added; base v1.0 frozen 2026-07-14). Changes: additive only; breaking = new major via RFC.**
 
-A **Skill** is the system's atomic unit of function: something the system *knows how to do*.
-Every skill is described by a `skill.yaml` file conforming to `schemas/manifest.schema.json`.
+A **Expertise** is the system's atomic unit of function: something the system *knows how to do*.
+Every Expertise is described by a `expertise.yaml` file conforming to `schemas/manifest.schema.json`.
 
-## Skill types
+## Expertise types
 
 | `type` | What it does | Examples |
 |---|---|---|
@@ -73,15 +73,15 @@ signature: null                   # required by the registry in published mode
 
 ## Runtime config (optional, additive)
 
-`config` declares what a skill's parameters *can* be — type, default, bounds —
+`config` declares what an Expertise's parameters *can* be — type, default, bounds —
 so the UI and any config file can discover and validate them without reading
-the skill's source. It does NOT declare their current value: a manifest is an
+the Expertise's source. It does NOT declare their current value: a manifest is an
 immutable package (rule 1), so a live value can't live inside it.
 
 Effective values are resolved outside the manifest, by whichever kernel the
-skill connects to, in ascending priority:
+Expertise connects to, in ascending priority:
 
-1. `default` from the declared `config` entry above (ships with the skill).
+1. `default` from the declared `config` entry above (ships with the Expertise).
 2. A value for that key in the kernel's `--config` file, if one was given at
    `aura up` — reproducible, git-friendly, re-read at every kernel start.
 3. A value set live via `PUT /v1/skills/config?id=<id>` (the control-plane UI
@@ -93,14 +93,14 @@ validation path and the HTTP endpoint — capability-based, like `permissions`:
 nothing undeclared is accepted.
 
 **Transport.** The kernel computes the effective config and includes it in
-the `payload.config` field of the `status` envelope that acks a skill's
-`register` (C3) — a skill reads its starting values off that ack. If a value
-changes later while the skill is connected, the kernel pushes a `kind:
+the `payload.config` field of the `status` envelope that acks an Expertise's
+`register` (C3) — an Expertise reads its starting values off that ack. If a value
+changes later while the Expertise is connected, the kernel pushes a `kind:
 "config_update"` envelope (C3, additive) on that same connection, payload =
-the full new effective config; a skill applies it live unless the changed
+the full new effective config; an Expertise applies it live unless the changed
 key(s) are all `restart_required: true`, in which case picking it up needs a
-reconnect. A skill that never reads `config` at all keeps working exactly as
-before — this is opt-in, not a breaking change to existing skills.
+reconnect. An Expertise that never reads `config` at all keeps working exactly as
+before — this is opt-in, not a breaking change to existing Expertises.
 
 ## Compensation (optional, additive; read by [C4](c4-ledger.md))
 
@@ -110,20 +110,20 @@ compensates:
   schema: "myorg/erp-undo@1"        # SHOULD match that port's declared schema
 ```
 
-A `motor` skill MAY declare how one of its effects is undone. `port` names an
-ingress port the skill already declares under `ports.ingress`, carrying
-whatever shape that skill needs to reverse itself — there is no standard
+A `motor` Expertise MAY declare how one of its effects is undone. `port` names an
+ingress port the Expertise already declares under `ports.ingress`, carrying
+whatever shape that Expertise needs to reverse itself — there is no standard
 `compensation` schema, because undoing an invoice and undoing a spoken sentence
 have nothing in common. A future `aura undo` (see
 `aura undo`) replays a payload onto that port. Declaring this
-changes nothing about how the skill runs today — the field is metadata, read by
+changes nothing about how the Expertise runs today — the field is metadata, read by
 the kernel's effect ledger ([C4](c4-ledger.md)) at the moment an effect is
 sealed, so an entry in the ledger can say whether that specific effect is
 reversible at all. A
-skill with no `compensates` is simply recorded as irreversible, which is itself
+Expertise with no `compensates` is simply recorded as irreversible, which is itself
 useful information for an operator reading the ledger back.
 
-Only `motor` skills may declare it — the field is meaningless on a skill that
+Only `motor` Expertises may declare it — the field is meaningless on an Expertise that
 does not act on the world, and the kernel rejects a manifest that tries.
 
 ## Minimal standard schemas (namespace `std`, v1)

@@ -23,6 +23,7 @@ import (
 
 	"aura/media/internal/assets"
 	"aura/media/internal/ingest"
+	"aura/media/internal/live"
 	"aura/media/internal/queue"
 	"aura/media/internal/store"
 )
@@ -35,6 +36,10 @@ type Server struct {
 	Ingest  *ingest.Ingestor
 	Log     *slog.Logger
 	Version string
+	// Live is the live-stream manager, or nil on a node that was not started
+	// with somewhere for a broadcaster to connect. The routes exist either
+	// way and say so when it is nil.
+	Live *live.Manager
 
 	// Token is the bearer credential the control surface requires. Empty means
 	// the node was started with --no-auth, which is a deliberate act and is
@@ -72,6 +77,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/assets", s.auth(s.listAssets))
 	mux.HandleFunc("GET /v1/assets/{id}", s.auth(s.getAsset))
 	mux.HandleFunc("GET /v1/queue", s.auth(s.queueDepth))
+	mux.HandleFunc("POST /v1/live", s.auth(s.createLive))
+	mux.HandleFunc("GET /v1/live", s.auth(s.listLive))
+	mux.HandleFunc("GET /v1/live/{id}", s.auth(s.getLive))
+	mux.HandleFunc("POST /v1/live/{id}/end", s.auth(s.endLive))
 	mux.HandleFunc("GET /v1/version", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"service": "aura-media", "version": s.Version})
 	}))
@@ -268,19 +277,58 @@ func (s *Server) serveObject(prefix string) http.HandlerFunc {
 		}
 		defer body.Close()
 		w.Header().Set("Content-Type", contentType(clean))
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		// A segment never changes: it is written once under a key that contains
 		// the asset id. A playlist for a finished VOD does not change either,
 		// but it is the file a player re-reads, so it gets a shorter life.
 		if strings.HasSuffix(clean, ".m3u8") {
-			w.Header().Set("Cache-Control", "public, max-age=60")
-		} else {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			// A playlist is a few kilobytes and what it says decides how long
+			// it may be cached, so it is read before the headers are written.
+			text, err := io.ReadAll(io.LimitReader(body, maxPlaylistBytes))
+			if err != nil {
+				writeProblem(w, http.StatusInternalServerError, "The playlist could not be read.")
+				return
+			}
+			w.Header().Set("Cache-Control", PlaylistCacheControl(text))
+			w.Header().Set("Content-Length", strconv.Itoa(len(text)))
+			if _, err := w.Write(text); err != nil {
+				s.Log.Debug("client went away mid-object", "key", clean, "error", err)
+			}
+			return
 		}
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		if _, err := io.Copy(w, body); err != nil {
 			s.Log.Debug("client went away mid-object", "key", clean, "error", err)
 		}
 	}
+}
+
+// maxPlaylistBytes bounds what serveObject will hold in memory for one
+// playlist. A day-long stream in two-second segments is about a megabyte and a
+// half of playlist; anything past this is not one.
+const maxPlaylistBytes = 16 << 20
+
+// PlaylistCacheControl decides how long a playlist may be cached, from what it
+// says.
+//
+// Until 0.2.0 every playlist here was a finished VOD's and a minute was right
+// for all of them. A playlist that is still being added to — a live stream, or
+// an encode that publishes as it goes — is a different thing: a player polls
+// it once per segment to learn about the next one, and a copy a minute old
+// tells it the stream stopped a minute ago. Those get one second: short enough
+// that no player is ever shown a stale edge, long enough that a CDN in front
+// of this node collapses ten thousand viewers' polls into one request a second
+// to the origin, which is the entire scaling story for viewers.
+//
+// What marks a playlist as still growing is that it is a media playlist
+// (it has a target duration) with no ENDLIST. A master playlist has neither,
+// names the same rungs for the whole life of the asset, and keeps the minute.
+func PlaylistCacheControl(text []byte) string {
+	const marker, end = "#EXT-X-TARGETDURATION", "#EXT-X-ENDLIST"
+	if strings.Contains(string(text), marker) && !strings.Contains(string(text), end) {
+		return "public, max-age=1"
+	}
+	return "public, max-age=60"
 }
 
 // assetView is what the API returns: the asset, plus the state of the work

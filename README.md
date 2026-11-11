@@ -1,292 +1,315 @@
-# Deep Axiom
+# AURA
 
-### Deploy assistants and automations that run live — and can prove what they did.
+### The operating system for autonomous robots.
 
-[Download v0.3.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0) · [Quick start](QUICKSTART.md) · [Full guide](GUIDE.md) ·
-[Versión en español](README-ES.md) · [Milestone status](GUIDE.md#milestone-status) ·
-[Roadmap](ROADMAP.md) · **v0.3.0 — pre-1.0, pre-production**
+Fast enough to be in the loop. Every decision traceable to what argued for it.
+Nothing acts on the world that the node did not check first.
+
+[Quick start](QUICKSTART.md) · [Full guide](GUIDE.md) · [Roadmap](ROADMAP.md) ·
+[Milestone status](GUIDE.md#milestone-status) · [Versión en español](README-ES.md) ·
+**v0.4.0 — pre-1.0, pre-production**
+
+<!-- UI-HERO -->
+<p align="center"><img src="docs/media/studio-live.gif" alt="The control plane: a graph running live, tokens streaming on the node that produces them, a gated edge into a motor Expertise" width="900"></p>
+<!-- /UI-HERO -->
 
 ---
 
-## Start without adopting anything
+## What it is, and what it is today
 
-Your agent already calls MCP servers. Put them behind a checkpoint with one
-command — no runtime to stand up, no port to pick, no rewrite:
+A machine that acts on its own has three problems. Perceiving and moving have
+had good answers for years — the robot's middleware and its controllers.
+**Deciding** is newer: the models are large, share one accelerator, and are
+replaced every few months. And **answering for what it did** is the one nobody
+builds first, which is a mistake, because a system that was not designed to
+emit that evidence cannot do so later without rebuilding how it executes.
+
+AURA is the layer for the last two. One binary that runs the models that
+decide, carries what they see and say as live typed streams, and stands between
+every decision and the actuator.
+
+**Read this before the rest.** Today it is the decision layer, with the
+evidence built in. It has not driven a physical robot in anything this
+repository tests, and the bridge to a robot's middleware is the
+[first item on the roadmap](ROADMAP.md#the-robot-itself), not something that
+exists. It is not a hard-real-time controller and will not become one: the
+servo loop stays on the robot. What AURA controls is what that controller is
+*asked* to do, and what the record says it did.
+
+Everything below is built and tested unless it says otherwise.
+
+---
+
+## 1 · Fast
+
+### A sensor does not finish
+
+Batch tools fire a trigger, run a chain once and tear it down. That fits a
+nightly sync and breaks the moment the work is *live* — a camera, a
+conversation, a model answering token by token.
+
+<p align="center"><img src="docs/media/mechanism-connection.svg" alt="A batch run starts, runs and is destroyed; a connection stays open and envelopes flow through the graph as they are produced" width="820"></p>
+
+Text, audio, frames and events travel as the same typed envelope on a
+connection that stays open. A node serves **QUIC (WebTransport)** on the same
+port number as its TCP listener, so the three QoS classes are three real
+transport primitives: `realtime` is a datagram that cannot stall or be stalled,
+`reliable` is an ordered stream per edge, `bulk` has its own. A peer that
+cannot reach UDP keeps the WebSocket path. **Deadlines are absolute and
+inherited** — a hop can tighten one, never extend it — and a delivery that is
+already late is dropped rather than computed for nobody.
+
+### A slow session only slows itself
+
+Every session an Expertise serves shares its one connection. The kernel used to
+route each envelope inline, so one session whose consumer fell behind stalled
+every other session on that socket. Each session now has its own queue.
+
+<p align="center"><img src="docs/media/mechanism-mailbox.svg" alt="With inline routing a blocked session stalls the ones behind it on the same connection; with a queue per session only the blocked one waits" width="820"></p>
+
+New sessions go to the replica carrying the fewest live ones, counted by the
+kernel itself. And a client's `cancel` does not queue: it overtakes every token
+still waiting behind it, and the kernel suppresses them — cancellation is a
+guarantee here, not a request.
+
+### Fewer envelopes for the same words
+
+A model emits a token every few milliseconds, and each used to be its own
+envelope — an id, two encodings, two log appends, a routing decision — for four
+characters.
+
+<p align="center"><img src="docs/media/mechanism-coalescing.svg" alt="Many single-token envelopes become a few larger ones carrying the same text; the first token is never delayed" width="820"></p>
+
+The first token still leaves immediately; nothing waits more than 25 ms. On a
+fast stream that was **about 50 envelopes instead of 120, with identical
+text**, in an end-to-end run against a real node.
+
+### What is measured, and what is not
+
+| | |
+|---|---|
+| Kernel routing + durability, one node, echo over loopback | 1 session: 1,504 msg/s, p50 0.58 ms · 200 sessions: 1,908 msg/s, p50 63 ms (was 344 msg/s, p50 489 ms before group commit). `kernel/cmd/loadgen` reproduces it. |
+| Causal event log | 1.5M events/s on append-only segments against SQLite's 27k at matched durability. |
+| A dead node replaced by its standby | 21–118 ms from kill to answering again, Linux, same host. `scripts/failover_e2e.py`. |
+| Per-session queues and coalescing under load | **Not measured.** Tested for correctness; the existing load generator has no slow consumer and one envelope per message, so it shows neither. |
+| Perception → decision → effect on a robot | **Not measured.** There is no robot in the loop yet. |
+
+---
+
+## 2 · Every decision traceable
+
+<p align="center"><img src="docs/media/mechanism-gate-ledger.svg" alt="A delivery into a motor Expertise is held at the kernel gate for a named person, then sealed into a hash-chained ledger" width="820"></p>
+
+- **The gate is a kernel invariant.** In agent libraries the interrupt lives in
+  code you wrote, so the code that forgets has no gate. Here the executor
+  applies it at the one point every delivery passes, driven by the node's
+  policy. A graph can ask for *more* scrutiny than policy requires, never less.
+- **The entry names the human who approved it, and they signed it.** With a key
+  the node has never held, over digests of what they were actually shown — so
+  the record says a person consented to *this*, not that somebody clicked.
+  Written up as an [Internet-Draft](spec/proposals/draft-signed-human-approval.md).
+- **Every effect is sealed, not logged.** A hash chain, committed to an
+  RFC 6962 Merkle head the node signs and a third party can counter-sign.
+  `aura verify` recomputes all of it from the database file alone, with no
+  kernel running.
+- **It names the model that argued for it.** Engine, model, revision,
+  quantisation, sampling parameters, seed — and now the tokens the engine
+  counted — bound to every effect that output caused. A silent model swap
+  is a measured problem [[10]](#refs); here it breaks hashes already
+  committed to an append-only chain. It remains the Expertise's word: an
+  assertion bound to its consequences, not proof of what executed.
+- **It joins the trace you already have.** A W3C `traceparent` rides every hop
+  of the chain a caller starts — carried by the kernel, so it survives an
+  Expertise that has never heard of it — and `aura up --otlp` exports spans
+  while the node runs. Whole sessions are sampled, never partial trees, and
+  payloads are never exported.
+
+<p align="center"><img src="docs/media/mechanism-trace.svg" alt="A caller's trace context is carried across every hop inside the node and back, so the node's spans join the caller's trace" width="820"></p>
+
+When someone asks afterwards, they do not arrive with a hash. They arrive with
+a date range:
+
+```bash
+aura audit --since 2026-07-01 --out q3.json   # what acted, who authorised it, under which policy
+aura audit --verify q3.json                   # anyone, anywhere, no node running
+aura why <session>                            # what happened, narrated from the causal log
+aura regress                                  # replay recorded sessions against a new model; diff the *effects*
+```
+
+**The obligation is already written down.** [Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/article/12/)
+requires automatic event logging (Article 12) and effective oversight by
+natural persons (Article 14) for high-risk AI systems; its application dates
+were moved by [Regulation (EU) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj)
+to 2 December 2027 for Annex III systems and 2 August 2028 for systems embedded
+in regulated products. The calendar moved; the text did not. ISO/IEC 42001
+asks for the same chain of evidence today.
+
+---
+
+## 3 · Secure
+
+- **What acts on the world is a type.** Every Expertise declares whether it
+  perceives, reasons, remembers, transforms or acts (`motor`). Policy is
+  deny-by-default for `motor.*`; speculation is refused at wiring on any edge
+  into one.
+- **An Expertise is not the operator.** A credential scoped to one capability
+  can connect, register as that capability and redeem the receipts it is
+  handed — and cannot register a graph, read the ledger or enrol an approver.
+- **A secret is released against a receipt, not held ambiently.** Skipping the
+  gate stops being a way to avoid scrutiny and becomes a way to get a 401.
+- **A viewer gets a ticket for one session and nothing else.** Signed, short
+  lived, good on one route.
+- **`format: wasm` Expertise run in a real WASI sandbox.** `format: source`
+  does **not**: `--sandbox process` scrubs the environment and jails the
+  working directory, and does not contain hostile code. Until the microVM
+  boundary lands, the honest position is *run your own Expertise*, not
+  *install a stranger's*.
+- **Pickle-format weights are refused; model revisions are pinned** before
+  download, so what is attested is what was fetched.
+
+Start here without adopting anything else — put the MCP servers an agent
+already uses behind this node's policy, gate and ledger:
 
 ```bash
 aura guard --config claude_desktop_config.json
 ```
 
-```
-  no node on port 9080 — running an embedded kernel
-  ledger    every guarded call is sealed here
-
-  TOOL               CAPABILITY                   ON CALL
-  probe/read_thing   motor.mcp.probe.read_thing   human approval + sealed
-  probe/write_thing  motor.mcp.probe.write_thing  human approval + sealed
-
-  2 of 2 act on the world and are gated; the rest are read-only.
-```
-
-Every tool call the agent makes now passes a policy you control, stops for a
-human if it acts on the world, and lands in a hash-chained ledger that verifies
-offline. A tool is gated unless its server proves it only reads **and** you chose
-to believe it — the default is strict because `readOnlyHint` is a claim by the
-same server the call is about, and tool metadata is the documented attack surface
-[[1]](#refs)[[2]](#refs): a large-scale study of the MCP ecosystem finds
-descriptor-level poisoning to be the most prevalent client-side vulnerability,
-and most clients validate it insufficiently.
-
-The catch, stated up front: this holds exactly as far as your control over the
-agent's config does. There is no network enforcement.
-[Details](GUIDE.md#guarding-an-agents-tools).
+It holds exactly as far as your control over the agent's configuration does;
+there is no network enforcement. [Details](GUIDE.md#guarding-an-agents-tools).
 
 ---
 
-## 1 · Deploy in real time
+## 4 · Models: deployment and optimisation
 
-Once you want more than a checkpoint, the same binary is a runtime. Describe what
-you need; it reads the live catalogue, picks skills, compiles a graph and leaves
-it running:
+A robot is mostly a model-deployment problem with motors attached.
+
+- **One contract for every model.** Language, speech, vision — any model an
+  Expertise wraps — behind the same manifest and ports, local or remote.
+  Swapping one changes placement, not the graph.
+- **One set of weights for the whole node.** Point every first-party Expertise
+  at one OpenAI-compatible server (`AURA_INFERENCE_URL`) and they share its
+  slots, batching and prefix cache instead of each loading a copy.
+- **A prompt whose prefix survives the conversation.** History is trimmed in
+  blocks, so a KV cache or a provider's prompt cache stays valid between
+  compactions instead of being invalidated on every turn.
+- **Token cost as the engine counted it**, cache hits included, on the
+  attestation and in `aura_tokens_total` — not a bytes/4 estimate.
+- **A planner that cannot invent a capability**: its decoder is constrained by
+  a grammar built from the live catalogue.
+- **Fit before download.** `model-fit` estimates what a machine can run;
+  `model-manager` fetches it with the revision pinned.
+
+Not yet: the node owning and supervising that inference server, swapping a
+model without a restart, producing an optimised artefact for a device rather
+than choosing among downloaded ones, and scheduling several models on one
+accelerator. The shared-server path is verified against a fake endpoint, not a
+real one. [Roadmap](ROADMAP.md#models-deployment-and-optimisation).
+
+---
+
+## 5 · Video
+
+[`media/`](media/) is a second artefact, `aura-media`, with its own version
+line — encoding pins a core for minutes and approving an effect must never
+queue behind it.
+
+- **Playable while it encodes.** Segments are published as they close; an asset
+  has an address seconds after the encode starts, with progress reported.
+- **Live in, adaptive HLS out.** An RTMP stream becomes a ladder with a DVR
+  window that turns into an ordinary recording when the stream ends; a
+  broadcaster that drops and reconnects continues the same stream.
+- **Frames for models from the same decode as the encode.**
+- **An audience on the session beside it.** `GET /v1/watch` attaches read-only
+  observers to a live session — each unable to slow it, none shown a gate —
+  with a ticket per viewer and the recent history replayed on joining.
+
+Run end to end against real ffmpeg on Linux. Not played in a real player; no
+hardware encoder has encoded a frame; live latency is calculated, not measured.
+For a robot the missing piece is the other direction — a camera to a model in
+tens of milliseconds, which HLS will never be.
+[What is and is not built](media/README.md).
+
+---
+
+## 6 · A node that dies is replaced
 
 ```bash
-aura do "watch the orders table and text me when a refund over $500 lands"
+aura up --data /var/lib/aura                 # the node
+aura up --data /var/lib/aura --standby       # takes over when the first dies
 ```
 
-The write is gated because it acts on the world. The graph stays up: Postgres
-pushes row changes as they commit, and nothing polls.
-
-**The connection is the unit of work, not the run.** n8n, Zapier and Make fire a
-trigger, run a chain once, and finish. That fits a nightly sync and falls apart
-the moment the work is *live* — a conversation, a video feed, a database changing
-under you, a model answering token by token.
-
-|  | Batch tools | Deep Axiom |
-|---|---|---|
-| Unit of work | A run: starts, executes, tears down | A **connection** that stays open |
-| Getting data | Poll every 5 minutes | The source **pushes**, as it happens |
-| An LLM answering | Wait for the whole reply | Token by token; downstream reacts mid-sentence |
-| Audio / video | Not really supported | Paced PCM, partial transcripts, working barge-in |
-| A lost packet | Stalls everything behind it (TCP) | Stalls only its own lane (QUIC) |
-| Cancelling | Best effort | Kernel guarantee — a cancelled chain's output goes nowhere |
-
-Text, audio, documents and events travel as the same typed envelope. A node
-serves **QUIC (WebTransport)** on the same port number as its TCP listener, so
-the three QoS classes become three real transport primitives: `realtime` is a
-datagram that cannot stall or be stalled, `reliable` is one ordered stream per
-edge, `bulk` gets its own stream. A peer that cannot reach UDP keeps the
-WebSocket path unchanged. **Deadlines are absolute and inherited** — a hop may
-tighten one, never extend it.
-
-A dropped socket resumes: the dedup window, causal indexes, pending gates and
-per-hop counters rebuild from the event log, whether the client or the kernel was
-what died. That is the property the stateful-dataflow literature calls failure
-transparency [[3]](#refs), and it is the one an assistant that is *live* cannot
-do without — there is no "re-run the job" for a conversation.
-
-### Live means concurrent, and concurrency has to help
-
-Every envelope is durably logged before it is acknowledged. That used to mean one
-transaction per event queued at a single write lock — 200 concurrent sessions did
-*less* total work than one. Group commit (the deal PostgreSQL and RocksDB have
-made for decades) keeps each caller waiting for its own durability while everyone
-already waiting joins the same transaction.
-
-| Concurrent sessions | Before | After |
-|---|---|---|
-| 1 | 1,556 msg/s · p50 0.47 ms | 1,504 msg/s · p50 0.58 ms |
-| 50 | 365 msg/s · p50 96 ms | 1,631 msg/s · p50 19 ms |
-| 200 | 344 msg/s · p50 489 ms | **1,908 msg/s · p50 63 ms** |
-| 1,000 *(8 replicas)* | *would not connect* | **28,202 msg/s · p50 0.51 ms** |
-
-Read the table for the shape, not the absolute numbers, and know what it
-measures: an echo skill over loopback, so it is the kernel's routing and
-durability cost with no real work in the loop. Aggregate throughput divides
-round-trips by wall-clock *including* dial time, which flatters the
-high-concurrency rows. The honest claim is the middle row's: at 200 sessions the
-same node went from 344 msg/s to 1,908 and p50 from 489 ms to 63, without
-weakening durability. `kernel/cmd/loadgen/` reproduces it.
-
-A CPU profile found the rest, and not where anyone guessed: JSON encoding was 1%
-of CPU while **SQLite's file I/O was 54%**. The causal event log moved out of
-SQLite into append-only segment files with a CRC per record and group-committed
-writes — 1.5M events/sec against SQLite's 27k at matched durability, the shape
-[Tidehunter](https://arxiv.org/abs/2602.01873) argues for. It rotates at 128 MiB;
-`--event-log-max` reclaims whole segments oldest-first. The effect ledger stays
-in SQLite deliberately: a bug in the event log loses replay history, a bug in the
-ledger loses evidence.
+The standby opens nothing the live node is writing. On the same host it sees
+that the leader's process is gone instead of waiting out a lease, and answers
+as the *same node* — same identity, same ledger — in tens of milliseconds.
+Expertise reconnect on their own; a client that reconnects continues its
+session from the causal log. What it does not survive is losing the machine:
+the standby needs the data directory.
+[Details](GUIDE.md#what-a-node-does-not-survive).
 
 ---
 
-## 2 · Auditable — because it is already specified
+<!-- UI-SECTION -->
+## The control plane
 
-The obligation is written and dated. The date moved; the text did not.
+It is in the binary — `aura up`, then open the port. Every screen below is the
+real UI against a running node. The traffic comes from three small test
+Expertise, labelled as tests on screen — the one that streams text replays a
+fixed passage and is not a model. How each was captured is in
+[`docs/media/README.md`](docs/media/README.md).
 
-**[Regulation (EU) 2024/1689](https://artificialintelligenceact.eu/article/12/)
-— the EU AI Act — requires this of high-risk AI systems from 2 December 2027.**
-That deadline was 2 August 2026 until
-[Regulation (EU) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj), the
-Digital Omnibus on AI, deferred it — Annex III stand-alone systems to 2 December
-2027, Annex I embedded systems to 2 August 2028. In force since 27 July 2026.
+**Studio.** Build a graph and watch it run: envelopes move along the edges as
+they are delivered, text appears on the node producing it, a gated edge into a
+`motor` Expertise is visibly gated.
 
-**What the Omnibus moved was the calendar, not the requirement.** Articles 12 and
-14 survive the amendment with their substance intact, and they are directly about
-what a runtime has to emit:
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/studio-gate-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/media/studio-gate-light.png"><img src="docs/media/studio-gate-dark.png" alt="Studio with a delivery held at the gate on the edge into a motor Expertise" width="900"></picture></p>
 
-- **Article 12** requires *automatic* recording of events over the system's
-  lifetime, serving risk identification (Art. 79), post-market monitoring
-  (Art. 72) and deployer oversight (Art. 26(5)). Deployers must retain those
-  logs for at least six months.
-- **Article 14** requires that the system be effectively overseen by **natural
-  persons** while in use.
+**Pulse.** What the node is doing now: live sessions, tokens in and out as the
+engines counted them, the prefix-cache hit rate, one bar per replica showing
+the sessions it carries, dispatch queues, watchers.
 
-So this README will not tell you the sky is falling in a fortnight. The argument
-for building the evidence path now is narrower and, we think, better: **a system
-that was not designed to emit this evidence cannot be made to emit it later
-without rebuilding how it executes.** An audit trail is a property of the
-execution path, not a feature bolted to its side — which is the whole reason the
-gate below is a kernel invariant rather than a library call. Retrofitting that
-into a running product is the expensive version of this work, and the deferral is
-the window in which the cheap version is still available.
+<p align="center"><img src="docs/media/pulse-load.gif" alt="Pulse: live sessions, token rates, prefix cache, load per replica" width="900"></p>
 
-**And one clock did not move.** **ISO/IEC 42001** (clause 9.2) wants the same
-evidence chain for internal audit and is in force today, certifiable now, and
-increasingly a procurement precondition rather than a regulatory one. The
-harmonised standards that will operationalise Article 12 — prEN 18229-1,
-ISO/IEC DIS 24970 — are still drafts, which means the shape of the evidence is
-being decided during the deferral rather than settled before it.
+**Sessions as traces.** Each session is its causal tree — what caused what,
+when, on which port, costing how many tokens — with the trace id it joined.
 
-Here is what that produces, and none of it lives in your graph:
+<p align="center"><img src="docs/media/session-waterfall.gif" alt="A session shown as a causal waterfall" width="900"></p>
 
-- **The approval gate is a kernel invariant.** In agent libraries the interrupt
-  lives in the code you wrote, so code that forgets it has no gate. Here the
-  executor applies it at the one point every delivery passes through, driven by
-  node policy. A graph may ask for *more* scrutiny than policy requires, never
-  less — and where policy does let a graph waive a gate, the entry records that
-  the *graph* excused it rather than the node, because a graph is a JSON document
-  anyone reaching the control surface may register.
-- **The entry names the human who approved it, and they signed it.** Article 14
-  asks for oversight by a natural person; a log saying "a human approved" does
-  not evidence one. The operator signs a statement bound to that one delivery
-  with a key the node has never held, so the approver cannot deny it afterward
-  and the node cannot fabricate one. That signature can also cover **what they
-  were shown** — digests of the rendered document, hashed on the approver's
-  machine, so the record says a person consented to *this* text and not merely
-  that somebody clicked yes on an identifier. Set `require_approval_context` and
-  an answer that binds nothing is a denial. That is the half of
-  *"who authorized this"* every audit trail skips — including the IETF's own
-  [agent audit-trail draft](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/),
-  which records a pseudonymous operator id with no signature and signs records
-  with the *agent's* key. We wrote the fix up as an
-  [Internet-Draft](spec/proposals/draft-signed-human-approval.md).
-  A caveat worth reading before trusting any gate, ours included: the reviewer is
-  not an infinitely available oracle, and calibrating *which* actions to stop
-  against a subjective, fatiguing human is an open problem [[4]](#refs). A gate
-  that fires too often is a gate that gets rubber-stamped.
-- **A skill is not the operator.** `aura token issue --capability motor.erp.write`
-  mints a credential that may connect, register as *that* capability and spend
-  the receipts it is handed — and cannot register a graph, read the ledger or
-  enrol an approver. One ordered table decides what each scope reaches, deny by
-  default.
-- **A skill's credential is released against a receipt, not held ambiently.**
-  `aura secret set` puts the credential in the kernel; it is released only
-  against the receipt of an effect that just passed the checkpoint. Skipping the
-  gate stops being a way to avoid scrutiny and becomes a way to get a 401. The
-  same capability-sealed shape is what the confidential-computing-for-agents
-  literature converges on [[5]](#refs)[[6]](#refs) — a compromised agent or a
-  leaked prompt should never see a raw key.
-- **Every effect is attested, not logged.** Sealed into a hash-chained record
-  committed to an RFC 6962 Merkle head the node signs, which a third party can
-  counter-sign. `aura verify` recomputes chain, tree and signatures from the
-  database file alone, with no kernel running. Disks fill up: by default an
-  effect the node cannot seal is delivered and the gap logged loudly, and a node
-  where the ledger must be complete sets `on_seal_failure: refuse` instead. The
-  startup banner says which is in force. Applying Certificate Transparency's
-  construction to agent execution is a converging idea, not ours alone
-  [[7]](#refs)[[8]](#refs).
-- **And the third party is accountable too.** A witness publishes its own
-  append-only log, signs its head, and signs its answer to *how far have you
-  vouched for this node* — so telling one party one thing and another something
-  else becomes two signed statements that cannot both be true. The underlying
-  argument — that an authority which can be caught equivocating needs no trust —
-  is a decade old and still the right one [[9]](#refs).
-- **It cites the model that argued for it, and says how far to believe it.** A
-  skill attests to engine, model, revision, quantization, sampling parameters and
-  seed, bound into every effect that output caused. Silent model substitution is
-  a documented, measurable problem in deployed LLM APIs [[10]](#refs), and this
-  makes it break hashes already committed to an append-only chain. But it is
-  still the skill's own word. Where hardware can narrow it, the TEE quote's nonce
-  **is** the hash of that exact declaration — so the evidence is about *this*
-  record rather than beside it, and editing the declaration afterwards breaks it.
-  A verifier reports `none`, `bound` or `verified`, never a boolean. The cost is
-  now tolerable — 4–8% throughput on H100 confidential compute, shrinking with
-  batch size [[11]](#refs) — which is why the field is moving and why the field's
-  own surveys are worth reading before believing any vendor's claim.
-- **`aura undo`** reverses an effect through a declared compensation port. The
-  undo is itself gated and sealed.
+**Evidence.** The ledger, entry by entry: capability, decision, who approved,
+under which policy, and whether the chain verifies.
 
-**When the auditor arrives**, they do not have an effect hash or a session id.
-They have a date range:
-
-```bash
-aura audit --since 2026-07-01 --out q3.json   # what acted, who authorized it, under which policy
-aura audit --verify q3.json                   # anyone, anywhere, no node running
-```
-
-The report carries the counts, the distinct policy documents in force, a
-breakdown per capability and per signing operator, and a portable receipt per
-gated effect. `aura bundle` exports one session as the retained materials a
-second reader needs to re-derive an attribution rather than take it on faith —
-trajectory, artifact provenance with hashes, model configuration — the four-part
-shape an analysis of agent evaluation protocols argues for after finding that
-most traces cannot support the conclusions drawn from them [[12]](#refs).
-`aura bom` emits a CycloneDX 1.6 ML-BOM of the models and skills that actually
-ran, built from the ledger rather than from configuration.
-
-**Shipping a new model?** `aura regress` replays recorded sessions against it and
-diffs the *effects*, not the transcripts — so "the wording changed" and "it
-stopped issuing the refund" stop being the same result.
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/evidence-ledger-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/media/evidence-ledger-light.png"><img src="docs/media/evidence-ledger-dark.png" alt="The effect ledger with its verification result" width="900"></picture></p>
 
 ---
 
-## 3 · Where it honestly stands
+<!-- /UI-SECTION -->
 
-Read this before the next section, because the next section invites you to run
-other people's code.
+## Where it honestly stands
 
 | | |
 |---|---|
-| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · the ledger and offline verification · the gate as a kernel invariant · **signed approver identity sealed into the entry, with what they were shown inside the signature** · **scoped skill credentials** · **the credential broker** · **the witness's own published log, and a monitor that catches one rewriting it** · cancellation · session resume · deterministic replay · **effect-level regression** · **period audit reports that verify standalone** · typed ports given compiled decoding grammars · the MCP border both ways · `aura guard` · Wasm skills in a real sandbox · Postgres CDC · event-log rotation and recovery · **verifiable backup and restore** · **signing-key rotation, with the retired key's checkpoints still verifying** |
-| **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · OpenTelemetry export · ML-BOM |
-| **Not there yet** | No multi-device view of one live session · **no failover if the node dies** — one process, and nothing starts a replacement (a restarted node *does* rebuild session state from the event log, and a lease keeps a second one from starting beside a live one) · TEE evidence reaches `bound`, never `verified` — vendor chain verification is declared and refused rather than stubbed · the SDKs are packaged but unpublished |
+| **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · per-session dispatch and load-aware replicas · the gate as a kernel invariant · signed approver identity over what they were shown · the ledger and offline verification · scoped credentials and the credential broker · witness log and its monitor · cancellation · session resume · standby takeover · deterministic replay and effect-level regression · period audit reports · trace context and live span export · reported token usage · read-only watchers with tickets and history · typed ports with compiled grammars · the MCP border both ways · Wasm Expertise in a real sandbox · Postgres CDC · verifiable backup and restore · signing-key rotation |
+| **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · ML-BOM |
+| **Tested against stand-ins only** | The shared inference server · the in-process KV state cache · the planner grammar (no llama.cpp in CI) · hardware video encoders (never run) |
+| **Not yet** | A bridge to a robot's middleware · a node-wide stop · binary frames for sensor data · surviving the loss of the machine · containment for `format: source` · TEE evidence beyond `bound` · published SDKs and container image · signed binaries for 0.4 |
 
-**The gap that matters most for what follows: a `format: source` skill is not
-contained.** `--sandbox process` scrubs its environment, jails its working
-directory and checks declared egress before launch, which stops accidental
-credential leakage and casual filesystem wandering. It stops hostile code not at
-all. `format: wasm` *is* genuinely sandboxed, in a real WASI sandbox. A real
-boundary for source skills means a microVM, which is declared and refused at
-startup rather than quietly downgraded.
+A 67-check conformance suite runs the kernel over the wire, and separate CI
+jobs prove the ledger detects tampering by editing a real database behind a
+real binary's back, that a scoped token cannot act as the operator, and that a
+node started **with its default auth** can be driven end to end. Read
+[Security model](GUIDE.md#security-model) before exposing a port, and
+[the roadmap](ROADMAP.md) for what is missing and why it comes in that order.
+This is pre-production; treat it as such.
 
-`internal/` sits at 71.5% test coverage, `cmd/aura` at 8.8%, and the UI is
-tested at its model layer — the graph model against the kernel's own C2
-conformance vectors, plus the editing operations, the conversation fold and
-every translation key — but not its components. A
-59-check conformance suite runs the kernel over the wire, and separate CI jobs
-prove the ledger detects tampering by editing a real database behind a real
-binary's back, that a scoped token cannot act as the operator, that the
-container comes up healthy on an empty volume and drains on SIGTERM, and that a
-node started **with its default auth** can be driven end to end — that last one
-exists because every other lane starts its node with `--no-auth`, and three
-credential bugs shipped through the gap. Read
-[Security model](GUIDE.md#security-model) before you expose a port, and [the roadmap](ROADMAP.md) for what is left and what it blocks.
-This is pre-production; treat it that way.
+**On the name.** What earlier releases called a *skill* is an **Expertise**: a
+typed, running function that is expert at one thing — not a prompt handed to a
+model. Every old identifier still works (`skill.yaml`, `/ws/skill`,
+`/v1/skills`, `Skill`).
 
 ---
 
-## 4 · A registry you host, and skills you own
+## A registry you host, and Expertise you own
 
-Skills are distributed through a **federable** registry — anyone hosts one with
+Expertises are distributed through a **federable** registry — anyone hosts one with
 `aura registry serve`, exactly like a container registry. That is what makes the
 neutrality of the ecosystem something you can check rather than something we
 promise.
@@ -333,17 +356,17 @@ bindings live. Not to be confused with the **Studio view** of the node's own
 control plane, which is where you build and run graphs; the name is shared, the
 thing is not.
 
-**The SDK is Apache-2.0**, so a skill you write and sell carries no copyleft
+**The SDK is Apache-2.0**, so an Expertise you write and sell carries no copyleft
 obligation, ever. Given the isolation gap above, today's honest pitch is *publish
 and host your own* rather than *install strangers' code* — the distribution,
 signing and discovery are real and tested; the sandbox that would make a public
 catalogue safe is not there yet.
 
-**The ten skills in [`skills/`](skills/) are demos.** They exist to show the
-shape of a skill and give a cold node something to run — not to be a catalogue,
+**The ten Expertises in [`expertise/`](expertise/) are demos.** They exist to show the
+shape of an Expertise and give a cold node something to run — not to be a catalogue,
 and not to be depended on in production; hence the `example/` org in every
 manifest. Copy the closest one and replace it. Start from
-[`skills/echo/`](skills/echo/), about 100 lines.
+[`expertise/echo/`](expertise/echo/), about 100 lines.
 
 ---
 
@@ -395,10 +418,11 @@ Two endpoints an orchestrator needs:
 | `GET /readyz` | Open, because a probe holds no credential. Stricter than `/healthz`: it answers only once the store and ledger are usable, so a rolling deploy does not send traffic to a node that is up but not working. |
 | `GET /metrics` | Prometheus text, **authenticated** — the series include live session counts, ledger size and the pending approval queue. `aura_store_batch_mean` is the one for capacity: near the batch cap means the commit is your ceiling and more writers would not help. |
 
-**What this does not survive is the node dying.** One process, no failover; the
-event log survives, the live routing state does not. Answer that honestly before
-you deploy: if AURA falls over, does your app degrade or stop? If it degrades,
-this is deployable today. If it stops, read [the roadmap](ROADMAP.md) first.
+**What this does not survive is losing the machine.** A node that dies is
+replaced by a standby on the same host (section 6); a machine that dies takes
+the data directory with it. Answer that honestly before you deploy: if this
+machine is gone, does your app degrade or stop? If it stops, read
+[the roadmap](ROADMAP.md) first.
 
 **The SDKs are packaged and not published.** `@deepaxiom/aura` and `aura-sdk`
 exist, build and are tested; there is no `npm install` for them yet, so today you
@@ -411,9 +435,9 @@ aura connect --openapi ./crm.yaml   # every operation becomes a skill
 ```
 
 Read-only by default, with dry-run and per-operation promotion before anything
-writes. Webhooks come in, `sensorial` skills wrap systems that push, and
-inversion-of-control skills dial *out* so they run behind NAT with no inbound
-ports. At the borders: an **MCP server** (every skill is a tool for Claude Code
+writes. Webhooks come in, `sensorial` Expertises wrap systems that push, and
+inversion-of-control Expertises dial *out* so they run behind NAT with no inbound
+ports. At the borders: an **MCP server** (every Expertise is a tool for Claude Code
 or Cursor, and `tools/call` streams), an A2A discovery card, and OpenTelemetry
 export of the causal tree.
 
@@ -426,7 +450,8 @@ shape is written up as [a proposal to MCP](spec/proposals/mcp-effect-receipts.md
 
 ## 60 seconds
 
-Signed binaries for Linux, macOS and Windows on amd64 and arm64 are on the
+**0.4 has no signed release yet** — build it from source, below. The signed
+binaries for Linux, macOS and Windows on amd64 and arm64 are still those of the
 [v0.3.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0). Verify before you run — the
 signature on `SHA256SUMS` proves who built the file, and only then is the sum
 worth checking ([how](SECURITY.md#verifying-a-release)):
@@ -452,14 +477,14 @@ go build -o aura ./cmd/aura     # Go 1.25+, no CGO, no external services
 
 One binary, 18.6 MB — the stripped build on the release page and in the
 container; an unstripped local `go build` is nearer 26. No account, no cloud,
-no Postgres, no broker, no cluster. `aura up` is the whole runtime and no skills: skills are
+no Postgres, no broker, no cluster. `aura up` is the whole runtime and no Expertises: Expertises are
 separate processes that connect *to* it, so a fresh node is a working kernel
 with an empty catalogue and four seeded graphs — `echo`, `chat`, `plan` and
 `voice` — to point one at.
 
 ```bash
-pip install -r skills/llm-chat/requirements.txt
-cd skills/llm-chat && PYTHONPATH=../../sdk/python/src python main.py
+pip install -r expertise/llm-chat/requirements.txt
+cd expertise/llm-chat && PYTHONPATH=../../sdk/python/src python main.py
 aura chat "explain backpressure"    # streams token by token
 ```
 
@@ -497,9 +522,9 @@ Articles 12 and 14 otherwise intact).
 ---
 
 **License.** The spec and SDKs are Apache-2.0 — build a conformant kernel, write
-and sell skills, no copyleft obligation ever. That includes the parts a second
+and sell Expertises, no copyleft obligation ever. That includes the parts a second
 implementation would need most: the ledger contract, the witness protocol, and a
-59-check conformance suite to demonstrate compliance with. A verifier is worth
+67-check conformance suite to demonstrate compliance with. A verifier is worth
 less the fewer things it can verify, and an anchor is worth less the fewer
 parties present to it — neither is a good thing to own. The kernel and UI are
 AGPLv3, with a commercial license available instead. Running `aura`

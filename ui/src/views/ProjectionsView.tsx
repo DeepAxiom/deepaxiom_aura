@@ -51,14 +51,11 @@ export function ProjectionsView() {
 
   return (
     <section className="view">
-      <div className="page-head">
-        <h1>{t("projections.title")}</h1>
-        <p>{t("projections.subtitle")}</p>
-      </div>
-      {error && <div className="error-banner">{t("common.error", { message: error })}</div>}
+      <p className="lead">{t("projections.subtitle")}</p>
+      {error && <div className="alert" role="alert">{t("common.error", { message: error })}</div>}
 
       <div style={{ marginBottom: 18 }}>
-        <button className="btn" onClick={() => setShowForm(!showForm)}>
+        <button className="btn btn--primary" onClick={() => setShowForm(!showForm)} aria-expanded={showForm}>
           {t("projections.connect")}
         </button>
       </div>
@@ -86,7 +83,7 @@ export function ProjectionsView() {
               </div>
             </div>
             <div>
-              <button className="btn" onClick={connect} disabled={busy}>
+              <button className="btn btn--primary" onClick={connect} disabled={busy}>
                 {busy ? t("projections.connecting") : t("projections.submit")}
               </button>
             </div>
@@ -95,7 +92,7 @@ export function ProjectionsView() {
       )}
 
       {projections.length === 0 ? (
-        <div className="empty">{t("projections.empty")}</div>
+        <div className="empty"><div className="empty__title">{t("projections.empty")}</div></div>
       ) : (
         projections.map((p) => (
           <article className="card proj-card" key={p.name}>
@@ -105,13 +102,14 @@ export function ProjectionsView() {
             </div>
             {p.ops.map((op) => (
               <div className="op-row" key={op.op_id}>
-                <span className={`badge badge--${op.mode}`}>{t(`projections.mode.${op.mode}`)}</span>
+                <span className={`pill pill--${op.mode === "live" ? "live" : op.mode === "dry-run" ? "warn" : "neutral"}`}>{t(`projections.mode.${op.mode}`)}</span>
                 <span className="op-row__method">{op.method}</span>
                 <span className="op-row__id">{op.op_id}</span>
                 <span className="op-row__path">{op.path}</span>
-                <span className="badge">{op.write ? t("projections.write") : t("projections.readOnly")}</span>
+                <span className="pill pill--neutral">{op.write ? t("projections.write") : t("projections.readOnly")}</span>
                 <select
-                  className="select"
+                  className="select select--sm"
+                  aria-label={op.op_id}
                   value={op.mode}
                   title={op.write ? t("projections.writeWarning") : undefined}
                   onChange={(e) => promote(p.name, op.op_id, e.target.value as OpMode)}

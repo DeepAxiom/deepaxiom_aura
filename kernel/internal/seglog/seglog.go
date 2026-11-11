@@ -797,6 +797,44 @@ func (l *Log) Session(session string, limit int) ([]Entry, error) {
 	return l.readLocators(session, locs)
 }
 
+// SessionTail returns the last `limit` records of a session, oldest first.
+//
+// Session answers "how did this conversation begin"; this answers "what just
+// happened in it", which is what someone joining a long-running session
+// needs. For an indexed session it reads only those records. For one whose
+// index was evicted it has to scan, and keeps the tail.
+func (l *Log) SessionTail(session string, limit int) ([]Entry, error) {
+	l.mu.RLock()
+	si := l.idx[session]
+	if si == nil {
+		l.mu.RUnlock()
+		return nil, nil
+	}
+	if si.evicted {
+		segs := make([]uint32, 0, len(si.segs))
+		for ord := range si.segs {
+			segs = append(segs, ord)
+		}
+		paths := l.pathsFor(segs)
+		l.mu.RUnlock()
+		all, err := l.scanFor(session, paths, 0)
+		if limit > 0 && len(all) > limit {
+			all = all[len(all)-limit:]
+		}
+		return all, err
+	}
+	locs := append([]locator(nil), si.locs...)
+	l.mu.RUnlock()
+
+	if limit > 0 && len(locs) > limit {
+		locs = locs[len(locs)-limit:]
+	}
+	if len(locs) == 0 {
+		return nil, nil
+	}
+	return l.readLocators(session, locs)
+}
+
 // pathsFor resolves segment ordinals to paths, in order. Caller holds mu.
 func (l *Log) pathsFor(ords []uint32) []string {
 	sort.Slice(ords, func(i, j int) bool { return ords[i] < ords[j] })
