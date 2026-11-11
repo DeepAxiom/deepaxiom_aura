@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -27,6 +28,7 @@ import (
 	"aura/kernel/internal/identity"
 	"aura/kernel/internal/lease"
 	"aura/kernel/internal/ledger"
+	"aura/kernel/internal/otel"
 	"aura/kernel/internal/registry"
 	"aura/kernel/internal/seglog"
 	"aura/kernel/internal/spec"
@@ -124,12 +126,17 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `aura — cognitive runtime kernel
+	fmt.Fprintln(os.Stderr, `aura — the operating system for autonomous robots: the kernel
+
+An Expertise is what this runtime runs: a typed function that is expert at one
+thing, connected over a stream. Earlier releases called it a skill; that name
+still works everywhere it appeared (skill.yaml, /ws/skill, /v1/skills).
 
 Usage:
   aura up [--port 9080] [--data <dir>] [--mode local|site|published]
           [--memory-budget 8Gi] [--event-log-max 20Gi] [--config <file>]
-          [--open-witness]
+          [--open-witness] [--session-mailbox 1024]
+          [--otlp http://collector:4318] [--otlp-sample 0.1]
   aura chat ["message"] [--graph chat] [--port 9080]
   aura do "natural-language goal" [--yes] [--port 9080]
   aura connect --openapi <url|file> [--name x] [--base-url y] [--header "K: V"]
@@ -143,7 +150,7 @@ Usage:
   aura trace <session> [--otlp <url>] [--out <file>] [--port 9080]
   aura federate <remote-url> [--capability <cap>] [--port 9080]
   aura registry serve [--port 9091] [--data <dir>]
-  aura publish <skill-dir> [--registry <url>]
+  aura publish <expertise-dir> [--registry <url>]
   aura add <org/cat/name>[@version] | --capability <cap> [--registry <url>] [--yes]
   aura run <org/cat/name> [--port 9080]
   aura status [--port 9080]
@@ -233,17 +240,31 @@ func cmdUp(args []string) {
 	configPath := fs.String("config", "", "optional skill-config file (skill defaults, git-friendly) — see README.md")
 	policyPath := fs.String("policy", "", "authorization policy file (default: built-in permissive policy)")
 	maxSessions := fs.Int("max-sessions", 1000, "cap on concurrent live sessions (0 = unlimited)")
+	sessionMailbox := fs.Int("session-mailbox", executor.DefaultMailboxDepth,
+		"envelopes a session may queue before the skill feeding it is slowed. Each session "+
+			"routes on its own queue, so one slow consumer no longer stalls every other session "+
+			"sharing that skill's connection. 0 restores inline routing")
+	otlpEndpoint := fs.String("otlp", "",
+		"export spans to this OTLP/HTTP collector while the node runs, e.g. http://localhost:4318 "+
+			"(default: $OTEL_EXPORTER_OTLP_ENDPOINT; empty = off). Payloads are never exported")
+	otlpSample := fs.Float64("otlp-sample", 1.0,
+		"fraction of sessions whose spans are exported, 0..1. Whole sessions are kept or "+
+			"dropped, never partial trees; the causal log and the ledger hold everything regardless")
 	leaseTTL := fs.Duration("lease-ttl", lease.DefaultTTL,
 		"how long this node's claim on the data directory survives without a renewal. "+
 			"After a crash this IS the recovery time: a replacement waits it out before starting, "+
 			"while the node itself rebuilds in milliseconds. Lower it for faster failover, at the "+
 			"risk of a live-but-stalled node being displaced")
+	standby := fs.Bool("standby", false,
+		"stand by for the node that currently owns --data and take over when it dies. "+
+			"Opens nothing the live node is writing; on the same host it notices a dead "+
+			"process in about a tenth of a second instead of waiting out --lease-ttl")
 	noAuth := fs.Bool("no-auth", false, "disable the bearer token (single-user loopback nodes only)")
 	pprofAddr := fs.String("pprof", "", "expose Go profiling on this address (e.g. 127.0.0.1:6060); off by default")
 	withExamples := fs.Bool("with-examples", false,
-		"also start the example skills in skills/ (opt-in; a node's skills are normally chosen by an operator)")
-	examplesDir := fs.String("examples-dir", "skills",
-		"where --with-examples looks for skill directories")
+		"also start the example Expertise in expertise/ (opt-in; what a node runs is normally chosen by an operator)")
+	examplesDir := fs.String("examples-dir", defaultExamplesDir,
+		"where --with-examples looks for Expertise directories (falls back to skills/ in an older checkout)")
 	openWitness := fs.Bool("open-witness", false,
 		"let any node anchor its ledger here without a token (rate- and capacity-bounded)")
 	anchor := fs.String("anchor", "",
@@ -293,18 +314,59 @@ func cmdUp(args []string) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// One construction, shared with `aura guard --standalone`. See node.go.
+	// A standby blocks inside buildNode until there is a node to replace, so
+	// the signal that ends that wait has to be wired before it starts.
+	var standbyStop chan struct{}
+	if *standby {
+		standbyStop = make(chan struct{})
+		early := make(chan os.Signal, 1)
+		signal.Notify(early, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			if _, ok := <-early; ok {
+				close(standbyStop)
+			}
+		}()
+		defer func() { signal.Stop(early); close(early) }()
+		fmt.Printf("\n  standing by for %s\n", *data)
+	}
 	n, err := buildNode(nodeOptions{
 		DataDir: *data, Port: *port, Mode: *mode, PolicyPath: *policyPath,
+		Standby: *standby, StandbyStop: standbyStop,
+		StandbyWatching: func(info lease.Info) {
+			how := "its heartbeat (it runs elsewhere, or says nothing about where)"
+			if info.Host != "" && info.PID > 0 {
+				how = fmt.Sprintf("process %d on %s, and its heartbeat", info.PID, info.Host)
+			}
+			fmt.Printf("  the writer is %s, since %s — watching %s\n",
+				info.Holder, info.Since.Format(time.RFC3339), how)
+		},
 		LeaseTTL: *leaseTTL,
 		NoAuth:   *noAuth, OpenWitness: *openWitness, TLS: *tlsCert != "",
 		AllowedOrigins: allowOrigins, TrustedProxy: *trustedProxy,
 		MemoryBudget: budgetBytes, EventLogMaxBytes: eventLogMaxBytes,
 		MaxSessions: *maxSessions, SkillConfig: configFile.Skills, Log: log,
+		SessionMailbox: *sessionMailbox,
+		OTLPEndpoint:   firstNonEmpty(*otlpEndpoint, os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
+		OTLPSample:     *otlpSample,
+		OTLPHeaders:    otel.ParseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
 	})
+	if errors.Is(err, lease.ErrStandbyStopped) {
+		fmt.Println("  stopped while standing by; nothing was taken over")
+		return
+	}
 	if err != nil {
 		fatal(err)
 	}
 	defer n.Close()
+	if *standby {
+		reportTakeover(n.Takeover)
+		// The node this one replaces may still be letting go of the port: a
+		// leader that lost its lease while alive stops on its next renewal,
+		// not instantly. Wait for it rather than fail the takeover on a bind.
+		if err := waitForPort(*listen, *port, *leaseTTL+5*time.Second); err != nil {
+			fatal(err)
+		}
+	}
 
 	node, st, ldg, policy := n.Identity, n.Store, n.Ledger, n.Policy
 	token, tokenCreated := n.Token, n.Created
@@ -333,6 +395,10 @@ func cmdUp(args []string) {
 			// it a skill reaching the node over QUIC would register with no
 			// credential on a node whose TCP path demands one.
 			"/ws/skill": func(_ context.Context, s *wtsrv.Session, r *http.Request) {
+				gw.ServeSkillOver(s, r)
+			},
+			// The same route under the name the product now uses.
+			"/ws/expertise": func(_ context.Context, s *wtsrv.Session, r *http.Request) {
 				gw.ServeSkillOver(s, r)
 			},
 		},

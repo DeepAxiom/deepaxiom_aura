@@ -39,7 +39,7 @@ func chainGraph(gate string) *Graph {
 }
 
 // registerThinker registers a cognitive skill whose reply carries a C5
-// attestation, mimicking what skills/llm-chat now emits on its final chunk.
+// attestation, mimicking what expertise/llm-chat now emits on its final chunk.
 func registerThinker(t *testing.T, reg *registry.Registry, sess func() *Session, attest json.RawMessage) {
 	t.Helper()
 	m := registry.Manifest{

@@ -31,7 +31,7 @@ func writeSkill(t *testing.T, dir, id string) string {
 }
 
 func TestSkillIDIsReadNotDerived(t *testing.T) {
-	// skills/model-fit is example/sensorial/model-fit. Any rule that maps one
+	// expertise/model-fit is example/sensorial/model-fit. Any rule that maps one
 	// to the other breaks the first time somebody renames a folder, so the id
 	// has to come out of the manifest.
 	dir := t.TempDir()

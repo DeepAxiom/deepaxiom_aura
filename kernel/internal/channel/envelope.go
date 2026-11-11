@@ -89,6 +89,21 @@ type Envelope struct {
 	// model, a coarser quantization — rather than to abort. Arriving with a
 	// worse answer beats arriving after nobody is listening.
 	Deadline int64 `json:"deadline,omitempty"`
+	// Trace is a W3C Trace Context `traceparent` (C3 v1.7, additive):
+	// "00-<32 hex trace id>-<16 hex parent id>-<2 hex flags>".
+	//
+	// A client that is already part of a distributed trace — an HTTP request
+	// in someone's backend, a job in a queue — puts its context on the
+	// envelope that starts a chain, and the kernel carries it on every hop of
+	// that chain. The causal log is already a trace; this is what joins it to
+	// the one the caller has, so a span in their APM and an effect in this
+	// node's ledger are the same request rather than two things someone has to
+	// correlate by timestamp.
+	//
+	// Opaque to routing: the kernel propagates it and the exporter reads it.
+	// Absent on every envelope of a chain whose client supplied none, in which
+	// case nothing about the wire differs from v1.6.
+	Trace string `json:"trace,omitempty"`
 	// Priority orders preemption when two chains contend for one skill.
 	// Higher wins. Zero is the default and means "ordinary".
 	Priority int `json:"priority,omitempty"`
@@ -123,6 +138,38 @@ func (e *Envelope) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ValidTraceparent reports whether s is a W3C Trace Context `traceparent`
+// this kernel will propagate: version 00, a 32-hex trace id and a 16-hex
+// parent id that are not all zeros, and 2 hex flags — lowercase, as the
+// specification requires.
+//
+// Strict on purpose. The value is copied onto every envelope of a chain and
+// handed to an exporter; accepting anything string-shaped would make the
+// field a way to smuggle arbitrary bytes into every hop and into someone's
+// telemetry backend.
+func ValidTraceparent(s string) bool {
+	if len(s) != 55 || s[0] != '0' || s[1] != '0' || s[2] != '-' || s[35] != '-' || s[52] != '-' {
+		return false
+	}
+	return lowerHex(s[3:35], true) && lowerHex(s[36:52], true) && lowerHex(s[53:55], false)
+}
+
+func lowerHex(s string, nonZero bool) bool {
+	zero := true
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f':
+		default:
+			return false
+		}
+		if c != '0' {
+			zero = false
+		}
+	}
+	return !nonZero || !zero
 }
 
 // NewID returns a lexicographically sortable unique id (ULID-like:

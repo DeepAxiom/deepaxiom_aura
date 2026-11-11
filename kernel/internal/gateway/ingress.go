@@ -428,6 +428,11 @@ func (g *Gateway) receiveHook(w http.ResponseWriter, r *http.Request) {
 		Schema: route.Schema, Kind: channel.KindData,
 		Payload: hookPayload(body, r.Header.Get("Content-Type")),
 	}
+	// C3 v1.7: a webhook sender that is already inside a trace says so with
+	// the standard header, and the chain this delivery starts joins it.
+	if tp := r.Header.Get("traceparent"); channel.ValidTraceparent(tp) {
+		env.Trace = tp
+	}
 	sess.Route(env)
 
 	// The external system wants a fast 2xx, not the graph's result, so the

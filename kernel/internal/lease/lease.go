@@ -92,6 +92,14 @@ type Info struct {
 	// rather than its own, so a node cannot be displaced by someone else's
 	// impatience.
 	TTL time.Duration
+	// PID, Host and NS say where the holder runs: its process id, its
+	// hostname and its PID namespace. Zero or empty for a row written by a
+	// build that predates them. A standby on the same host uses them to learn
+	// that a leader is gone without waiting for its heartbeat to age — see
+	// standby.go.
+	PID  int
+	Host string
+	NS   string
 }
 
 // Age is how long since the holder last proved it was alive.
@@ -119,6 +127,20 @@ CREATE TABLE IF NOT EXISTS node_lease (
 	_, err = db.Exec(`ALTER TABLE node_lease ADD COLUMN ttl_ms INTEGER NOT NULL DEFAULT 10000`)
 	if err != nil && !isDuplicateColumn(err) {
 		return fmt.Errorf("migrate node_lease.ttl_ms: %w", err)
+	}
+	// Where the holder runs, for a standby on the same host. Additive and
+	// defaulted, so a node from before these columns still reads and writes
+	// the row: it simply leaves them empty, and is then never judged dead by
+	// its process — only by its heartbeat, as before.
+	for _, col := range []string{
+		`pid INTEGER NOT NULL DEFAULT 0`,
+		`host TEXT NOT NULL DEFAULT ''`,
+		`ns TEXT NOT NULL DEFAULT ''`,
+	} {
+		_, err = db.Exec(`ALTER TABLE node_lease ADD COLUMN ` + col)
+		if err != nil && !isDuplicateColumn(err) {
+			return fmt.Errorf("migrate node_lease (%s): %w", col, err)
+		}
 	}
 	return nil
 }
@@ -162,12 +184,14 @@ func Acquire(db *sql.DB, ttl time.Duration) (*Holder, error) {
 	// let a node started with a short TTL displace a perfectly healthy one
 	// that had chosen a longer grace period, which is a live node being killed
 	// by a flag on a different command line. Found by running it.
+	me := whoAmI()
 	res, err := db.Exec(`
-INSERT INTO node_lease (id, holder, since, heartbeat, ttl_ms) VALUES (1, ?, ?, ?, ?)
+INSERT INTO node_lease (id, holder, since, heartbeat, ttl_ms, pid, host, ns) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET holder = excluded.holder, since = excluded.since,
-                              heartbeat = excluded.heartbeat, ttl_ms = excluded.ttl_ms
+                              heartbeat = excluded.heartbeat, ttl_ms = excluded.ttl_ms,
+                              pid = excluded.pid, host = excluded.host, ns = excluded.ns
 WHERE ? - node_lease.heartbeat >= node_lease.ttl_ms`,
-		id, nowMS, nowMS, ttl.Milliseconds(), nowMS)
+		id, nowMS, nowMS, ttl.Milliseconds(), me.pid, me.host, me.ns, nowMS)
 	if err != nil {
 		return nil, fmt.Errorf("acquire the lease: %w", err)
 	}
@@ -181,13 +205,18 @@ WHERE ? - node_lease.heartbeat >= node_lease.ttl_ms`,
 			current.TTL, current.Since.Format(time.RFC3339))
 	}
 
+	return startHolder(db, id, ttl, now), nil
+}
+
+// startHolder begins renewing a lease this process has just taken.
+func startHolder(db *sql.DB, id string, ttl time.Duration, since time.Time) *Holder {
 	h := &Holder{
-		db: db, id: id, ttl: ttl, Since: now,
+		db: db, id: id, ttl: ttl, Since: since,
 		stop: make(chan struct{}), lost: make(chan struct{}),
 	}
 	h.wg.Add(1)
 	go h.renew()
-	return h, nil
+	return h
 }
 
 // AcquireWaiting is Acquire for a process that expects to be a *replacement*:
@@ -235,10 +264,11 @@ func AcquireWaiting(db *sql.DB, ttl, maxWait time.Duration) (*Holder, time.Durat
 
 // Current reads whoever holds the lease, without taking it.
 func Current(db *sql.DB) (Info, error) {
-	var holder string
+	var holder, host, ns string
 	var since, heartbeat, ttlMS int64
-	err := db.QueryRow(`SELECT holder, since, heartbeat, ttl_ms FROM node_lease WHERE id = 1`).
-		Scan(&holder, &since, &heartbeat, &ttlMS)
+	var pid int
+	err := db.QueryRow(`SELECT holder, since, heartbeat, ttl_ms, pid, host, ns FROM node_lease WHERE id = 1`).
+		Scan(&holder, &since, &heartbeat, &ttlMS, &pid, &host, &ns)
 	if err == sql.ErrNoRows {
 		return Info{}, nil
 	}
@@ -250,6 +280,9 @@ func Current(db *sql.DB) (Info, error) {
 		Since:     time.UnixMilli(since),
 		Heartbeat: time.UnixMilli(heartbeat),
 		TTL:       time.Duration(ttlMS) * time.Millisecond,
+		PID:       pid,
+		Host:      host,
+		NS:        ns,
 	}, nil
 }
 

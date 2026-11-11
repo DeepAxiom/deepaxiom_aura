@@ -117,6 +117,21 @@ type Attestation struct {
 	// Energy is what the skill measured or estimated for this inference.
 	// Optional, and honest about which of the two it is — see EnergyReport.
 	Energy *EnergyReport `json:"energy,omitempty"`
+
+	// Usage is what the engine counted for this inference (C5 v1.2). Reported
+	// by the engine and passed on by the skill, never estimated: it is the
+	// number the kernel's own bytes/4 estimate gets checked against.
+	Usage *UsageReport `json:"usage,omitempty"`
+}
+
+// UsageReport carries an inference's token counts. Pointers, so "the engine
+// did not say" stays distinguishable from "the engine said zero".
+type UsageReport struct {
+	InputTokens  *int64 `json:"input_tokens,omitempty"`
+	OutputTokens *int64 `json:"output_tokens,omitempty"`
+	// CachedInputTokens is the part of InputTokens served from a prefix cache
+	// rather than evaluated.
+	CachedInputTokens *int64 `json:"cached_input_tokens,omitempty"`
 }
 
 // EnergyReport carries the cost of an inference in millijoules, together with
@@ -194,6 +209,16 @@ func ParseAttestation(raw []byte) (Attestation, string, error) {
 		if !oneOf(a.Energy.Source, EnergySources) {
 			return a, "", fmt.Errorf("attestation energy source %q is not one of %v",
 				a.Energy.Source, EnergySources)
+		}
+	}
+	if a.Usage != nil {
+		for name, v := range map[string]*int64{
+			"input_tokens": a.Usage.InputTokens, "output_tokens": a.Usage.OutputTokens,
+			"cached_input_tokens": a.Usage.CachedInputTokens,
+		} {
+			if v != nil && *v < 0 {
+				return a, "", fmt.Errorf("attestation reports usage.%s = %d — a token count cannot be negative", name, *v)
+			}
 		}
 	}
 	return a, AttestationHash(raw), nil

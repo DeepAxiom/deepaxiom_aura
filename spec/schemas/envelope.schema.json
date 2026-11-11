@@ -41,8 +41,22 @@
             "basis": { "type": "string" }
           }
         },
-        "tee": {}
+        "tee": {},
+        "usage": {
+          "type": "object",
+          "description": "C5 v1.2: what the engine counted for this inference. Reported by the engine, never estimated by the skill.",
+          "properties": {
+            "input_tokens": { "type": "integer", "minimum": 0 },
+            "output_tokens": { "type": "integer", "minimum": 0 },
+            "cached_input_tokens": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
+    },
+    "trace": {
+      "type": "string",
+      "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+      "description": "C3 v1.7: a W3C Trace Context traceparent. Supplied by a client on the envelope that starts a chain; carried by the kernel on every hop of that chain."
     }
   },
   "allOf": [

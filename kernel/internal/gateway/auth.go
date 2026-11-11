@@ -69,6 +69,8 @@ type Auth struct {
 	// means only the operator token is accepted, which is what a node that has
 	// issued none behaves like anyway.
 	Tokens TokenResolver
+	// tickets holds the key watch tickets are signed with, derived from Token.
+	tickets ticketKeys
 	// AllowedOrigins is the exact-match allowlist for the WebSocket Origin
 	// header. Empty means "same-origin only": a browser page served from
 	// somewhere else is refused.
@@ -275,6 +277,14 @@ func (a *Auth) Authenticate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 			return
 		}
+		// A watch ticket authenticates exactly one route. Checked before the
+		// token path so a viewer holding only a ticket is not refused for
+		// lacking a bearer token — and it yields a principal that Allows
+		// nothing else.
+		if p, ok := a.watchTicketPrincipal(r); ok {
+			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
+			return
+		}
 		p, err := a.resolve(r)
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="aura"`)
@@ -362,7 +372,7 @@ func (a *Auth) constantTimeMatch(got string) bool {
 }
 
 func isWebSocketPath(p string) bool {
-	return p == "/ws/skill" || p == "/v1/stream"
+	return p == "/ws/skill" || p == "/ws/expertise" || p == "/v1/stream" || p == "/v1/watch"
 }
 
 // CheckOrigin decides whether a WebSocket upgrade may proceed.

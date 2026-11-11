@@ -42,6 +42,13 @@ type Manager struct {
 	// approve is a property of the node, and a per-session roster would mean
 	// whoever opened the session got to say who could authorize its writes.
 	approvers *approver.Registry
+	// mailboxDepth > 0 gives every session its own inbound queue and drain
+	// goroutine instead of routing inline on the producer's read loop. See
+	// mailbox.go.
+	mailboxDepth int
+	mbox         mailboxCounters
+	// usage totals what skills reported their inferences cost (C5 `usage`).
+	usage usageCounters
 }
 
 // SetApprovers installs the enrolled operator roster. Separate from NewManager
@@ -104,9 +111,14 @@ func (m *Manager) Start(sessionID, graphID, undoOf string,
 		return nil, err
 	}
 	sess.approvers = m.approvers
+	sess.usage = &m.usage
 	if err := m.st.StartSession(sessionID, graphID); err != nil {
 		return nil, err
 	}
+	// From here the session is live: its replicas carry its load, and its
+	// mailbox (if the node uses them) is draining.
+	sess.acquireReplicas()
+	m.startMailbox(sess)
 	m.mu.Lock()
 	m.sessions[sessionID] = sess
 	m.mu.Unlock()
@@ -126,8 +138,16 @@ func (m *Manager) Get(sessionID string) (*Session, bool) {
 
 func (m *Manager) End(sessionID string) {
 	m.mu.Lock()
+	sess := m.sessions[sessionID]
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()
+	if sess != nil {
+		// After the delete, so nothing new can be enqueued for it, and before
+		// the store is told the session ended, so nothing is still routing.
+		m.stopMailbox(sess)
+		sess.releaseReplicas()
+		sess.closeWatchers()
+	}
 	_ = m.st.EndSession(sessionID)
 	m.log.Info("session ended", "session", sessionID)
 }
@@ -139,6 +159,10 @@ func (m *Manager) Dispatch(env channel.Envelope) error {
 	m.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("unknown session %q", env.Session)
+	}
+	if mb := sess.mailbox; mb != nil {
+		m.enqueue(mb, env)
+		return nil
 	}
 	return m.route(sess, env)
 }

@@ -178,43 +178,43 @@ jobs:
       # are silent — a mis-ordered chunk yields a worse transcript, never an
       # error.
       - name: asr
-        working-directory: skills/asr
+        working-directory: expertise/asr
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
       - name: sentence chunker
-        working-directory: skills/sentence-chunker
+        working-directory: expertise/sentence-chunker
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
       - name: echo
-        working-directory: skills/echo
+        working-directory: expertise/echo
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
       - name: tts
-        working-directory: skills/tts
+        working-directory: expertise/tts
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
       - name: llm-chat
-        working-directory: skills/llm-chat
+        working-directory: expertise/llm-chat
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
       - name: imaging-read
-        working-directory: skills/imaging-read
+        working-directory: expertise/imaging-read
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
       - name: planner
-        working-directory: skills/planner
+        working-directory: expertise/planner
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
@@ -223,19 +223,19 @@ jobs:
       # model-manager's catalogue and fails if this skill recommends a model
       # that one cannot fetch.
       - name: model fit
-        working-directory: skills/model-fit
+        working-directory: expertise/model-fit
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
       - name: model manager
-        working-directory: skills/model-manager
+        working-directory: expertise/model-manager
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
 
       - name: memory context
-        working-directory: skills/memory-context
+        working-directory: expertise/memory-context
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest discover -p 'test_*.py'
@@ -244,7 +244,7 @@ jobs:
       # (adversarial/integration jobs cover that separately); test_parser.py
       # is pure and runs on every push like the rest.
       - name: postgres cdc parser
-        working-directory: skills/postgres-cdc
+        working-directory: expertise/postgres-cdc
         env:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest test_parser -v
@@ -298,6 +298,17 @@ jobs:
           # way.
           python scripts/ledger_adversarial.py --port 9080 \
             --data "$RUNNER_TEMP/aura-data" --aura-binary ./kernel/aura
+
+      # Two real binaries on one data directory, a real Expertise connected and
+      # a session in progress; the leader is SIGKILLed. A unit test cannot do
+      # this — it cannot kill the process it runs in — and every property that
+      # matters here is a property of processes: the standby answers on the
+      # same port as the same node, the Expertise reconnects, the same session
+      # continues, and the ledger still verifies offline.
+      - name: a standby takes over from a killed node
+        run: |
+          pip install pyyaml
+          python scripts/failover_e2e.py ./kernel/aura --port 9396 --max-outage-ms 5000
 
   adversarial:
     name: adversarial (the node refuses what it should)
@@ -804,7 +815,7 @@ jobs:
       # with no environment at all has to find the node's token by itself.
       - name: a skill connects with no configuration whatsoever
         run: |
-          ( cd skills/echo && PYTHONPATH=../../sdk/python/src python main.py > /tmp/echo.log 2>&1 & )
+          ( cd expertise/echo && PYTHONPATH=../../sdk/python/src python main.py > /tmp/echo.log 2>&1 & )
           for i in $(seq 1 30); do
             ./kernel/aura status --port 9080 2>/dev/null | grep -q logical.echo && break
             sleep 1
@@ -823,8 +834,8 @@ jobs:
       # missing.
       - name: the planner can read the catalogue
         run: |
-          ( cd skills/planner && PYTHONPATH=../../sdk/python/src python main.py > /tmp/planner.log 2>&1 & )
-          ( cd skills/model-fit && PYTHONPATH=../../sdk/python/src python main.py > /tmp/fit.log 2>&1 & )
+          ( cd expertise/planner && PYTHONPATH=../../sdk/python/src python main.py > /tmp/planner.log 2>&1 & )
+          ( cd expertise/model-fit && PYTHONPATH=../../sdk/python/src python main.py > /tmp/fit.log 2>&1 & )
           for i in $(seq 1 30); do
             ./kernel/aura status --port 9080 2>/dev/null | grep -q cognitive.planner && break
             sleep 1
@@ -1009,6 +1020,16 @@ jobs:
       - name: build the binary
         working-directory: media
         run: go build -ldflags "-X main.version=$(cat VERSION)" -o aura-media ./cmd/aura-media
+
+      # The pipeline's tests that encode for real skip on a machine with no
+      # ffmpeg, which is every job but this one. Here they run: every software
+      # encoder the node offers is made to encode a clip with a scene cut in
+      # it, and the ladder that comes out must have every rung cut at the same
+      # instants. The argv tests can only say what was asked for; this is
+      # whether the encoder did it.
+      - name: every offered encoder produces an aligned ladder
+        working-directory: media
+        run: go test ./internal/pipeline -run 'Encoder|LegacyArgv|LiveArgv|FailedFfmpeg|SelfTest' -count=1 -v
 
       # Everything this covers is invisible to a unit test: whether the argv the
       # builders produce is argv ffmpeg accepts, whether the package it writes is

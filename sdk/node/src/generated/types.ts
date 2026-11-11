@@ -35,7 +35,13 @@ export interface Envelope {
       basis?: string;
     };
     tee?: unknown;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cached_input_tokens?: number;
+    };
   };
+  trace?: string;
 }
 
 /** C1 Skill Manifest — aura:spec:manifest@1 */

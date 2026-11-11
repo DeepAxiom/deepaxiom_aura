@@ -448,6 +448,44 @@ async def section_cancel(base: str, ws_skill: str, ws_client_base: str):
                   "the kernel forwarded output produced after the cancel")
 
 
+async def section_trace(base: str, ws_skill: str, ws_client_base: str):
+    """C3 v1.7 trace: a client's W3C trace context rides the whole chain."""
+    print("\n■ C3 — trace context rides the chain")
+    run = new_id()[:6].lower()
+    cap = f"tr_{run}"
+    trace = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    http(base, "POST", "/v1/graphs", graph(f"trace-{run}", f"logical.{cap}"))
+
+    def data(seq: int, **extra) -> str:
+        return json.dumps({
+            "v": "1", "id": new_id(), "node": "client", "port": "text_out",
+            "seq": seq, "idem": f"trace-{run}:{seq}", "schema": "std/text@1",
+            "kind": "data", "payload": {"text": f"t{seq}", "final": True}, **extra})
+
+    async with FakeSkill(ws_skill, manifest(cap)) as sk:
+        async with websockets.connect(f"{ws_client_base}?graph=trace-{run}") as ws:
+            await client_recv_until(ws, {"status"})
+
+            await ws.send(data(1, trace=trace))
+            reply = await client_recv_until(ws, {"data", "error"})
+            check("the skill is handed the client's trace context",
+                  bool(sk.received) and sk.received[0].get("trace") == trace)
+            # The fake skill never echoes the field, like every skill built
+            # before it existed: the kernel must carry it on its own.
+            check("the reply carries it back, though the skill never echoed it",
+                  reply.get("trace") == trace, str(reply.get("trace")))
+
+            await ws.send(data(2))
+            plain = await client_recv_until(ws, {"data", "error"})
+            check("a chain with no context carries no trace field",
+                  "trace" not in plain and "trace" not in sk.received[-1])
+
+            await ws.send(data(3, trace="not-a-traceparent"))
+            bad = await client_recv_until(ws, {"data", "error"})
+            check("a malformed context is dropped, and the delivery still happens",
+                  bad.get("kind") == "data" and "trace" not in bad)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=9080)
@@ -461,6 +499,7 @@ def main() -> int:
     section_vectors()
     asyncio.run(section_kernel(base, ws_skill, ws_client))
     asyncio.run(section_cancel(base, ws_skill, ws_client))
+    asyncio.run(section_trace(base, ws_skill, ws_client))
 
     print(f"\n{'─' * 50}\n  {len(PASS)} PASS · {len(FAIL)} FAIL")
     if FAIL:

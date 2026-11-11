@@ -168,6 +168,48 @@ func (g *Gateway) metrics(w http.ResponseWriter, r *http.Request) {
 			"gauge", float64(len(g.Approvals.List())))
 	}
 
+	if g.Mgr != nil {
+		mb := g.Mgr.MailboxStats()
+		if mb.Enabled {
+			emit("aura_mailbox_queued",
+				"Envelopes waiting in per-session dispatch queues. Near zero on a healthy "+
+					"node; sustained growth is consumers slower than what feeds them.",
+				"gauge", float64(mb.Queued))
+			emit("aura_mailbox_waits_total",
+				"Times a skill's read loop found one session's queue full and had to wait. "+
+					"The number to read before raising --session-mailbox: it is one slow "+
+					"session, not a small queue, if it rises while aura_mailbox_queued stays low.",
+				"counter", float64(mb.Waits))
+			emit("aura_mailbox_dropped_total",
+				"Envelopes that arrived for a session as it ended and were discarded.",
+				"counter", float64(mb.Dropped))
+		}
+
+		u := g.Mgr.TokenUsage()
+		const usageHelp = "Tokens skills reported in C5 attestations, by kind. Reported, not " +
+			"estimated, and therefore a floor: a skill that attests no usage adds nothing. " +
+			"cached_input over input is the prefix-cache hit rate."
+		fmt.Fprintf(&b, "# HELP aura_tokens_total %s\n# TYPE aura_tokens_total counter\n", usageHelp)
+		fmt.Fprintf(&b, "aura_tokens_total{kind=\"input\"} %d\n", u.Input)
+		fmt.Fprintf(&b, "aura_tokens_total{kind=\"output\"} %d\n", u.Output)
+		fmt.Fprintf(&b, "aura_tokens_total{kind=\"cached_input\"} %d\n", u.CachedInput)
+		emit("aura_inferences_metered_total",
+			"Inferences whose attestation carried token usage.", "counter", float64(u.Inferences))
+	}
+
+	if g.Traces != nil {
+		ts := g.Traces.Stats()
+		emit("aura_trace_spans_exported_total",
+			"Spans a collector acknowledged.", "counter", float64(ts.Exported))
+		emit("aura_trace_spans_dropped_total",
+			"Spans dropped because the export queue was full. The collector is slower than "+
+				"the node; lower --otlp-sample.", "counter", float64(ts.Dropped))
+		emit("aura_trace_spans_failed_total",
+			"Spans in batches the collector refused or never answered. The causal log is "+
+				"unaffected; `aura trace <session>` can still export any of them.",
+			"counter", float64(ts.Failed))
+	}
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(b.String()))

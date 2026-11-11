@@ -106,7 +106,7 @@ func cmdWhy(args []string) {
 	if explanation != "" {
 		fmt.Printf("\n  why › %s\n", explanation)
 	} else {
-		fmt.Printf("\n  (no LLM skill connected — start skills/llm-chat for a narrated explanation)\n")
+		fmt.Printf("\n  (no LLM skill connected — start expertise/llm-chat for a narrated explanation)\n")
 	}
 }
 
