@@ -21,14 +21,14 @@ hours.
 
 ## Scope
 
-In scope: `kernel/`, `spec/`, `sdk/`, and the first-party skills under
-`skills/`.
+In scope: `kernel/`, `spec/`, `sdk/`, and the first-party Expertises under
+`expertise/`.
 
-Out of scope: third-party skills. A skill is untrusted code that connects
+Out of scope: third-party Expertises. An Expertise is untrusted code that connects
 to a node; this project reviews the ones it ships, not ones you install
-from elsewhere. If a third-party skill can do something a skill shouldn't
+from elsewhere. If a third-party Expertise can do something an Expertise shouldn't
 be able to do *because the kernel let it*, that's in scope — the kernel's
-enforcement is what we're accountable for, not the skill's intent.
+enforcement is what we're accountable for, not the Expertise's intent.
 
 ## What counts as a vulnerability here
 
@@ -44,7 +44,7 @@ bug, not a feature request:
   that `aura verify` fails to detect, including a chain repaired after
   tampering (only the checkpoint's Ed25519 signature is supposed to catch
   that). See [`spec/c4-ledger.md`](spec/c4-ledger.md).
-- **Wasm sandbox escape** — a skill running under `wazero` reading,
+- **Wasm sandbox escape** — an Expertise running under `wazero` reading,
   writing, or reaching the network outside what its manifest's
   `filesystem`/`egress_http` permissions declare.
 - **Control-plane auth bypass** — reaching `/v1/*`, `/ws/*`, `/mcp`, or the

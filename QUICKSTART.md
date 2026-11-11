@@ -1,11 +1,11 @@
 # Quick start
 
-From nothing to a running node with a skill connected, in three terminals.
+From nothing to a running node with an Expertise connected, in three terminals.
 Every command here has been run end to end on a clean machine.
 
 [Versión en español](QUICKSTART-ES.md) · [Full guide](GUIDE.md) · [README](README.md)
 
-**You need:** Python 3.11+ for the skills, and Go 1.25+ only if you build the
+**You need:** Python 3.11+ for the Expertises, and Go 1.25+ only if you build the
 kernel instead of downloading it. No CGO, no Docker, no database, no account.
 
 ---
@@ -39,7 +39,7 @@ It prints a banner. Two lines from it matter:
 
 **Open the `open` URL in a browser.** That is the control plane. It opens on
 **Studio**, which is where you build a graph, run one, and talk to it — the
-canvas, the conversation panel and the live activity are one screen. Skills,
+canvas, the conversation panel and the live activity are one screen. Expertises,
 projections, graphs, sessions and the full reference are beside it. The token rides in the fragment because browsers
 never send a fragment to a server, so it stays out of access logs; the page
 stores it and strips it from the address bar.
@@ -49,27 +49,27 @@ this terminal running.
 
 ---
 
-## 2 · Connect a skill
+## 2 · Connect an Expertise
 
-**A fresh node has an empty catalogue.** `aura up` is the kernel and no skills:
-skills are separate processes that connect *to* it. Nothing will run until one
+**A fresh node has an empty catalogue.** `aura up` is the kernel and no Expertises:
+Expertises are separate processes that connect *to* it. Nothing will run until one
 does.
 
 It does ship four graphs — `echo`, `chat`, `plan` and `voice` — so there is
-something to point a skill at on the first run. That is why Studio's live rail
+something to point an Expertise at on the first run. That is why Studio's live rail
 has rows in it before you have drawn anything, and why the command in step 3
 names `echo` without registering it first. Graphs are seeded; the catalogue of
-skills is not.
+Expertises is not.
 
 ```bash
-cd skills/echo
+cd expertise/echo
 PYTHONPATH=../../sdk/python/src python main.py
 ```
 
 You should see `registered:` in the output. No token setup — the SDK reads
 `~/.aura/node.token` the same way the CLI does.
 
-> Run it from the skill's own directory. The SDK loads `skill.yaml` from the
+> Run it from the Expertise's own directory. The SDK loads `expertise.yaml` from the
 > working directory, so starting it from the repo root cannot find the manifest.
 
 Leave this terminal running too.
@@ -106,7 +106,7 @@ with an exit code:
 hello aura
 ```
 
-That round trip went client → kernel → graph executor → skill → back, over a
+That round trip went client → kernel → graph executor → Expertise → back, over a
 WebSocket, with every envelope durably logged before it was acknowledged.
 
 ---
@@ -115,12 +115,12 @@ WebSocket, with every envelope durably logged before it was acknowledged.
 
 | | |
 |---|---|
-| **Draw a graph** | Open the **Canvas** view. Drag a skill from the palette, wire `client.text_out` to its input, and register it. |
+| **Draw a graph** | Open the **Canvas** view. Drag an Expertise from the palette, wire `client.text_out` to its input, and register it. |
 | **Read the reference** | The **Reference** view has every command, all five contracts, every schema — offline, no network. |
 | **Put your own app behind it** | [`examples/expose-app/`](examples/expose-app/) is six lines: expose two existing functions, mark one `write: true`, and the kernel gates and seals it. |
 | **Guard an agent you already run** | `aura guard --config claude_desktop_config.json` puts your MCP servers behind a checkpoint. No runtime to stand up. |
 | **See what was sealed** | `aura verify` recomputes the ledger's hash chain and signatures from the database file alone, with no kernel running. |
-| **Publish a skill** | `aura add <org/cat/name> --registry https://registry.deepaxiom.com` installs from the public registry after verifying hash and signature. Publishing needs a publisher credential in the URL (`https://publisher:PASS@registry.deepaxiom.com`), issued on request — see [the README](README.md#4--a-registry-you-host-and-skills-you-own). Studio, the web front for it, is at `studio.deepaxiom.com`. |
+| **Publish an Expertise** | `aura add <org/cat/name> --registry https://registry.deepaxiom.com` installs from the public registry after verifying hash and signature. Publishing needs a publisher credential in the URL (`https://publisher:PASS@registry.deepaxiom.com`), issued on request — see [the README](README.md#a-registry-you-host-and-expertise-you-own). Studio, the web front for it, is at `studio.deepaxiom.com`. |
 
 ---
 
@@ -134,8 +134,8 @@ WebSocket, with every envelope durably logged before it was acknowledged.
 ```
 
 **`aura chat` without `--graph` uses the `chat` graph, which needs an LLM.**
-Without one it fails with `no connected skill provides capability
-"cognitive.llm.chat"`. Start [`skills/llm-chat/`](skills/llm-chat/) for that —
+Without one it fails with `no connected Expertise provides capability
+"cognitive.llm.chat"`. Start [`Expertises/llm-chat/`](expertise/llm-chat/) for that —
 it downloads a model. The `echo` graph is the one that works cold.
 
 **Windows PowerShell** uses different syntax for environment variables:
@@ -144,7 +144,7 @@ it downloads a model. The `echo` graph is the one that works cold.
 $env:PYTHONPATH = "../../sdk/python/src"; python main.py
 ```
 
-**Nothing happens / `skills connected: 0`.** Check the skill's terminal. If it
+**Nothing happens / `skills connected: 0`.** Check the Expertise's terminal. If it
 says `401`, it could not find a credential — see below. If it says
 `ConnectionRefused`, the node is not up.
 

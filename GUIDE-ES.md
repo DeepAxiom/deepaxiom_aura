@@ -1,64 +1,78 @@
-# Deep Axiom — un runtime de streaming para skills de IA
+# AURA — la guía
 
-**Estado: v0.3.0 — pre-1.0, pre-producción, Fase 1 de 2 hacia la beta abierta.** · **Construido sobre la arquitectura de kernel AURA · [Apache-2.0 (spec y SDK) · AGPLv3 o comercial (kernel) — ver LICENSE.md](LICENSE.md)** · [English version](GUIDE.md) · [← README](README-ES.md)
+**Estado: v0.4.0 — pre-1.0, pre-producción.** · **[Apache-2.0 (spec y SDK) · AGPLv3 o comercial (kernel) — ver LICENSE.md](LICENSE.md)** · [English version](GUIDE.md) · [← README](README-ES.md) · [Roadmap](ROADMAP-ES.md)
 
-Deep Axiom es un runtime de código abierto para componer skills — LLMs, voz,
-bases de datos, APIs de negocio — en grafos que corren como streams tipados y vivos.
-Un único binario contiene el kernel, la UI del plano de control, el almacén de
-estado, el bus de mensajes y el ledger de efectos; no necesita cuenta, ni nube,
-ni base de datos externa. Los grafos se escriben a mano o los genera un planner
-a partir de un objetivo en lenguaje natural, y cada sesión guarda un log de
-eventos causal append-only que puedes explicar o reproducir después.
+AURA se está construyendo como el sistema operativo de los robots autónomos:
+la capa entre lo que una máquina percibe y lo que hace. Corre los modelos que
+deciden, lleva sus entradas y salidas como streams tipados en vivo, y se pone
+entre cada decisión y el actuador — para que lo que hace una máquina sea lo
+bastante rápido para importar, trazable hasta lo que lo argumentó, e imposible
+de ejecutar sin que el nodo lo haya revisado antes.
 
-Cuatro decisiones de diseño lo separan de las herramientas de workflows (n8n,
-Zapier, Make) y de los frameworks de agentes:
+Es un solo binario. El kernel, la UI del plano de control, el almacén de
+estado, el bus de mensajes y el ledger de efectos están todos dentro; no
+necesita cuenta, ni nube, ni base de datos externa, que es la única forma que
+funciona en una máquina que puede no tener red.
 
-- **La unidad de trabajo es la conexión, no la ejecución.** Los mensajes son
-  envelopes sobre un stream tipado, ordenado, causal y con contrapresión, sobre
-  un socket pensado para quedarse abierto — no pasos de un lote que arranca,
-  corre y se destruye.
-- **Dos propiedades de seguridad viven en el kernel, no en userland.** Toda
-  arista hacia un skill que actúa sobre el mundo (`motor.*`) lleva la puerta que
-  decidió la política del nodo — no el autor del grafo —, aplicada por el
-  executor, así que un grafo escrito a mano no puede saltársela; y el kernel
-  suprime lo que llegue de una cadena cancelada, así que un skill que ignore el
-  cancel produce salida que no va a ninguna parte.
-- **Cada efecto se sella en un ledger encadenado y firmado — no se registra
-  como log, se atestigua.** Un nodo autoriza un efecto por política, lo
-  registra en una cadena donde alterar una entrada vieja rompe todos los
-  hashes posteriores, se compromete a una cabeza Merkle RFC 6962, y la firma.
-  Un **witness** externo puede contrafirmarla, que es lo que descarta que el
-  propio operador del nodo reescriba la historia. Cualquier efecto suelto se
-  exporta como **recibo portátil** que cualquiera verifica sin conexión — sin
-  base de datos, sin nodo, sin red.
-- **El ledger registra qué *argumentó* un acto, no solo quién lo autorizó.**
-  Un skill que corre un modelo lo atestigua — motor, modelo, revisión de
-  Hugging Face, cuantización, parámetros de muestreo, semilla — y el kernel
-  liga ese registro a cada efecto al que la salida llevó causalmente. Así una
-  entrada sellada responde "sobre qué base pasó esto", y un cambio silencioso
-  de modelo altera hashes ya comprometidos en una cadena de solo anexado. Es
-  una *afirmación* ligada de forma infalsificable a sus consecuencias, no una
-  prueba de qué se ejecutó; ver
-  [Modelo de seguridad](#modelo-de-seguridad), que lo explica en detalle.
+**Qué es hoy, con precisión.** La capa de decisión, con la evidencia
+incorporada. Todavía no ha conducido un robot físico en nada de lo que este
+repositorio prueba, y no tiene puente al middleware de un robot; [el
+roadmap](ROADMAP-ES.md) empieza por ahí. Lo que existe es la parte difícil de
+agregar después:
 
-**Lo que todavía no es.** No hay vista multidispositivo de una sesión viva, ni
-failover si muere el nodo propietario — el estado de una sesión sobrevive a un
-socket caído, pero no a que desaparezca el proceso del nodo. Un nodo se autentica
-— loopback por defecto, token bearer, comprobación de origen del WebSocket, TLS
-opcional — pero todos los llamadores comparten un solo token de nodo, así que un
-skill comprometido tiene la misma credencial que el operador. Y un skill
-`format: source` no está contenido: `--sandbox process` limpia su entorno y
-encierra su directorio de trabajo, `format: wasm` sí está genuinamente aislado,
-pero ninguno de los dos contiene código hostil. Lee [Modelo de
+- **La conexión, no la ejecución, es la unidad de trabajo.** Un sensor no
+  termina. Los mensajes son envelopes en un stream tipado, ordenado, causal y
+  con contrapresión sobre un socket pensado para quedarse abierto — no pasos de
+  un lote que arranca, corre y se destruye. Cada sesión rutea en su propia
+  cola, así que un consumidor lento no puede frenar a otro.
+- **Lo que actúa sobre el mundo es un tipo, y el kernel lo hace cumplir.** Un
+  Expertise es `sensorial`, `cognitive`, `motor`, `memory` o `logical`. Toda
+  arista hacia un Expertise `motor.*` lleva un gate que decidió la policy del
+  *nodo* — no el autor del grafo — aplicado por el executor en el único punto
+  por el que pasa toda entrega, así que un grafo escrito a mano no puede
+  saltárselo. Una cadena cancelada la suprime el kernel, así que un Expertise
+  que ignora el cancel produce salida que no llega a ningún lado. La
+  especulación — empezar a trabajar antes sobre un resultado parcial — se
+  rechaza al cablear cualquier arista hacia un `motor`.
+- **Cada efecto se sella, no se registra.** Un nodo autoriza un efecto por
+  policy, lo anota en una cadena de hashes donde alterar una entry vieja rompe
+  todos los hashes posteriores, se compromete con una cabeza Merkle RFC 6962 y
+  la firma. Un **witness** de terceros puede contrafirmarla, que es lo que
+  descarta que el propio operador del nodo reescriba la historia. Cualquier
+  efecto se exporta como un **recibo portable** que cualquiera verifica sin
+  conexión.
+- **El registro dice qué *argumentó* a favor de un acto, no solo quién lo
+  autorizó.** Un Expertise que corre un modelo lo atestigua — motor, modelo,
+  revisión, cuantización, parámetros de muestreo, semilla, y los tokens que
+  contó el motor — y el kernel ata eso a cada efecto al que la salida llevó
+  causalmente. Un cambio silencioso de modelo cambia hashes ya comprometidos
+  en una cadena append-only. Es una *afirmación* atada de forma infalsificable
+  a sus consecuencias, no una prueba de lo que se ejecutó; [Modelo de
+  seguridad](#modelo-de-seguridad) lo dice con detalle.
+- **Los deadlines son absolutos y se heredan.** Un salto puede apretar uno,
+  nunca extenderlo, y una entrega que ya va tarde se descarta en vez de
+  calcularse para nadie.
+- **Un nodo que muere se reemplaza.** Un standby en el mismo host toma el
+  relevo en decenas de milisegundos, como el mismo nodo, y las sesiones
+  continúan desde el log causal. Ver [Lo que un nodo no
+  sobrevive](#lo-que-un-nodo-no-sobrevive).
+
+**Lo que esto no es.** No es un controlador de tiempo real duro, ni lo va a
+ser: un lazo de servo a 1 kHz pertenece al controlador del propio robot. Lo que
+AURA controla es lo que a ese controlador se le *pide* hacer, y lo que el
+registro dice que hizo. No sobrevive a perder la máquina en la que corre. Y un
+Expertise distribuido como código fuente no está contenido: `--sandbox process`
+limpia su entorno y encierra su directorio de trabajo, `format: wasm` está
+genuinamente aislado, y solo este último detiene código hostil. Lee [Modelo de
 seguridad](#modelo-de-seguridad) antes de exponer un puerto; [Estado de los
-hitos](#estado-de-los-hitos) y [Diseñado, aún no construido](#diseñado-aún-no-construido)
-lo detallan todo.
+hitos](#estado-de-los-hitos) y [Diseñado, aún no
+construido](#diseñado-aún-no-construido) lo listan todo de forma explícita.
 
-Para agregar una capacidad, escribe un skill y regístralo — no hay cola de
-revisión, porque el registry lo alojas tú. Mira [`skills/`](skills/) para
-patrones ([`skills/echo/`](skills/echo/) es el mínimo,
-[`skills/postgres-cdc/`](skills/postgres-cdc/) un skill `sensorial` que envuelve
-un sistema externo, [`skills/model-manager/`](skills/model-manager/) uno
+Para agregar una capacidad, escribe un Expertise y regístralo — no hay cola de
+revisión, porque el registry lo alojas tú. Mira [`expertise/`](expertise/) para
+patrones ([`expertise/echo/`](expertise/echo/) es el mínimo,
+[`expertise/postgres-cdc/`](expertise/postgres-cdc/) un Expertise `sensorial` que envuelve
+un sistema externo, [`expertise/model-manager/`](expertise/model-manager/) uno
 `motor` que actúa sobre el mundo) y [`CONTRIBUTING.md`](CONTRIBUTING.md) para
 el kernel/SDK/spec en sí.
 
@@ -76,101 +90,118 @@ el kernel/SDK/spec en sí.
 8. [Referencia de comandos](#referencia-de-comandos)
 9. [Ejemplos completos](#ejemplos-completos)
 10. [La UI del plano de control](#la-ui-del-plano-de-control)
-11. [Escribir un skill (el SDK)](#escribir-un-skill-el-sdk)
-12. [Configuración de skills en tiempo de ejecución](#configuración-de-skills-en-tiempo-de-ejecución)
+11. [Escribir un Expertise (el SDK)](#escribir-un-expertise-el-sdk)
+12. [Configuración de Expertises en tiempo de ejecución](#configuración-de-expertises-en-tiempo-de-ejecución)
 13. [Conectar software existente](#conectar-software-existente)
 14. [Hablarle](#hablarle)
 15. [Operación en lenguaje natural](#operación-en-lenguaje-natural)
 16. [Puertos tipados, forzados](#puertos-tipados-forzados)
 17. [Scheduling: especulación, deadlines, presupuestos](#scheduling-especulación-deadlines-presupuestos)
-18. [Drivers de modelos y admisión de recursos](#drivers-de-modelos-y-admisión-de-recursos)
-19. [Audit bundles](#audit-bundles)
-20. [Un entorno OpenEnv](#un-entorno-openenv)
-21. [Aprobación firmada — quién lo permitió](#aprobación-firmada--quién-lo-permitió)
-22. [El broker de credenciales](#el-broker-de-credenciales)
-23. [Regresión contra el ledger](#regresión-contra-el-ledger)
-24. [Aislamiento de skills](#aislamiento-de-skills)
-25. [Witnessing abierto](#witnessing-abierto)
-26. [El marketplace](#el-marketplace)
-27. [Explicabilidad y replay](#explicabilidad-y-replay)
-28. [Federar nodos](#federar-nodos)
-29. [Estándares en las fronteras](#estándares-en-las-fronteras)
-30. [Proteger las tools de un agente](#proteger-las-tools-de-un-agente)
-31. [Los cinco contratos](#los-cinco-contratos)
-32. [Modelo de seguridad](#modelo-de-seguridad)
-33. [API HTTP y WebSocket](#api-http-y-websocket)
-34. [Estructura del repositorio](#estructura-del-repositorio)
-35. [Compilación y release](#compilación-y-release)
-36. [Estado de los hitos](#estado-de-los-hitos)
-37. [Diseñado, aún no construido](#diseñado-aún-no-construido)
-38. [Licencia y gobernanza](#licencia-y-gobernanza)
+18. [Muchas sesiones a la vez](#muchas-sesiones-a-la-vez)
+19. [Drivers de modelos y admisión de recursos](#drivers-de-modelos-y-admisión-de-recursos)
+20. [Audit bundles](#audit-bundles)
+21. [Un entorno OpenEnv](#un-entorno-openenv)
+22. [Aprobación firmada — quién lo permitió](#aprobación-firmada--quién-lo-permitió)
+23. [El broker de credenciales](#el-broker-de-credenciales)
+24. [Regresión contra el ledger](#regresión-contra-el-ledger)
+25. [Aislamiento de Expertises](#aislamiento-de-expertises)
+26. [Witnessing abierto](#witnessing-abierto)
+27. [El marketplace](#el-marketplace)
+28. [Explicabilidad y replay](#explicabilidad-y-replay)
+29. [Federar nodos](#federar-nodos)
+30. [Estándares en las fronteras](#estándares-en-las-fronteras)
+31. [Proteger las tools de un agente](#proteger-las-tools-de-un-agente)
+32. [Los cinco contratos](#los-cinco-contratos)
+33. [Modelo de seguridad](#modelo-de-seguridad)
+34. [API HTTP y WebSocket](#api-http-y-websocket)
+35. [Estructura del repositorio](#estructura-del-repositorio)
+36. [Compilación y release](#compilación-y-release)
+37. [Estado de los hitos](#estado-de-los-hitos)
+38. [Diseñado, aún no construido](#diseñado-aún-no-construido)
+39. [Licencia y gobernanza](#licencia-y-gobernanza)
 
 ---
 
 ## Qué problema resuelve
 
-Las plataformas de automatización de workflows — n8n, Zapier, Make —
-resolvieron "conecta mis herramientas existentes" para trabajo *por lotes*: se
-dispara un trigger, corre una cadena de pasos una vez, y la ejecución termina.
-Ese modelo encaja bien con una sincronización nocturna y con un webhook. Encaja
-mal con una conversación de voz o una sesión multiagente larga, porque ahí el
-estado que importa vive *entre* mensajes, no dentro de una ejecución.
+Una máquina autónoma son tres problemas apilados, y casi todo el software para
+ella resuelve uno.
 
-Hacer de la conexión la unidad de trabajo no es una idea nueva — la
-infraestructura de chat y videojuegos lleva años funcionando así, y Temporal y
-los frameworks de voz en tiempo real resuelven cada uno una parte. Lo poco
-habitual aquí es aplicarlo a trabajo de IA *conectado a legacy*: un runtime que
-instalas junto a los sistemas existentes y que les habla por el mismo protocolo
-de streaming que usa para modelos y clientes. De ahí salen tres consecuencias, y
-de ellas trata buena parte de esta guía:
+**La percepción y el control** tienen buenas respuestas desde hace mucho: el
+middleware del propio robot y sus controladores. Son rápidos, son
+deterministas, y no son esto.
 
-- **Legacy primero.** El primer comando útil es *conecta lo que ya tienes*, no
-  "crea un proyecto". Apúntalo a una especificación OpenAPI y sus operaciones se
-  convierten en skills — de solo lectura por defecto, con aprobación humana
-  obligatoria antes de cualquier escritura. Ver [Conectar software
-  existente](#conectar-software-existente).
-- **Una sola interfaz para cada modelo.** LLMs, ASR, TTS — y cualquier modelo
-  que un skill envuelva — todos tras el mismo contrato de skill, en local o
-  remoto. Mover un skill a otra máquina cambia la colocación, no el grafo.
-- **Distribución federable.** La especificación, el kernel y los SDKs son
-  abiertos y el registry es federable, así que el catálogo del que instalas
-  puedes alojarlo tú. Ver [El marketplace](#el-marketplace).
+**Decidir** es más nuevo. Los modelos que deciden son grandes, lentos frente a
+un lazo de control, compiten por el mismo acelerador y se reemplazan cada
+pocos meses. Correrlos en una máquina es un problema de despliegue — qué
+pesos, en qué forma, cuántos a la vez, cómo se cambian — más que de robótica.
+
+**Responder por lo que hizo** es el que nadie construye primero. Cuando una
+máquina actúa sobre el mundo, alguien terminará preguntando qué vio, qué modelo
+decidió, quién lo permitió y si el registro de todo eso es confiable. Un
+sistema que no fue diseñado para emitir esa evidencia no puede hacerlo después
+sin reconstruir cómo ejecuta: un rastro de auditoría es una propiedad de la
+ruta de ejecución, no una función atornillada a un costado.
+
+AURA es la capa para el segundo y el tercero. De ahí salen tres consecuencias,
+y de ellas trata la mayor parte de esta guía:
+
+- **Todo es un stream, porque un sensor no termina.** Texto, audio, fotogramas
+  y eventos viajan como el mismo envelope tipado sobre una conexión pensada
+  para quedarse abierta, con contrapresión, deadlines que se propagan y una
+  cancelación que el kernel garantiza en vez de pedir.
+- **Un solo contrato para cada modelo.** Lenguaje, voz, visión — y cualquier
+  modelo que envuelva un Expertise — quedan tras el mismo manifiesto y los
+  mismos puertos, en local o en remoto, atestiguados en ambos casos. Mover uno
+  a otra máquina, o cambiarle los pesos, cambia la colocación y no el grafo.
+- **El kernel es el único camino al actuador.** Lo que actúa sobre el mundo es
+  un tipo declarado; la policy del nodo decide qué necesita antes de poder
+  correr; la decisión se sella con lo que la argumentó. Nada de eso vive en el
+  grafo, así que nada de eso lo puede olvidar quien escribió el grafo.
+
+Las mismas propiedades son las que necesitaban los sistemas contra los que esto
+se construyó primero: un software que conecta un modelo a un ERP y lo deja
+escribir es una máquina actuando sobre el mundo, solo que más lenta. Esos usos
+siguen funcionando exactamente igual — ver [Conectar software
+existente](#conectar-software-existente).
 
 ---
 
 ## Cómo se compara
 
 Casi todo lo que hace este runtime ya lo hace algo más — normalmente con más
-madurez, más integraciones, o ambas. Un mapa honesto de dónde encaja:
+madurez. Un mapa honesto de dónde encaja:
 
-| Si necesitas | Usa | Posición de Deep Axiom |
+| Si necesitas | Usa | Dónde está AURA |
 |---|---|---|
-| Cientos de integraciones SaaS listas | **n8n, Zapier, Make** | No compite *en catálogo*. El suyo *es* el producto; los diez skills de aquí son [ejemplos de referencia](skills/), no un inventario — la historia de integración es `aura connect` (cualquier spec OpenAPI se vuelve skills) y `aura guard` (cualquier servidor MCP), no un estante que surtimos. |
-| Workflows largos, duraderos y reproducibles | **Temporal** | No compite en durabilidad. Temporal sobrevive a la muerte del proceso a mitad de workflow; esto todavía no resume una sesión caída. |
-| Agentes de voz en tiempo real en producción | **LiveKit Agents, Pipecat, OpenAI Realtime** | Mucha menos madurez. El primer sonido de una respuesta llega a ~0,41 s en una máquina de desarrollo con modelo local — nunca medido contra estos lado a lado, así que léelo como "usable", no como "competitivo". Elige esos salvo que necesites la voz sobre el *mismo* runtime que el resto. |
-| Una librería de agentes dentro de tu app | **LangGraph, CrewAI, AutoGen** | Forma distinta. Esas son librerías con las que construyes; esto es un proceso que instalas al lado de sistemas existentes. |
-| Descubrimiento de herramientas para un modelo | **MCP** | No es competencia — esto trae un servidor MCP para que sus skills sean herramientas MCP. |
-| Una capa de seguridad sobre el agente que ya corres | **nada que exista hoy** | `aura guard` pone por delante los servidores MCP que un agente ya usa, así cada tool call queda autorizado por la policy del nodo, gateado si actúa sobre el mundo, y sellado en un ledger verificable — sin reescribir el agente. Los productos de audit log se sientan *al lado* de un runtime y registran; esto se sienta *delante* de la llamada y puede rechazarla. La limitación es real y está dicha de entrada: vale hasta donde llega tu control sobre la configuración del agente. |
+| Sensores, actuadores, lazos de control, transformadas | **ROS 2** y los controladores del propio robot | Ni reemplazo ni competencia: esa es la capa de abajo. AURA todavía no tiene puente hacia ella — es el [primer punto del roadmap](ROADMAP-ES.md#el-robot-en-sí) — y nunca va a correr el lazo de servo. |
+| Un ejecutivo de tiempo real duro | **Un RTOS, un kernel Linux de tiempo real, el firmware del controlador** | Esto no. Un proceso Go ruteando envelopes es el nivel correcto para una decisión y el equivocado para un lazo a 1 kHz. |
+| Servir un modelo lo más rápido posible | **llama.cpp server, vLLM, Triton, TensorRT** | Los usa en vez de reemplazarlos: un Expertise es cliente de lo que sirva los pesos, y desde 0.4 todos los de primera parte pueden compartir un solo servidor. Lo que AURA agrega es qué modelo, atestiguado, bajo la policy de quién. |
+| Agentes de voz en tiempo real en producción | **LiveKit Agents, Pipecat** | Mucha menos madurez. La voz aquí es reconocimiento por lotes decodificado repetidamente; el modo incremental es opcional y no redujo la latencia al medirlo. |
+| Video en vivo a una audiencia a escala | **Un CDN de video** | `aura-media` produce la escalera y la playlist en vivo; un CDN delante de los segmentos es la distribución. Construir uno está deliberadamente fuera del plan. |
+| Workflows largos, duraderos y reproducibles | **Temporal** | Forma distinta. Aquí una sesión se reanuda desde su log causal tras un socket caído o un nodo muerto; es una conversación viva, no un workflow con timers y reintentos. |
+| Cientos de integraciones SaaS listas | **n8n, Zapier, Make** | No compite en catálogo. `aura connect` convierte cualquier documento OpenAPI en Expertises y `aura guard` se pone delante de cualquier servidor MCP; aquí no hay un estante de conectores. |
+| Una librería de agentes dentro de tu app | **LangGraph, CrewAI, AutoGen** | Forma distinta: esas son librerías con las que construyes; esto es un proceso que se pone entre un modelo y lo que puede hacer. |
 
-Lo que sí es genuinamente distinto, y la razón para mirar esto en vez de lo de
-arriba:
+Lo que sí es genuinamente distinto, y la razón para mirar esto:
 
-- **La puerta de aprobación humana es un invariante del kernel, no código del
-  grafo.** En las librerías de agentes el interrupt vive en el grafo que
-  escribiste, así que un grafo que se olvide no tiene puerta. Aquí la aplica el
-  executor en el único punto por el que pasa todo grafo, y el modo `published`
-  *rechaza* una arista `motor.*` sin puerta en vez de repararla en silencio.
-  Ver [Modelo de seguridad](#modelo-de-seguridad).
-- **La cancelación es una garantía, no una petición.** El kernel suprime todo lo
-  que pertenezca a una cadena cancelada, así que un skill que ignore el cancel
-  no puede entregar igualmente — y direcciona a cada skill con el `cause_id` que
-  *ese* skill reconoce, a cualquier profundidad.
-- **Un solo IR para grafos escritos a mano y generados por el planner.** Un
-  executor, un modelo de permisos, una ruta de replay, un depurador — en vez de
-  un camino aparte para "esto lo decidió el agente".
-- **Un binario, sin servicios externos.** ~22 MB con la UI embebida, y sin
-  Postgres, sin Redis, sin broker, sin clúster que levantar antes del primer
-  mensaje.
+- **La puerta de aprobación es un invariante del kernel, no código del grafo.**
+  En una librería de agentes la interrupción vive en el código que escribiste,
+  así que el código que se olvida no tiene puerta. Aquí la aplica el executor
+  en el único punto por el que pasa toda entrega, decidida por la policy del
+  nodo; el modo `published` *rechaza* una arista `motor.*` sin puerta en vez de
+  repararla en silencio.
+- **La cancelación es una garantía, no una petición.** El kernel suprime todo
+  lo que pertenece a una cadena cancelada, así que un Expertise que ignore el
+  cancel no puede entregar igualmente — y direcciona a cada uno con el
+  `cause_id` que *ese* Expertise reconoce, a cualquier profundidad.
+- **La evidencia la produce la ruta de ejecución.** Quién autorizó un efecto,
+  firmado, sobre lo que se le mostró; qué modelo lo argumentó; un ledger que un
+  tercero verifica sin conexión y un witness que le puede exigir cuentas al
+  nodo.
+- **Un binario, sin servicios externos.** Sin Postgres, sin Redis, sin broker,
+  sin clúster que levantar antes del primer mensaje — que es lo que lo vuelve
+  algo que una máquina puede llevar encima.
 
 Los contratos sobre los que descansa esto están congelados y especificados en
 [`spec/`](spec/), con una suite de conformidad con la que una implementación
@@ -190,12 +221,12 @@ segunda copia de la guía que se desincroniza de la primera.
 | **Streams como primitiva** — canales tipados, ordenados, causales, idempotentes y con contrapresión que transportan por igual texto, audio, documentos y eventos | [Conceptos fundamentales](#conceptos-fundamentales) |
 | **Un solo formato de grafo** para lo escrito a mano y lo generado por el planner — un depurador, un modelo de permisos, una vía de replay | [Operación en lenguaje natural](#operación-en-lenguaje-natural) |
 | **Cualquier modelo tras una interfaz** — LLM, ASR, TTS, local o remoto, intercambiable sin tocar el grafo; más un presupuesto de memoria contra el que el nodo admite | [Drivers de modelos y admisión de recursos](#drivers-de-modelos-y-admisión-de-recursos) |
-| **Skills ajustables en caliente** — defaults del manifiesto, un archivo `--config`, overrides en vivo aplicados sobre la propia conexión del skill | [Config de skills en runtime](#configuración-de-skills-en-tiempo-de-ejecución) |
-| **Legacy primero** — una especificación OpenAPI se vuelve skills, de solo lectura por defecto, con dry-run y promoción por operación | [Conectar software existente](#conectar-software-existente) |
+| **Expertises ajustables en caliente** — defaults del manifiesto, un archivo `--config`, overrides en vivo aplicados sobre la propia conexión del Expertise | [Config de Expertises en runtime](#configuración-de-expertises-en-tiempo-de-ejecución) |
+| **Legacy primero** — una especificación OpenAPI se vuelve Expertises, de solo lectura por defecto, con dry-run y promoción por operación | [Conectar software existente](#conectar-software-existente) |
 | **Fronteras estándar** — un servidor MCP cuyo `tools/call` hace streaming, una tarjeta A2A, exportación OpenTelemetry | [Estándares en las fronteras](#estándares-en-las-fronteras) |
 | **`aura guard`** — los servidores MCP que tu agente ya usa, puestos tras la policy, el gate y el ledger de este nodo, sin reescribir nada | [Proteger las herramientas de un agente](#proteger-las-tools-de-un-agente) |
 | **El gate como invariante del kernel** — lo aplica el executor, así que un grafo que se olvide de él igual lo tiene | [Modelo de seguridad](#modelo-de-seguridad) |
-| **Un skill no es el operador** — una credencial acotada a una capability, que no puede registrar un grafo ni leer el ledger | [Credenciales con alcance](#credenciales-con-alcance) |
+| **Un Expertise no es el operador** — una credencial acotada a una capability, que no puede registrar un grafo ni leer el ledger | [Credenciales con alcance](#credenciales-con-alcance) |
 | **Quién aprobó, firmado** — la firma de un operador inscrito sellada en la entry, hecha con una clave que el nodo nunca tuvo | [Aprobación firmada](#aprobación-firmada--quién-lo-permitió) |
 | **Una credencial solo contra un recibo** — el secreto vive en el kernel y se libera contra un efecto sellado, así que saltarse el gate da un 401 | [El broker de credenciales](#el-broker-de-credenciales) |
 | **El ledger de efectos** — encadenado por hash, comprometido en Merkle, firmado, verificable sin conexión desde el archivo de base de datos y sin kernel corriendo | [Modelo de seguridad](#modelo-de-seguridad) |
@@ -206,7 +237,7 @@ segunda copia de la guía que se desincroniza de la primera.
 | **Marketplace firmado y federable, y federación de nodos** | [El marketplace](#el-marketplace), [Federar nodos](#federar-nodos) |
 
 Todo lo anterior existe y funciona. Lo que **no** está — aislamiento de procesos
-para skills `format: source`, el modo `site`, sesiones multidispositivo, failover
+para Expertises `format: source`, el modo `site`, sesiones multidispositivo, failover
 de nodo — aparece con la misma claridad en [Modelo de
 seguridad](#modelo-de-seguridad) y [Estado de los hitos](#estado-de-los-hitos),
 junto con qué partes detectaría realmente una regresión.
@@ -215,40 +246,43 @@ junto con qué partes detectaría realmente una regresión.
 
 ## Casos de uso
 
-Formas concretas que adopta el mismo runtime. En todas ellas, la IA se añade
-*sobre* lo que existe, no en su lugar.
+Cómo se ve el mismo runtime en lugares distintos. El primer grupo es hacia
+dónde va; el segundo es donde ya corre.
 
-- **IA sobre un ERP/CRM legacy.** `aura connect` a una OpenAPI interna, y el
-  personal opera el sistema en lenguaje natural — "factura este pedido y luego
-  envía un email al cliente" — con cada escritura requiriendo un OK humano. Sin
-  cambios en el ERP.
-- **Asistente de voz en tiempo real.** Compón `sensorial.asr.transcribe` →
-  `cognitive.llm.chat` → `motor.tts.speak` en un grafo. Voz de entrada,
-  razonamiento, voz de salida, en streaming — las piezas son skills
-  intercambiables.
-- **Captura de cambios hacia el razonamiento.** `skills/postgres-cdc` convierte
-  el propio stream de replicación de una base legacy en eventos causales; un LLM
-  clasifica cada cambio de fila; una API proyectada archiva el resultado. Los
-  datos sensibles pueden fijarse a nodos on-premise para que nunca salgan del
-  edificio.
-- **División edge + nube.** Ejecuta la captura y la inferencia sensible a la
-  privacidad en un nodo edge (un Jetson en la planta de fábrica); federa el
-  razonamiento pesado a un nodo en la nube. Un solo grafo lógico, con la
-  colocación decidida por skill; la planta sigue funcionando si el enlace cae.
-- **Back office multiagente.** Skills especialistas — un investigador, un
-  redactor, un aprobador — encadenados con puertas humanas entre ellos, y
-  `aura why` explica cualquier ejecución que se torció.
-- **Hub de interoperabilidad para herramientas de IA existentes.** Expón los
-  skills de tu organización como tools MCP para que Claude Code / Cursor /
-  cualquier cliente MCP pueda llamarlos, y exporta cada sesión a tu stack
-  OpenTelemetry existente para observabilidad.
-- **Un marketplace de skills.** Un equipo publica un skill firmado y versionado
-  (un OCR de dominio, un verificador de compliance); otros equipos lo instalan
-  por capacidad y lo ejecutan en sus propios nodos, o lo llaman en remoto — el
-  registro lo alojas tú, no un proveedor.
-- **Plataforma para desarrolladores.** Distribuye Deep Axiom embebido en tu producto
-  para que *tus* clientes añadan IA a *su* stack, con tu propio registro
-  federado como catálogo.
+**Sobre una máquina**
+
+- **La capa de decisión de un robot.** La percepción como Expertises
+  `sensorial`, los modelos que deciden como `cognitive`, cada orden a un
+  actuador como `motor` — gateada por policy, sellada con el modelo y el
+  fotograma que la argumentaron. *Necesita el puente al middleware, que no está
+  construido.*
+- **Una máquina supervisada.** Una persona aprueba una clase de acción desde un
+  teléfono; su firma, sobre lo que se le mostró, queda en la entry del ledger.
+  Funciona hoy para cualquier efecto que un nodo pueda gatear.
+- **Edge y nube, separados por privacidad.** La captura y la inferencia que
+  debe quedarse en la máquina corren ahí; el razonamiento más pesado se federa
+  a otro nodo. Un solo grafo lógico, con la colocación decidida por Expertise;
+  la máquina sigue funcionando si el enlace cae.
+- **La caja negra de una flota.** Cada efecto que ejecutó una máquina,
+  verificable sin conexión desde su directorio de datos, anclado en un witness
+  que su operador no controla.
+- **Una transmisión en vivo con audiencia.** Una sesión conduciendo, muchos
+  observadores de solo lectura con un ticket solo para esa sesión, y el video
+  saliendo por `aura-media`.
+
+**En software, hoy**
+
+- **Un modelo operando un sistema legacy.** `aura connect` a un documento
+  OpenAPI interno, y el personal lo opera en lenguaje natural — con cada
+  escritura requiriendo el OK de una persona. Sin cambios en el sistema.
+- **Voz en tiempo real.** `sensorial.asr.transcribe` → `cognitive.llm.chat` →
+  `motor.tts.speak`, en streaming, con barge-in.
+- **Captura de cambios hacia el razonamiento.** `expertise/postgres-cdc`
+  convierte el stream de replicación de una base de datos en eventos causales
+  que un modelo clasifica.
+- **Un checkpoint delante de las herramientas de un agente.** `aura guard` pone
+  los servidores MCP que un agente ya usa tras la policy, el gate y el ledger
+  de este nodo, sin reescribir el agente.
 
 ---
 
@@ -259,20 +293,22 @@ duelen.
 
 | Concepto | Qué es |
 |---|---|
-| **Skill** | La unidad atómica de función — algo que el sistema *sabe hacer*. Tiene identidad, puertos tipados y un manifiesto. Un skill puede ser lógica, un modelo o una proyección de un sistema existente. |
+| **Expertise** | La unidad atómica de función — algo que el sistema *sabe hacer*. Tiene identidad, puertos tipados y un manifiesto. Un Expertise puede ser lógica, un modelo o una proyección de un sistema existente. |
 | **Channel** | Un stream tipado entre dos puertos. Ordenado (FIFO), causal (cada mensaje nombra su causa), idempotente (at-least-once con claves de deduplicación), con back-pressure y medible. |
-| **Graph** | Skills cableados mediante channels. Escrito por un humano en unas pocas líneas, o generado por un planner en tiempo de ejecución — ambos compilan a la *misma* representación intermedia y corren por el *mismo* ejecutor. |
-| **Kernel** | Un único binario con cuatro primitivas: identidad, channels, un registro vivo de skills y un ejecutor de grafos. SQLite embebido para el estado, bus de mensajes embebido, cero servicios externos. |
+| **Graph** | Expertises cableados mediante channels. Escrito por un humano en unas pocas líneas, o generado por un planner en tiempo de ejecución — ambos compilan a la *misma* representación intermedia y corren por el *mismo* ejecutor. |
+| **Kernel** | Un único binario con cuatro primitivas: identidad, channels, un registro vivo de Expertises y un ejecutor de grafos. SQLite embebido para el estado, bus de mensajes embebido, cero servicios externos. |
 | **Node** | Un proceso kernel en una máquina. Los nodos funcionan de forma autónoma y pueden federarse. |
 | **Session** | Una instancia viva de un grafo, propiedad de exactamente un nodo, con su propio log de eventos causal append-only. |
-| **Projection** | Un sistema existente (una API, una base de datos, un servidor MCP) expuesto *como skills* sin cambiar su código. |
-| **Registry** | Un host de paquetes federable donde los skills se publican (firmados) y se instalan, resolubles por capacidad. |
+| **Projection** | Un sistema existente (una API, una base de datos, un servidor MCP) expuesto *como Expertises* sin cambiar su código. |
+| **Registry** | Un host de paquetes federable donde los Expertises se publican (firmados) y se instalan, resolubles por capacidad. |
 
-### Los cinco tipos de skill
+**Sobre el nombre.** Las versiones anteriores llamaban *skill* a un Expertise. La palabra pasó a significar un prompt que se le entrega a un modelo de lenguaje, y esto no son prompts: un Expertise es una función tipada, en ejecución, experta en una sola cosa, con puertos y permisos declarados. Todo identificador que llevaba el nombre anterior sigue funcionando y seguirá — `skill.yaml` junto a `expertise.yaml`, `/ws/skill` junto a `/ws/expertise`, `/v1/skills` junto a `/v1/expertise`, `Skill` junto a `Expertise` en el SDK de Python — así que nada de lo ya desplegado tiene que cambiar. `aura publish` escribe el manifiesto en el artefacto bajo los dos nombres, de modo que un paquete publicado hoy se instala en un nodo anterior al cambio.
 
-Cada skill declara un tipo, que además prefija su capacidad
+### Los cinco tipos de Expertise
+
+Cada Expertise declara un tipo, que además prefija su capacidad
 (`sensorial.asr.transcribe`, `motor.tts.speak`, …). El tipo no es cosmético: el
-runtime lo usa para aplicar políticas — por ejemplo, las aristas hacia skills
+runtime lo usa para aplicar políticas — por ejemplo, las aristas hacia Expertises
 `motor.*` siempre reciben una puerta de aprobación humana en los grafos
 generados por el planner o por MCP.
 
@@ -322,19 +358,19 @@ funcionalidad necesita un LLM para funcionar, no pertenece al kernel.
 - **Plano de control** — el kernel: quién existe, qué ofrece, quién puede hablar
   con quién, dónde corre el trabajo. Señaliza y retransmite; no incorpora
   inteligencia.
-- **Plano de datos** — los channels: streams tipados y causales entre skills.
+- **Plano de datos** — los channels: streams tipados y causales entre Expertises.
   Hoy se retransmiten a través del kernel; el protocolo ya transporta lo que
   necesitará el transporte peer-to-peer negociado (LAN, QUIC/WebRTC).
 - **Plano de modelos** — los drivers: inferencia nativa (llama.cpp, ONNX
-  Runtime, whisper, voces del SO) tras una interfaz de skill uniforme. Un modelo
-  es simplemente un skill.
+  Runtime, whisper, voces del SO) tras una interfaz de Expertise uniforme. Un modelo
+  es simplemente un Expertise.
 
 ---
 
 ## Instalación y arranque rápido
 
 **Requisitos:** ninguno para correr un binario de release. Go 1.25+ solo para
-compilar el kernel tú mismo; Python 3.11+ para ejecutar los skills de primera
+compilar el kernel tú mismo; Python 3.11+ para ejecutar los Expertises de primera
 parte; Node 20+ solo si quieres reconstruir la UI. Hardware de consumo (8 GB de
 RAM) es suficiente.
 
@@ -387,7 +423,7 @@ $env:PYTHONPATH="..\..\sdk\python\src"; python main.py
 > `aura chat "test" --graph echo` manda el texto literal `test --graph echo` al
 > grafo por defecto. Lo mismo aplica a `aura do`.
 
-Ese es el camino del primer día: un solo binario, dos conceptos (skill y
+Ese es el camino del primer día: un solo binario, dos conceptos (Expertise y
 channel) y un modelo local respondiendo a través del pipeline completo. Para la
 voz, ver [Hablarle](#hablarle); para comprobar el nodo contra los contratos
 congelados, ver [Compilación y release](#compilación-y-release).
@@ -403,9 +439,12 @@ flota.
 
 | Comando | Propósito |
 |---|---|
-| `aura up [--port 9080] [--data <dir>] [--mode local\|site\|published] [--memory-budget 8Gi] [--config <archivo>]` | Arranca un nodo. `--memory-budget` activa la admisión de recursos; `--config` fija valores por defecto de skills (ver [Configuración de skills en tiempo de ejecución](#configuración-de-skills-en-tiempo-de-ejecución)). |
-| ↳ `[--with-examples] [--examples-dir skills]` | Arranca también los skills de ejemplo de `skills/`. Opt-in, nunca por defecto: los skills de un nodo normalmente los elige un operador, y el kernel es un binario Go que no debería depender de un toolchain de Python. Cada uno se lanza y se observa — el que muere devuelve su propia última línea de stderr, que ante una dependencia ausente es la línea de pip que necesitas. |
-| `aura status [--port 9080]` | Salud de un nodo en ejecución más sus skills conectados. |
+| `aura up [--port 9080] [--data <dir>] [--mode local\|site\|published] [--memory-budget 8Gi] [--config <archivo>]` | Arranca un nodo. `--memory-budget` activa la admisión de recursos; `--config` fija valores por defecto de Expertises (ver [Configuración de Expertises en tiempo de ejecución](#configuración-de-expertises-en-tiempo-de-ejecución)). |
+| ↳ `[--standby]` | Queda en espera del nodo dueño de `--data` y toma el relevo cuando muere. No abre nada que el nodo vivo esté escribiendo; en el mismo host un proceso muerto se nota en cerca de una décima de segundo en vez de tras `--lease-ttl`. Ver [Lo que un nodo no sobrevive](#lo-que-un-nodo-no-sobrevive). |
+| ↳ `[--session-mailbox 1024]` | Envelopes que una sesión puede encolar antes de que se frene al Expertise que la alimenta. Cada sesión rutea en su propia cola, así que un consumidor lento no frena a las demás que comparten conexión; `0` restaura el ruteo en línea. Ver [Muchas sesiones a la vez](#muchas-sesiones-a-la-vez). |
+| ↳ `[--otlp <url>] [--otlp-sample 1.0]` | Exporta spans a un collector OTLP/HTTP mientras el nodo corre. Se muestrean sesiones enteras, nunca árboles parciales, y los payloads nunca se exportan. También se lee de `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`. |
+| ↳ `[--with-examples] [--examples-dir expertise]` | Arranca también los Expertises de ejemplo de `expertise/`. Opt-in, nunca por defecto: los Expertises de un nodo normalmente los elige un operador, y el kernel es un binario Go que no debería depender de un toolchain de Python. Cada uno se lanza y se observa — el que muere devuelve su propia última línea de stderr, que ante una dependencia ausente es la línea de pip que necesitas. |
+| `aura status [--port 9080]` | Salud de un nodo en ejecución más sus Expertises conectados. |
 | `aura ready [--port 9080] [--quiet] [--timeout 3s]` | Readiness como código de salida, para un healthcheck de contenedor. Lee `/readyz` — abierto, para que una sonda no necesite credencial — y sale 0 solo cuando el store, el ledger y el registro son usables. La imagen distroless no tiene shell ni curl, así que su `HEALTHCHECK` es este comando. |
 | `aura verify [--data <dir>]` | Recalcula la cadena de hashes y el árbol Merkle del ledger de efectos, y comprueba cada firma de checkpoint y cada contrafirma de witness — sin conexión, sin necesitar un kernel corriendo. Sale con código distinto de cero si algo no verifica. Ver [Modelo de seguridad](#modelo-de-seguridad). |
 | `aura version` | Versión y los majors de protocolo/IR que habla este binario. |
@@ -422,7 +461,7 @@ Todo esto sirve para probar, después, qué hizo un nodo — ver
 | `aura receipt --verify <archivo>` | Comprueba un recibo sin base de datos, sin nodo y sin red. Lo que ejecuta un tercero. |
 | `aura bundle <sesión> [--out <archivo>] [--data <dir>]` | Arma el audit bundle de una sesión: trayectoria, un recibo verificable por efecto sellado, y las configuraciones de modelo detrás. |
 | `aura bundle --verify <archivo>` | Comprueba un bundle sin base de datos, sin nodo y sin red. |
-| `aura bom [sesión] [--out <archivo>] [--data <dir>]` | ML-BOM CycloneDX 1.6 de los modelos y skills que realmente corrieron, construido desde el ledger y no desde la configuración. |
+| `aura bom [sesión] [--out <archivo>] [--data <dir>]` | ML-BOM CycloneDX 1.6 de los modelos y Expertises que realmente corrieron, construido desde el ledger y no desde la configuración. |
 
 ### Hablar con grafos
 
@@ -438,7 +477,7 @@ no `aura chat "test" --graph echo` (esto último manda los flags como parte del 
 
 | Comando | Propósito |
 |---|---|
-| `aura connect --openapi <url\|archivo> [--name x] [--base-url y] [--header "K: V"]` | Introspecciona una API y proyecta sus operaciones como skills. |
+| `aura connect --openapi <url\|archivo> [--name x] [--base-url y] [--header "K: V"]` | Introspecciona una API y proyecta sus operaciones como Expertises. |
 | `aura observe --target <url> [--port 8080] [--out observed.jsonl]` | Hace de proxy de un sistema en marcha y graba la forma de su tráfico. |
 | `aura generate connector --from <grabación> --name <nombre> [--base-url y]` | Convierte una grabación en un spec de conector, para revisar. |
 | `aura projections [--port 9080]` | Lista las proyecciones y el modo de cada operación. |
@@ -449,9 +488,9 @@ no `aura chat "test" --graph echo` (esto último manda los flags como parte del 
 | Comando | Propósito |
 |---|---|
 | `aura registry serve [--port 9091] [--data <dir>]` | Aloja un registro de paquetes federable. |
-| `aura publish <dir-skill> [--registry <url>]` | Firma (Ed25519, keygen automático) y sube un skill. |
+| `aura publish <dir-skill> [--registry <url>]` | Firma (Ed25519, keygen automático) y sube un Expertise. |
 | `aura add <org/cat/nombre>[@versión] \| --capability <cap> [--registry <url>] [--yes]` | Descarga, verifica hash + firma, muestra permisos, instala. |
-| `aura run <org/cat/nombre> [--port 9080]` | Arranca un skill instalado contra el nodo local — lanza un proceso para `format: source`, o lo aloja dentro del sandbox wazero del propio kernel para `format: wasm` (ver [Skills Wasm](#skills-wasm)). |
+| `aura run <org/cat/nombre> [--port 9080]` | Arranca un Expertise instalado contra el nodo local — lanza un proceso para `format: source`, o lo aloja dentro del sandbox wazero del propio kernel para `format: wasm` (ver [Expertises Wasm](#expertises-wasm)). |
 
 ### Depuración y observabilidad
 
@@ -460,13 +499,13 @@ no `aura chat "test" --graph echo` (esto último manda los flags como parte del 
 | `aura why [sesión] [--no-explain] [--port 9080]` | Recorre la cadena causal de una sesión hasta la causa raíz; la narra con el LLM local. |
 | `aura replay <sesión> [--graph <id>] [--deny-gates] [--port 9080]` | Re-ejecuta entradas reales grabadas sobre el grafo actual y compara las salidas, y además compara las entradas selladas del ledger de ambas sesiones entre sí — misma capability, decisión y resultado, no solo la misma transcripción (ver [C4](spec/c4-ledger.md)). |
 | `aura trace <sesión> [--otlp <url>] [--out <archivo>] [--port 9080]` | Exporta el log causal como trazas OpenTelemetry. |
-| `aura undo <sesión\|recibo> [--yes] [--port 9080]` | Revierte un efecto, o todos los efectos reversibles de una sesión (orden causal inverso), reenviando su payload original al puerto `compensates` declarado por el skill. Cada undo es a su vez un efecto gateado y sellado — ver [C4](spec/c4-ledger.md). |
+| `aura undo <sesión\|recibo> [--yes] [--port 9080]` | Revierte un efecto, o todos los efectos reversibles de una sesión (orden causal inverso), reenviando su payload original al puerto `compensates` declarado por el Expertise. Cada undo es a su vez un efecto gateado y sellado — ver [C4](spec/c4-ledger.md). |
 
 ### Flota
 
 | Comando | Propósito |
 |---|---|
-| `aura federate <url-remota> [--capability <cap>] [--port 9080]` | Proyecta los skills de un nodo remoto dentro del nodo local. |
+| `aura federate <url-remota> [--capability <cap>] [--port 9080]` | Proyecta los Expertises de un nodo remoto dentro del nodo local. |
 
 ### Proteger un agente
 
@@ -485,11 +524,11 @@ uno es autocontenido; ejecútalos desde la raíz del repo con el kernel compilad
 
 ### Ejemplo 1 — Un bucle de voz por ficheros (WAV → razonamiento → WAV)
 
-Compón tres skills en un grafo para que una frase grabada vuelva como habla
+Compón tres Expertises en un grafo para que una frase grabada vuelva como habla
 grabada. Esta es la forma *batch*, a propósito: usa los puertos de fichero
 completo (`ears.audio_in`, `mouth.audio_out`), así que es fácil de conducir con
 `curl` y fácil de leer. La versión viva, en streaming, es el grafo `voice`
-sembrado — añade un cuarto skill y usa los puertos de chunks; ver
+sembrado — añade un cuarto Expertise y usa los puertos de chunks; ver
 [Hablarle](#hablarle).
 
 ```powershell
@@ -555,12 +594,12 @@ Lleva una API existente de cero a "manéjala hablándole" en tres comandos.
 El código del CRM nunca se tocó; la escritura ocurrió solo después de que un
 humano la aprobara.
 
-### Ejemplo 3 — Construir, publicar e instalar un skill
+### Ejemplo 3 — Construir, publicar e instalar un Expertise
 
-Escribe un skill, publícalo firmado e instálalo por capacidad en otro sitio.
+Escribe un Expertise, publícalo firmado e instálalo por capacidad en otro sitio.
 
 ```powershell
-# esqueleto: un directorio con skill.yaml + main.py (ver "Escribir un skill")
+# esqueleto: un directorio con expertise.yaml + main.py (ver "Escribir un Expertise")
 .\kernel\aura.exe registry serve                       # aloja un registro (puerto 9091)
 .\kernel\aura.exe publish .\my-skills\invoice-ocr\     # zip + firma (Ed25519) + subida
 #  publicado acme/vision/invoice-ocr@1.0.0 — firmado con la clave QMJ…
@@ -596,7 +635,7 @@ edge> .\aura.exe federate http://cloud-node:9080 --capability cognitive
 
 ### Ejemplo 5 — Exponer todo a Claude Code / Cursor
 
-Cada skill conectado se convierte en una tool MCP con una línea.
+Cada Expertise conectado se convierte en una tool MCP con una línea.
 
 ```powershell
 claude mcp add --transport http aura http://localhost:9080/mcp
@@ -609,10 +648,10 @@ claude mcp add --transport http aura http://localhost:9080/mcp
 **Estos cinco ilustran la forma, no son recetas para copiar y pegar** — asumen
 una API, una cámara o un registro que tú aportas. Para un camino que corre tal
 cual, ver [Instalación y arranque rápido](#instalación-y-arranque-rápido);
-para skills que puedes leer y copiar hoy, ver [`skills/`](skills/) —
-[`skills/echo/`](skills/echo/) es el mínimo, [`skills/postgres-cdc/`](skills/postgres-cdc/)
-un skill `sensorial` que envuelve un sistema externo, y
-[`skills/model-manager/`](skills/model-manager/) uno `motor` que actúa sobre el mundo.
+para Expertises que puedes leer y copiar hoy, ver [`expertise/`](expertise/) —
+[`expertise/echo/`](expertise/echo/) es el mínimo, [`expertise/postgres-cdc/`](expertise/postgres-cdc/)
+un Expertise `sensorial` que envuelve un sistema externo, y
+[`expertise/model-manager/`](expertise/model-manager/) uno `motor` que actúa sobre el mundo.
 
 ---
 
@@ -624,7 +663,7 @@ binario** vía `go:embed`. `aura up` lo sirve en `http://localhost:9080` sin
 proceso Node en runtime. Seis vistas, abriendo en el Estudio:
 
 - **Estudio** — la pantalla de inicio, y la única superficie para construir y
-  ejecutar. Una paleta de skills vivos, un lienzo donde arrastras y cableas, un
+  ejecutar. Una paleta de Expertises vivos, un lienzo donde arrastras y cableas, un
   inspector para cada campo C2 de una arista, deshacer/rehacer, selección
   múltiple y en caja, copiar/pegar/duplicar, controles de zoom, ajustar,
   ordenar, un minimapa y un cajón de IR que hace round-trip en ambos sentidos.
@@ -652,15 +691,15 @@ proceso Node en runtime. Seis vistas, abriendo en el Estudio:
 
   - *Texto* corre el grafo registrado que elijas, normalmente `chat`, y
     responde a las puertas de aprobación en línea con Aprobar/Denegar.
-  - *Voz* corre el grafo `voice` — cuatro skills a la vez, seis puertos de
+  - *Voz* corre el grafo `voice` — cuatro Expertises a la vez, seis puertos de
     cliente. Tus palabras aparecen mientras las dices, la respuesta se habla
     mientras se escribe, y hablarle encima la para.
 
   Siguen siendo dos grafos y no un grafo con un ajuste, porque eso es lo que
   son; el selector cambia la sesión. Volver a texto, o salir del panel, suelta
   el micrófono.
-- **Skills** — el catálogo vivo de capacidades, con colores por tipo, con los
-  puertos, esquemas y descripción de cada skill.
+- **Expertises** — el catálogo vivo de capacidades, con colores por tipo, con los
+  puertos, esquemas y descripción de cada Expertise.
 - **Projections** — conecta una especificación OpenAPI pegándola, y cambia cada
   operación entre `disabled` / `dry-run` / `live`.
 - **Graphs** — los grafos registrados y su IR.
@@ -672,7 +711,7 @@ proceso Node en runtime. Seis vistas, abriendo en el Estudio:
 
 ### El lienzo
 
-Una paleta de skills alimentada por el catálogo vivo, nodos arrastrables, cableado
+Una paleta de Expertises alimentada por el catálogo vivo, nodos arrastrables, cableado
 puerto a puerto que solo ilumina destinos con esquema compatible, pan y zoom, y un
 inspector que expone cada campo C2 que lleva una arista — `gate`, `qos`,
 `speculative`, `deadline_ms`, `priority` — con lo que hace cada uno, no solo su
@@ -686,14 +725,14 @@ Además de eso:
 - **Clic derecho en cualquier cosa.** El lienzo, un nodo, una arista y una nota
   tienen su propio menú, construido para ese objetivo en vez de uno solo con
   casi todo deshabilitado.
-- **Doble clic en el lienzo** para añadir un skill *donde hiciste clic*,
+- **Doble clic en el lienzo** para añadir un Expertise *donde hiciste clic*,
   escribiendo. Las flechas mueven, Enter elige; la paleta de la izquierda sigue
   siendo lo que hojeas.
-- **Doble clic en una arista** — o *Insertar skill aquí* — para meter un nodo
+- **Doble clic en una arista** — o *Insertar Expertise aquí* — para meter un nodo
   dentro de una conexión existente. La mitad de arriba conserva el
   `deadline_ms` y la `priority` de ese salto, porque describían ese salto y
   siguen haciendo, mientras que el gate de la regla 5 se va a la mitad que
-  ahora termina en un skill motor.
+  ahora termina en un Expertise motor.
 - **Doble clic en un nodo** para renombrarlo en el sitio. Una ref que C2
   rechazaría, o una ya usada, se rechaza en vez de corregirse en silencio.
 - **Alinear y repartir** una selección múltiple, desde su menú.
@@ -731,7 +770,7 @@ maquetación.
 ### Salidas pineadas
 
 Pinea un nodo y el kernel deja de despacharle: lo que pineaste pasa a ser su
-salida, y el skill no se ejecuta. Itera sobre lo que consume la respuesta de un
+salida, y el Expertise no se ejecuta. Itera sobre lo que consume la respuesta de un
 modelo sin pagar el modelo; construye la rama que maneja la respuesta de una API
 sin llamar a la API.
 
@@ -745,7 +784,7 @@ de lo que pasó es verdadero — y cuesta tres reglas:
 2. **Anunciado en la cadena.** Cada entrega pineada emite un `status` que nombra
    el nodo antes del payload que lo sustituye, y ese status va al log causal, así
    que `aura why` lo enseña. Alguien que nunca haya oído hablar de pinear sigue
-   sin poder confundir una salida pineada con el trabajo del skill.
+   sin poder confundir una salida pineada con el trabajo del Expertise.
 3. **Validado contra el manifiesto.** El puerto tiene que ser uno que el nodo
    realmente tenga, y el esquema el que ese puerto declara. Un pin que no podría
    haber salido de ese nodo es una mentira que todo lo de aguas abajo se creería.
@@ -782,11 +821,11 @@ dice exactamente lo que pasó: volviste atrás, a propósito, en un momento
 conocido.
 
 **Las réplicas se muestran una vez.** El catálogo guarda una entrada por
-*conexión* viva, así que dos procesos sirviendo un skill son dos entradas. La
-paleta las agrupa en una fila con una insignia `×2`, y "cuántos skills
-satisfacen esta capacidad" cuenta skills distintos — decir dos mandaría a un
+*conexión* viva, así que dos procesos sirviendo un Expertise son dos entradas. La
+paleta las agrupa en una fila con una insignia `×2`, y "cuántos Expertises
+satisfacen esta capacidad" cuenta Expertises distintos — decir dos mandaría a un
 autor a buscar una segunda implementación que no existe. Ver
-[Los skills sobreviven a su nodo](#los-skills-sobreviven-a-su-nodo).
+[Los Expertises sobreviven a su nodo](#los-expertises-sobreviven-a-su-nodo).
 
 **El IR que emite es puro según la especificación.** Sin coordenadas ni claves del
 editor: un grafo dibujado aquí es comparable byte a byte con uno escrito a mano.
@@ -797,7 +836,7 @@ de su topología.
 La validación corre las reglas C2 que correrá el executor, mientras dibujas, y
 nunca lo sustituye. La regla 5 (el invariante del gate motor) se reporta según el
 modo del nodo, porque `local` repara un gate omitido y `published` rechaza la
-sesión. La regla 6 (especulación hacia un skill motor, o junto a un gate
+sesión. La regla 6 (especulación hacia un Expertise motor, o junto a un gate
 human-approval) y la regla 2 (compatibilidad de esquemas entre puertos) bloquean
 el registro directamente.
 
@@ -840,14 +879,14 @@ python scripts/gen_ui_reference.py --check  # lo que corre CI
 
 ---
 
-## Escribir un skill (el SDK)
+## Escribir un Expertise (el SDK)
 
-Un skill es la unidad publicable más pequeña. Es un directorio con un manifiesto
-(`skill.yaml`), el código y sus dependencias. El SDK de Python
+Un Expertise es la unidad publicable más pequeña. Es un directorio con un manifiesto
+(`expertise.yaml`), el código y sus dependencias. El SDK de Python
 ([`sdk/python/`](sdk/python/), el paquete `aura`) gestiona la conexión, el
 registro, la causalidad y la idempotencia — tú escribes handlers.
 
-**`skill.yaml`** (contrato C1) declara identidad, tipo, capacidad y puertos
+**`expertise.yaml`** (contrato C1) declara identidad, tipo, capacidad y puertos
 tipados:
 
 ```yaml
@@ -882,7 +921,7 @@ permissions:                                      # basados en capacidades; lo n
 ```python
 from aura import Context, Skill
 
-skill = Skill()                    # lee skill.yaml del directorio de trabajo
+skill = Skill()                    # lee expertise.yaml del directorio de trabajo
 
 @skill.on("text_in")
 async def handle(ctx: Context) -> None:
@@ -893,7 +932,7 @@ if __name__ == "__main__":
     skill.run()                    # se conecta al kernel, reconecta para siempre
 ```
 
-Ejecútalo desde su propio directorio — el SDK lee `skill.yaml` del directorio de
+Ejecútalo desde su propio directorio — el SDK lee `expertise.yaml` del directorio de
 trabajo — con `python main.py`. Apúntalo a otro sitio con
 `AURA_WS_URL=ws://host:9080/ws/skill`, o instálalo y ejecútalo desde el registro
 con `aura run acme/logical/uppercase`.
@@ -901,24 +940,24 @@ con `aura run acme/logical/uppercase`.
 **La credencial se encuentra, no se configura.** Un nodo ata loopback y genera un
 token bearer por defecto, y `/ws/skill` está detrás de él como cualquier otra
 ruta. Ambos SDKs lo resuelven exactamente donde lo hace el CLI — `AURA_TOKEN`, y
-luego `~/.aura/node.token` — así que un skill arrancado por el mismo usuario en la
+luego `~/.aura/node.token` — así que un Expertise arrancado por el mismo usuario en la
 misma máquina no necesita nada. Pásalo explícitamente con `Skill(token=...)` en
 Python o `createNode({ token })` en TypeScript cuando el nodo guarde sus datos en
 otro sitio; un nodo arrancado con `--no-auth` no tiene archivo de token y no pide
-credencial, y una cadena vacía significa "no envíes nada". Un skill rechazado por
+credencial, y una cadena vacía significa "no envíes nada". Un Expertise rechazado por
 falta de credencial registra el 401 y qué hacer al respecto, en vez de reintentar
 en silencio.
 
-**Puntos clave de diseño.** Los skills se conectan *hacia fuera* al kernel
+**Puntos clave de diseño.** Los Expertises se conectan *hacia fuera* al kernel
 (inversión de control), así que atraviesan NAT y firewalls corporativos sin
 puertos de entrada. El `Context` te da `emit` (una respuesta enlazada
 causalmente), `status`, `error` y `done`; cada mensaje que envía queda
 automáticamente encadenado al que lo causó y recibe una clave de idempotencia.
 Los handlers deben ser idempotentes — la entrega es at-least-once por contrato.
 
-### Los skills sobreviven a su nodo
+### Los Expertises sobreviven a su nodo
 
-La otra mitad de "los skills se conectan *hacia fuera*": reconectan para
+La otra mitad de "los Expertises se conectan *hacia fuera*": reconectan para
 siempre por contrato, así que parar un nodo no los para. Siguen reintentando y
 se enganchan al nodo que venga después — que es lo que permite reiniciar un
 nodo sin que un operador reinicie diez procesos detrás, y también es cómo
@@ -930,7 +969,7 @@ lo son, y el siguiente `aura up --with-examples` arranca un segundo juego al
 lado de los supervivientes. Los síntomas son un catálogo duplicado y sesiones
 cayendo en un proceso que nadie recuerda haber arrancado.
 
-**Correr N réplicas de un skill está soportado y es deliberado** — el registry
+**Correr N réplicas de un Expertise está soportado y es deliberado** — el registry
 rota entre ellas, así que N copias sirven de verdad N veces las sesiones. Por
 eso el nodo no rechaza una segunda conexión. Lo dice, una vez, en el momento en
 que pasa:
@@ -945,10 +984,10 @@ En el evento de registro y no al arrancar, porque es el único sitio donde se
 sabe: un huérfano que reconecta puede llegar diez segundos después de que el
 nodo termine de arrancar, mucho después de que cualquier comprobación de
 arranque haya corrido y dado el visto bueno. `aura up --with-examples` además
-se salta lanzar un skill que ya esté conectado cuando mira, y lo reporta como
+se salta lanzar un Expertise que ya esté conectado cuando mira, y lo reporta como
 `already up`.
 
-Si no fue deliberado, para los procesos de más (`pkill -f skills/` en Unix,
+Si no fue deliberado, para los procesos de más (`pkill -f expertise/` en Unix,
 `Get-Process python3.13 | Stop-Process` en Windows) y vuélvelos a arrancar.
 
 ### Esquemas estándar
@@ -972,17 +1011,17 @@ Son JSON Schemas ejecutables en [`spec/schemas/std/`](spec/schemas/std/) que la
 suite de conformidad comprueba — no solo prosa.
 
 **`text` y `transcript` no son intercambiables.** En `std/text@1`, `text` es un
-*delta* — un skill en streaming emite uno por token y el consumidor concatena.
+*delta* — un Expertise en streaming emite uno por token y el consumidor concatena.
 En `std/transcript@1` *reemplaza* la hipótesis anterior, porque un reconocedor
 de voz redecodifica todo su buffer y la hipótesis 3 no es la 2 más un sufijo.
 Llevar parciales de voz como `std/text@1` haría que todo consumidor que
 concatena produjera basura, y por eso son schemas distintos en puertos
 distintos.
 
-### Skills Wasm
+### Expertises Wasm
 
 `format: wasm` (Fase 3, [kernel/internal/wasmrt](kernel/internal/wasmrt)) es
-la otra forma de escribir un skill, para un caso específico: una
+la otra forma de escribir un Expertise, para un caso específico: una
 transformación síncrona `logical`/`motor` donde quieres que
 `permissions.filesystem` sea un sandbox que el kernel de verdad aplica, no
 una línea que `aura add` solo imprime antes de instalar. Compila a un
@@ -1020,23 +1059,23 @@ propio (`env.http_fetch`, porque WASI preview1 no tiene sockets en
 absoluto): el guest es dueño de sus propios buffers de request y respuesta,
 y el kernel solo completa un fetch cuando el hostname de la URL coincide
 **exactamente** con la lista — sin prefijo ni sufijo. El permiso viaja en
-el `context.Context` de cada entrega, así que dos skills con distintas
+el `context.Context` de cada entrega, así que dos Expertises con distintas
 concesiones corriendo al mismo tiempo nunca ven la del otro — ver
 [kernel/internal/wasmrt](kernel/internal/wasmrt).
 
-Los skills `sensorial`/`cognitive` que necesitan streaming siguen siendo
+Los Expertises `sensorial`/`cognitive` que necesitan streaming siguen siendo
 `format: source` — un módulo WASI command corre una vez y sale, así que
-todavía no hay contrato de guest para un skill que emite más de una
+todavía no hay contrato de guest para un Expertise que emite más de una
 respuesta por entrega.
 
 ---
 
-## Configuración de skills en tiempo de ejecución
+## Configuración de Expertises en tiempo de ejecución
 
-Cualquier skill puede declarar parámetros ajustables — no solo perillas de
+Cualquier Expertise puede declarar parámetros ajustables — no solo perillas de
 LLM como `temperature`/`max_tokens`, sino cualquier cosa: un timeout, un
 umbral de confianza, una ruta de almacenamiento. Un bloque `config` en
-`skill.yaml` (C1, aditivo) declara qué existe; **no** declara el valor
+`expertise.yaml` (C1, aditivo) declara qué existe; **no** declara el valor
 actual, porque un manifiesto publicado es inmutable (regla 1 de C1) — un
 valor en vivo no puede vivir dentro de él.
 
@@ -1055,9 +1094,9 @@ Los valores efectivos se resuelven fuera del manifiesto, en prioridad
 ascendente: **`default` declarado** → **un archivo `--config` dado a
 `aura up`** (git-friendly, releído en cada arranque del kernel) →
 **un override en vivo** puesto vía la UI o `PUT /v1/skills/config?id=<id>`
-(persistido por el kernel, sobrevive reinicios). La pestaña Skills de la UI
+(persistido por el kernel, sobrevive reinicios). La pestaña Expertises de la UI
 del plano de control renderiza un formulario a partir del esquema declarado
-para cualquier skill conectado que tenga uno — sin código que escribir para
+para cualquier Expertise conectado que tenga uno — sin código que escribir para
 tener un editor; y los mismos valores efectivos son lo que un archivo
 `--config` expresa como YAML plano para defaults reproducibles:
 
@@ -1076,14 +1115,14 @@ skills:
 .\kernel\aura.exe up --config aura.config.yaml
 ```
 
-Un skill lee sus valores iniciales del ack de registro del kernel
+Un Expertise lee sus valores iniciales del ack de registro del kernel
 (`skill.config`) y recibe un empuje en vivo — el mismo dict, in-place — si
 un valor cambia mientras está conectado, salvo que todas las claves
 cambiadas sean `restart_required`, en cuyo caso aplica en la siguiente
-reconexión del skill. Un skill que nunca declara `config` no se ve
-afectado — esto es opt-in y totalmente retrocompatible con cualquier skill
-escrito antes de que existiera. `skills/llm-chat` (`temperature`,
-`max_tokens`, `system_prompt`, `context_window`) y `skills/memory-context`
+reconexión del Expertise. Un Expertise que nunca declara `config` no se ve
+afectado — esto es opt-in y totalmente retrocompatible con cualquier Expertise
+escrito antes de que existiera. `expertise/llm-chat` (`temperature`,
+`max_tokens`, `system_prompt`, `context_window`) y `expertise/memory-context`
 (abajo) son los ejemplos trabajados para copiar.
 
 ---
@@ -1100,7 +1139,7 @@ introspección.
 #    habilita una:  aura promote my-erp create-invoice --mode dry-run
 ```
 
-Cada operación de la especificación se convierte en un skill individual: las
+Cada operación de la especificación se convierte en un Expertise individual: las
 operaciones de lectura reciben la capacidad `sensorial.api.*` y se activan de
 inmediato; las de escritura reciben `motor.api.*` y empiezan
 **deshabilitadas**. Los parámetros de path/query y los cuerpos de petición se
@@ -1131,13 +1170,13 @@ objetivo nunca se toca.
 La introspección necesita algo que introspeccionar. El caso común es el
 contrario: un endpoint suelto de un backend que nadie documentó. Escribir un
 OpenAPI completo de una API de la que solo necesitas tres llamadas no es un
-precio razonable, y escribir un skill a mano tampoco.
+precio razonable, y escribir un Expertise a mano tampoco.
 
-Un conector declarativo — un skill chico que lee unas pocas líneas de YAML y
-registra cada operación como un skill ordinario — hace el mismo trabajo que la
-proyección OpenAPI sin un documento OpenAPI. No es parte de los skills de
+Un conector declarativo — un Expertise chico que lee unas pocas líneas de YAML y
+registra cada operación como un Expertise ordinario — hace el mismo trabajo que la
+proyección OpenAPI sin un documento OpenAPI. No es parte de los Expertises de
 primera parte de este repo, pero la forma es apenas un poco de glue
-`Skill`/`Context` (ver [Escribir un skill](#escribir-un-skill-el-sdk)) que lee
+`Skill`/`Context` (ver [Escribir un Expertise](#escribir-un-expertise-el-sdk)) que lee
 un spec como:
 
 ```yaml
@@ -1154,12 +1193,12 @@ y registra `sensorial.api.legacy_erp.get_order` (activo) y
 `motor.api.legacy_erp.create_order` (deshabilitado hasta promoverse) contra
 él — las mismas cuatro salvaguardas, las mismas capacidades, la misma puerta
 que el camino OpenAPI. La diferencia está en dónde corre: esto es un
-**skill**, no código del kernel, así que se instala desde el registro como
+**Expertise**, no código del kernel, así que se instala desde el registro como
 cualquier otra cosa y nunca engorda el binario que va a un dispositivo de
 borde.
 
 La promoción tampoco necesita mecanismo nuevo — el `mode` por operación es
-[configuración en tiempo de ejecución](#configuración-de-skills-en-tiempo-de-ejecución)
+[configuración en tiempo de ejecución](#configuración-de-expertises-en-tiempo-de-ejecución)
 declarada, así que el kernel la valida, la persiste entre reinicios y la empuja
 al conector en marcha:
 
@@ -1243,13 +1282,13 @@ session.cancel(id);            // lo abandonas; no llega nada más
 ```
 
 Un error lanzado se convierte en `{ ok: false, status: 500, error }` en vez de en
-un skill muerto: quien preguntó recibe una respuesta sobre la que puede actuar.
+un Expertise muerto: quien preguntó recibe una respuesta sobre la que puede actuar.
 
 ### Eventos que vienen en sentido contrario (webhooks)
 
-Los skills marcan *hacia afuera* al kernel, que es lo que les permite correr
+Los Expertises marcan *hacia afuera* al kernel, que es lo que les permite correr
 detrás de NAT sin puertos de entrada. Quien manda un webhook hace lo contrario:
-Stripe o GitHub marcan hacia adentro, y no pueden alcanzar a un skill que no
+Stripe o GitHub marcan hacia adentro, y no pueden alcanzar a un Expertise que no
 tiene dirección. Así que el HTTP entrante es la única pieza de conectividad que
 sí tiene que vivir en el kernel — es transporte, no integración.
 
@@ -1280,15 +1319,15 @@ la variable de la que sale.
 ### Un cambio de fila se vuelve un evento causal (CDC de Postgres)
 
 Los sistemas legacy sin API son un caso común como para nombrarlo aparte:
-[`skills/postgres-cdc`](skills/postgres-cdc) convierte el propio stream de
+[`expertise/postgres-cdc`](expertise/postgres-cdc) convierte el propio stream de
 replicación lógica de Postgres en eventos `sensorial.postgres.cdc` — un
-skill, como cualquier conector de arriba, no una funcionalidad del kernel.
+Expertise, como cualquier conector de arriba, no una funcionalidad del kernel.
 
 ```bash
 ALTER SYSTEM SET wal_level = logical;   # una vez, en la base origen; después reiniciarla
 
 PG_CDC_DSN="host=... dbname=... user=... password=..." \
-    cd skills/postgres-cdc && PYTHONPATH=../../sdk/python/src python main.py
+    cd expertise/postgres-cdc && PYTHONPATH=../../sdk/python/src python main.py
 ```
 
 Usa `test_decoding` — incluido en el núcleo de Postgres desde la 9.4, así
@@ -1306,7 +1345,7 @@ cadena de conexión lleva una contraseña.
 
 `aura up` siembra un grafo `voice`, y la UI del plano de control lo maneja desde
 la pestaña de conversación del Estudio (transporte: *Voz*). Arranca los cuatro
-skills que resuelve, pulsa empezar y habla:
+Expertises que resuelve, pulsa empezar y habla:
 
 ```powershell
 $env:PYTHONPATH = "sdk\python\src"
@@ -1336,7 +1375,7 @@ hablas encima del asistente, el navegador para la reproducción localmente
 primero —al instante, con un fundido de 20 ms para que el corte no haga un clic
 lo bastante fuerte como para retriggerear el micrófono— y solo después le dice
 al kernel que abandone la cadena. El kernel deja de rutear todo lo que le
-pertenezca, a cualquier profundidad, así que un skill que ignore el cancel y
+pertenezca, a cualquier profundidad, así que un Expertise que ignore el cancel y
 siga generando produce salida que no llega a ningún sitio. Medido: una pregunta
 nueva desplaza a la anterior en ~0,2s.
 
@@ -1358,7 +1397,7 @@ Cosas que conviene saber antes de enchufar un micrófono:
 
 ## Operación en lenguaje natural
 
-Con el skill planner en ejecución (`skills/planner/`), `aura do` cierra el bucle
+Con el Expertise planner en ejecución (`expertise/planner/`), `aura do` cierra el bucle
 desde un objetivo expresado en lenguaje natural hasta un resultado ejecutado con
 puertas de aprobación:
 
@@ -1372,10 +1411,10 @@ puertas de aprobación:
 ```
 
 La división del trabajo es deliberada y es lo que lo hace fiable incluso con un
-modelo local pequeño: **el LLM solo elige y extrae** (qué skills, qué
+modelo local pequeño: **el LLM solo elige y extrae** (qué Expertises, qué
 parámetros — la parte difusa), y **el código compila el plan** en un grafo
 válido (la parte exacta). La política de seguridad vive en el código, no en el
-prompt: cada arista hacia un skill `motor.*` recibe automáticamente una puerta
+prompt: cada arista hacia un Expertise `motor.*` recibe automáticamente una puerta
 `human-approval`. El planner además repara alucinaciones menores (un prefijo de
 capacidad erróneo con una única coincidencia real) y normaliza parámetros mal
 colocados contra la forma declarada de cada proyección.
@@ -1391,13 +1430,13 @@ modelo instalado.
 
 C1 obliga a que cada puerto declare un schema, y la regla 2 de C2 se niega a
 cablear dos puertos cuyos schemas no coinciden. Así que el runtime conoce,
-*estáticamente*, la forma exacta de todo lo que un skill puede emitir. De ahí
+*estáticamente*, la forma exacta de todo lo que un Expertise puede emitir. De ahí
 salen dos cosas que ningún otro runtime de agentes está en posición de ofrecer,
 porque ninguno tiene puertos con schema obligatorio.
 
 **Una gramática de decodificación derivada del tipo del puerto.** El kernel
 compila el JSON Schema de cada puerto a una gramática GBNF y se la entrega al
-skill al registrarse. Un skill que genera bajo ella *no puede* emitir una forma
+Expertise al registrarse. Un Expertise que genera bajo ella *no puede* emitir una forma
 que el puerto rechace — no "rara vez lo hace", no puede:
 
 ```python
@@ -1424,7 +1463,7 @@ texto que describe genera peor — sobre todo los modelos locales pequeños a lo
 que apunta este runtime.
 
 **Validación para todo lo que no genera.** El mismo schema comprueba los
-payloads al pasar, así que un skill que arma un dict a mano, una API proyectada
+payloads al pasar, así que un Expertise que arma un dict a mano, una API proyectada
 que devuelve una sorpresa o un cliente que postea cualquier cosa también quedan
 sujetos al tipo del puerto. La gramática vuelve inalcanzable una violación; el
 validador la vuelve rechazada. Hacen falta las dos mitades para que "canal
@@ -1442,18 +1481,18 @@ garantía.
 ### Ejecución especulativa de grafo
 
 El coste dominante en un grafo de agentes es la espera secuencial: un modelo
-transmite dos segundos y solo entonces empieza el siguiente skill. Arrancar ese
-skill temprano sobre el prefijo es una ganancia obvia y muy estudiada — PASTE,
+transmite dos segundos y solo entonces empieza el siguiente Expertise. Arrancar ese
+Expertise temprano sobre el prefijo es una ganancia obvia y muy estudiada — PASTE,
 SPORK, SpecBox y toda una literatura de 2026. Cada uno de esos sistemas gasta
 la mayor parte de su esfuerzo en la misma pregunta: **¿qué pasos son seguros de
 correr antes de estar seguros?** Correr temprano una herramienta que manda un
 email o cobra una tarjeta no es una optimización de latencia, es un bug con
 cronómetro. Responden con heurísticas, listas blancas, o el criterio de un LLM.
 
-Este runtime no tiene que preguntar. Los cinco tipos de skill de C1 son un
+Este runtime no tiene que preguntar. Los cinco tipos de Expertise de C1 son un
 **sistema de tipos de efectos** — `motor` es precisamente "actúa sobre el
 mundo" — así que la respuesta ya está en el manifiesto, estáticamente, para
-cada skill del grafo:
+cada Expertise del grafo:
 
 ```json
 { "from": "brain.text_out", "to": "summariser.text_in", "speculative": true }
@@ -1466,7 +1505,7 @@ run ahead of certainty, because a discarded effect is not discarded
 ```
 
 Ese rechazo ocurre al cablear, antes de que exista una sesión. Es la invariante
-del motor-gate vista desde otro ángulo: el tipo de skill que debe esperar a un
+del motor-gate vista desde otro ángulo: el tipo de Expertise que debe esperar a un
 humano es el tipo que nunca debe correr por delante de la certeza.
 
 La reconciliación reutiliza maquinaria que ya existe. El kernel pliega los
@@ -1474,7 +1513,7 @@ parciales en un valor acumulado según la semántica del propio schema
 (concatenando en `std/text@1`, reemplazando en `std/transcript@1` — la
 distinción que C1 ya traza), lo entrega marcado como completo, y cuando el
 productor termina o suprime la entrega redundante o abandona la cadena
-especulativa por el camino normal de `cancel`. Un skill que maneja bien cancel
+especulativa por el camino normal de `cancel`. Un Expertise que maneja bien cancel
 maneja bien un fallo de especulación gratis.
 
 Se reportan aciertos y fallos, porque una funcionalidad que gasta cómputo en
@@ -1490,7 +1529,7 @@ especulación entera con `speculation: deny` en su policy.
 Se convierte a un instante absoluto en el hop que lo declara y se hereda hacia
 abajo, así que una cadena de tres hops no puede concederse en silencio tres
 veces el presupuesto añadiendo hops. Un hop puede apretarlo, nunca extenderlo.
-Se espera que el skill receptor **degrade** — menos beams, un modelo más chico,
+Se espera que el Expertise receptor **degrade** — menos beams, un modelo más chico,
 una cuantización más gruesa — en vez de abortar: una respuesta peor a tiempo
 gana a una mejor cuando ya nadie escucha.
 
@@ -1524,8 +1563,8 @@ de una capacidad `cognitive.*` y rutea hacia él.
 { "ir": "1", "graph_id": "long-session", "context_budget": 8000, "nodes": [] }
 ```
 
-Un presupuesto que hace cumplir el skill es un presupuesto que solo vale para
-los skills que se acordaron de implementarlo, y el modo de fallo difiere en cada
+Un presupuesto que hace cumplir el Expertise es un presupuesto que solo vale para
+los Expertises que se acordaron de implementarlo, y el modo de fallo difiere en cada
 uno — una truncación en uno, un 413 en otro, pérdida silenciosa de datos en un
 tercero. Un solo lugar, una sola regla, un solo mensaje de error.
 
@@ -1536,30 +1575,314 @@ exacto se usaría para planificación de capacidad que no puede sostener.
 
 ---
 
+## Muchas sesiones a la vez
+
+Una sola conversación esconde casi todos los costos de este runtime. Unos
+cientos en vivo no, y esta sección es lo que cambió para que dejen de verse:
+adónde se iba el tiempo, qué se hizo al respecto y qué no se tocó. Nada de esto
+debilita la vía de evidencia — el log causal sigue guardando cada envelope y el
+ledger sigue sellando cada efecto antes de entregarlo.
+
+### Una sesión lenta solo se frena a sí misma
+
+Un Expertise tiene una conexión, y todas las sesiones a las que sirve la
+comparten. El kernel lee esa conexión en un lazo y, hasta esta versión, ruteaba
+cada envelope en línea — lo que en una arista `reliable` bloquea mientras el
+buffer del destino esté lleno. Así que cuando el consumidor de una sesión se
+atrasaba — un navegador con mala red, una síntesis de voz más lenta que el
+modelo — el lazo se bloqueaba dentro de la entrega de *esa* sesión, y el
+siguiente envelope del socket, que era de otra sesión, esperaba detrás. Un solo
+oyente lento frenaba todas las conversaciones que servía esa réplica.
+
+Cada sesión tiene ahora su propia cola acotada y una goroutine que la drena. El
+trabajo del lazo de lectura es "pon el envelope en la cola de su sesión", que no
+bloquea salvo que esa sesión ya vaya `--session-mailbox` envelopes atrás (1024
+por defecto; `0` restaura el ruteo en línea).
+
+Lo que no cambia: el orden dentro de una sesión, el append al log causal antes
+de actuar sobre nada, y la contrapresión — una sesión que *se queda* atrás llena
+su cola y entonces frena a su productor igual que antes. Y el `cancel` de un
+cliente no pasa por la cola, así que adelanta a cada token que todavía espera
+detrás; se suprimen conforme se drenan.
+
+`aura_mailbox_waits_total` es el número a leer antes de tocar el flag. Si sube
+mientras `aura_mailbox_queued` sigue bajo, es una sesión lenta, no una cola
+pequeña.
+
+### Las sesiones nuevas van a la réplica más desocupada
+
+Correr N copias de un Expertise sirve N veces las sesiones, porque una sesión se
+resuelve a una réplica al arrancar y se queda ahí. Antes era round-robin, que
+supone que las sesiones se parecen. No se parecen — una llamada de voz dura una
+hora y un webhook un segundo — así que al rato una réplica tenía todas las
+sesiones largas y la siguiente larga aún le caía una de cada N veces.
+
+El kernel cuenta ahora, él mismo, las sesiones vivas conectadas a cada conexión
+conforme empiezan y terminan, y le da la sesión nueva a la réplica que menos
+lleva. La rotación solo desempata. No interviene ningún reporte de carga del
+Expertise, así que no hizo falta cambiar el protocolo y funciona con todo
+Expertise ya desplegado. `GET /v1/stats` muestra la cuenta por réplica.
+
+### Una audiencia sobre una sesión viva
+
+Una sesión tiene exactamente un cliente: el socket que la abrió, la única parte
+que puede mandar hacia el grafo o contestar un gate. Eso encaja con una
+conversación y con nada que tenga audiencia — el chat junto a una transmisión
+en vivo, una conversación de soporte que sigue un supervisor, un tablero en una
+pared. Cada uno habría necesitado su propia sesión, corriendo su propia copia
+del grafo.
+
+```
+GET /v1/watch?session=<id>      (WebSocket)
+```
+
+conecta un observador de solo lectura. Recibe cada envelope que la sesión le
+entrega a su cliente, en el mismo orden, desde el momento en que se conecta, y
+nada más:
+
+- **No puede frenar a la sesión.** El cliente está en un carril `reliable` y
+  aplica contrapresión, que es lo correcto para la parte a la que va dirigida
+  la conversación. A un observador se le ofrece cada trama sin esperar, y al
+  que no puede tomarla se le **desconecta** con un status que lo dice — no se
+  le espera y no se le salta. Saltarlo sería peor: los parciales de texto son
+  deltas, y un espectador al que se le entrega un stream con un hueco no tiene
+  forma de saberlo. Un observador tiene el stream completo o sabe que no lo
+  tiene, y se reconecta.
+- **Nunca se le muestra un gate.** Un `confirm_request` va solo al cliente. A
+  quién se le pide aprobar un efecto es el centro de la evidencia que produce
+  este runtime, y una audiencia no es esa persona.
+- **No tiene voz.** Las tramas que manda un observador se leen y se descartan.
+- **No recibe historial.** Se observa desde que se conecta; lo anterior está en
+  el log causal, detrás de `GET /v1/sessions/{id}/events`.
+
+Cuando la sesión termina se le avisa al observador (`state: ended`) y el socket
+se cierra. Una sesión admite hasta 10.000 observadores; pasado eso la respuesta
+es un relay delante del nodo, no más sockets en él. `GET /v1/stats` reporta
+cuántos hay conectados y a cuántos se cortó por quedarse atrás.
+
+**Quién puede mirar.** El operador, o quien porte un *ticket de observación*.
+La salida de una sesión es la conversación misma, así que el token del nodo no
+es algo que una aplicación pueda poner en el navegador de un espectador. En su
+lugar, su backend pide un ticket, una vez, del lado del servidor:
+
+```bash
+curl -X POST localhost:9080/v1/watch/tickets \
+  -H "Authorization: Bearer $(cat ~/.aura/node.token)" \
+  -d '{"session": "sess-8f3a", "ttl_s": 300}'
+# {"ticket":"eyJ2IjoxLC...","session":"sess-8f3a","expires":1794430982}
+```
+
+y se lo entrega al espectador, que se conecta directo al nodo con
+`GET /v1/watch?ticket=<ticket>`. Un ticket dice una sola cosa — quien lo porta
+puede mirar *esta* sesión hasta *entonces* — y se acepta en esa única ruta y en
+ninguna otra, en ninguna otra forma: ni como bearer token, ni en el socket de
+sesión, ni para otra sesión. Va firmado, no almacenado, así que verificarlo no
+toca ninguna base de datos y una audiencia no se convierte en una escritura por
+carga de página. El precio es que no se puede revocar antes de tiempo, y por
+eso vive cinco minutos por defecto y un día como máximo, y muere con la sesión
+que nombra. Su llave se deriva del token del operador, así que un ticket
+sobrevive a un failover al que sobrevive la transmisión.
+
+**Entrar a la mitad.** `&history=<n>` (hasta 500) reproduce los últimos n
+envelopes que la sesión le entregó a su cliente antes de cualquier cosa en
+vivo, enmarcados por `state: history` (con un `count`) y `state: watching`,
+para que el espectador distinga uno de otro. El observador se conecta antes de
+leer el log y lo que llega mientras tanto se deduplica contra la reproducción,
+así que no hay hueco y nada llega dos veces. Las tramas que el log
+deliberadamente no guardó — una arista `realtime` registra que hubo audio, no
+sus bytes — no se reproducen.
+
+### Menos envelopes para el mismo texto
+
+Un modelo emite un token cada pocos milisegundos, y cada uno era su propio
+envelope: un id, dos codificaciones JSON, dos appends al log causal, una
+decisión de ruteo y una trama en al menos dos sockets — para cuatro caracteres.
+En `std/text@1` el `text` de un parcial es un delta que el consumidor
+concatena, así que "a", "b", "c" y "abc" son el mismo stream por definición.
+
+`aura.DeltaCoalescer` (SDK de Python) agrupa deltas bajo tres reglas: el
+primero sale de inmediato, así que el tiempo al primer token nunca se
+sacrifica; nada espera más que la ventana, y eso lo garantiza un temporizador
+aunque el modelo se quede parado; y un buffer lleno se vacía en el acto.
+`llm-chat` lo usa con `coalesce_ms: 25`. Por debajo de unos cuarenta tokens por
+segundo cada token sigue teniendo su envelope, porque cada uno llega cuando la
+ventana ya pasó. Por encima, la tasa de envelopes queda topada en cuarenta por
+segundo y el texto es idéntico. `coalesce_ms: 0` es exactamente el
+comportamiento anterior.
+
+Solo para esquemas cuyos parciales se concatenan. Los parciales de
+`std/transcript@1` se *reemplazan* entre sí; agrupar esos sería otro error.
+
+### Una sola traza, del backend de quien llama hasta el ledger
+
+El log causal ya es una traza, y `aura trace <session>` siempre pudo exportar
+una. Faltaban dos cosas.
+
+**No podía unirse a una traza que quien llama ya tenía.** Un envelope puede
+llevar ahora un `traceparent` W3C en `trace` ([C3 v1.7](spec/c3-channel.md)). El
+cliente lo pone en el envelope que inicia una cadena — o manda el header
+estándar `traceparent` a una ruta de ingress — y el kernel lo lleva en cada
+salto de esa cadena, de vuelta hasta el cliente. Lo hace desde su propio
+registro de la cadena, no confiando en que los Expertises lo repitan, así que
+sobrevive a un Expertise construido sobre un SDK que nunca oyó hablar del
+campo. Una cadena sin contexto no lleva el campo, y uno mal formado se descarta
+en vez de rechazarse: el trazado nunca es la razón por la que falla una entrega.
+
+**Era a posteriori.** `aura up --otlp http://collector:4318` exporta spans
+mientras el nodo corre (también se lee de `OTEL_EXPORTER_OTLP_ENDPOINT`; los
+headers, de `OTEL_EXPORTER_OTLP_HEADERS`). Tres propiedades, a propósito:
+
+- *No puede frenar al nodo.* El enganche en la ruta de entrega es un envío no
+  bloqueante. Un collector caído, lento o que rechaza cuesta un contador
+  (`aura_trace_spans_dropped_total`, `…_failed_total`), nunca una entrega, y un
+  lote fallido se descarta en vez de reintentarse hasta formar un atraso.
+- *El muestreo conserva sesiones enteras.* `--otlp-sample 0.1` exporta una
+  sesión de cada diez, completa, elegida por un hash del id de sesión para que
+  la respuesta sea la misma en todo nodo y tras todo reinicio. Muestrear por
+  span exportaría árboles con huecos.
+- *Los payloads nunca se exportan.* Un span lleva la forma del envelope — qué
+  puerto, qué tipo, causado por qué, con qué modelo, a costa de cuántos tokens —
+  y nunca su contenido. Mandar contenido de usuario a un backend de telemetría
+  es una decisión de retención, y no le toca a este exportador tomarla.
+
+El muestreo no toca el registro. Una sesión que quedó fuera del muestreo sigue
+siendo plenamente respondible con `aura why` y `aura trace`; los spans son una
+vista para encontrar cosas, no la evidencia.
+
+### Lo que costó una inferencia, como lo contó el motor
+
+El presupuesto de contexto del kernel estima tokens a bytes/4, y lo dice. Eso
+alcanza para detener una cadena desbocada y no para planear capacidad. Una
+atestación C5 puede llevar ahora `usage` ([C5 v1.2](spec/c5-attestation.md)):
+
+```json
+{ "input_tokens": 900, "output_tokens": 40, "cached_input_tokens": 768 }
+```
+
+Reportado por el motor, nunca estimado por el Expertise — el `usage` del propio
+proveedor, el contador del propio runtime local — y omitido cuando el motor no
+dice nada. `llm-chat` lo adjunta al envelope final de cada respuesta. El kernel
+suma lo que le dicen en `aura_tokens_total{kind="input"|"output"|"cached_input"}`,
+y un span lo lleva como `gen_ai.usage.*`. Es un piso: un Expertise que no
+atestigua uso no suma nada.
+
+`cached_input` sobre `input` es el número que vale la pena mirar. Es la tasa de
+acierto de la caché de prefijo, y de eso trata la siguiente subsección.
+
+### Un prompt cuyo prefijo sobrevive a la conversación
+
+Toda caché de prefijo — la de llama.cpp, la de un slot de servidor, la de un
+proveedor alojado — solo rinde si el prompt de este turno empieza con el del
+turno anterior. `llm-chat` recortaba su historial tirando el turno más viejo
+cada vez que pasaba de `history_limit`. Una vez que la conversación llegaba al
+límite, eso movía el segundo mensaje del prompt en *cada* turno, así que la
+ventana entera se reevaluaba cada vez — justo cuando el contexto era más largo.
+
+Ahora recorta en bloques (`aura.compact_history`): no se tira nada hasta que el
+historial excede el límite, y entonces se va la mitad más vieja de una vez.
+Entre dos compactaciones el prompt solo crece por el final. La ventana hace
+diente de sierra entre la mitad del límite y el límite, en vez de quedarse
+pegada a él.
+
+El prompt del planner recibió lo mismo por el otro lado: el catálogo se
+renderiza ordenado, así que dos peticiones idénticas producen un prompt
+idéntico sin importar el orden en que se conectaron los Expertises.
+
+### Un solo juego de pesos para todo el nodo
+
+llama.cpp en proceso es un contexto — una secuencia a la vez — y una copia de
+los pesos por proceso. De ahí salían dos cosas.
+
+*Un problema de corrección.* Dos sesiones generando sobre ese contexto a la vez
+no es lento, es indefinido. `ChatBackend` serializa ahora la generación local, y
+una respuesta cancelada mientras espera su turno cede su lugar.
+
+*Un problema de capacidad.* `llm-chat`, el planner y el resumidor de
+`memory-context` cargaban cada uno su copia, y N conversaciones sobre un
+contexto se desalojan la caché mutuamente en cada turno. Apúntalos en su lugar
+a un servidor que ya hace slots, batching continuo y caché de prefijo por slot:
+
+```bash
+llama-server -m ~/.aura/models/model.gguf --port 8080 --parallel 8   # o vLLM, o cualquier cosa compatible con OpenAI
+export AURA_INFERENCE_URL=http://127.0.0.1:8080/v1
+export AURA_INFERENCE_MODEL=model            # el nombre que espera ese servidor
+```
+
+Cada Expertise de primera parte pasa entonces a ser cliente de los mismos
+pesos, por la misma petición compatible con OpenAI que ya hace el camino
+alojado, así que nada más cambia en ellos. `OPENAI_API_KEY` sigue ganando cuando
+están los dos — agregar la variable nunca mueve tráfico en silencio fuera de un
+modelo alojado. La atestación nombra el endpoint. `AURA_INFERENCE_EXTRA` recibe
+un objeto JSON de campos propios del servidor; nunca se manda a una API alojada.
+
+Para un solo proceso que no va a correr un servidor, `AURA_LLM_CACHE_MB` guarda
+en RAM el estado evaluado de más de una conversación. Apagado por defecto:
+cambia memoria por latencia y el tamaño correcto depende del modelo.
+
+Dos arreglos menores viajan con esto. Las llamadas remotas tienen ahora un
+timeout de lectura (`AURA_LLM_TIMEOUT`, 120 s) — sin él, un proveedor que
+aceptaba la conexión y luego se quedaba parado retenía la sesión para siempre y
+nada lo reportaba. Y el planner respeta `OPENAI_BASE_URL`, que antes ignoraba,
+así que un nodo configurado para un proveedor ya no planifica contra otro con
+la llave equivocada.
+
+### El planner no puede inventar una capability
+
+El prompt de planificación dice "copia la capability exactamente como está
+escrita", y un modelo pequeño casi siempre lo hace. Cuando no — `motor.email.sent`
+por `motor.email.send` — el plan fallaba al compilar, con los tokens ya
+gastados. En el backend local el decodificador queda ahora restringido por una
+gramática construida desde el catálogo vivo, en la que la cadena `capability`
+es una alternancia sobre lo que realmente está conectado. Un nombre que no está
+en el catálogo no es una secuencia de tokens que el sampler pueda emitir. Si la
+gramática no se puede cargar, el planner vuelve al modo JSON simple de siempre.
+
+### Contra qué se midió esto, y contra qué no
+
+Comprobado por tests que corren en CI: un consumidor bloqueado en una sesión no
+retrasa a otra en la misma conexión (y sí lo hace con los buzones apagados — el
+test demuestra su propia premisa); el orden dentro de una sesión con una cola
+deliberadamente pequeña; un cancel adelantando salida encolada; un observador
+que se queda atrás y es cortado mientras el cliente y los demás observadores
+reciben todo; la elección por
+carga tras duraciones de sesión desiguales; el coalescer con un emisor lento y
+un productor parado; el exportador contra un collector que nunca contesta. La
+suite de conformidad cubre la propagación de la traza sobre el cable contra un
+binario real. La suite completa del kernel pasa bajo el detector de carreras.
+
+No medido: una cifra de throughput antes/después para los buzones o el
+coalescing en un nodo cargado. `kernel/cmd/loadgen` mide un round-trip de echo,
+que no tiene consumidor lento y es un envelope por mensaje, así que no
+mostraría ninguno de los dos efectos. La caché de estado KV en proceso y la
+gramática del planner se ejercitan contra dobles, no contra llama.cpp, que CI no
+instala.
+
+---
+
 ## Drivers de modelos y admisión de recursos
 
-La voz llega como skills de primera parte — cada uno un driver fino
+La voz llega como Expertises de primera parte — cada uno un driver fino
 sobre un runtime nativo, cada uno con una cadena de degradación declarada:
 
-| Skill | Capacidad | Motor |
+| Expertise | Capacidad | Motor |
 |---|---|---|
-| [`skills/llm-chat`](skills/llm-chat/) | `cognitive.llm.chat` | llama.cpp (cualquier GGUF) por defecto; cualquier API compatible con OpenAI (OpenAI, Gemini, …) si `OPENAI_API_KEY` está definida. Historial por sesión. |
-| [`skills/asr`](skills/asr/) | `sensorial.asr.transcribe` | faster-whisper (CPU int8). Acepta un WAV completo en `audio_in`, o un stream PCM en vivo en `audio_chunk_in` con transcripciones parciales mientras la persona todavía habla. Termina una utterance por señal del cliente, por silencio final, o por un tope duro. |
-| [`skills/tts`](skills/tts/) | `motor.tts.speak` | piper (opcional) → voces del SO (SAPI/espeak). Emite PCM en trozos de ~200ms para un oyente en vivo, sea cual sea el backend, más la cláusula entera como WAV. |
-| [`skills/sentence-chunker`](skills/sentence-chunker/) | `logical.text.sentence_chunk` | Agrupa un stream de tokens en cláusulas. Ponlo entre un LLM en streaming y cualquier cosa que trabaje con frases, o el sintetizador se dispara una vez por token. |
-| [`skills/model-manager`](skills/model-manager/) | `motor.models.manage` | listar / catálogo / búsqueda en HF / descargar / borrar / set-active |
-| [`skills/model-fit`](skills/model-fit/) | `sensorial.hardware.modelfit` | Lee RAM, CPU y GPU/VRAM y ordena el catálogo por lo que realmente corre aquí, con tokens/s estimados y las suposiciones detrás. Solo librería estándar, así que responde antes de instalar nada. |
-| [`skills/memory-context`](skills/memory-context/) | `memory.context.window` | SQLite (embebido, archivo local) — persiste turnos por sesión a través de reinicios, `recall` devuelve una ventana recortada a un presupuesto de tokens configurable (drop-oldest, o resumen vía `aura.llm.ChatBackend`). El historial propio de llm-chat es en proceso y sin límite (ver su `main.py`); este es la alternativa durable y consciente del presupuesto — se cablea a un grafo explícitamente, no se conecta solo. |
-| [`skills/postgres-cdc`](skills/postgres-cdc/) | `sensorial.postgres.cdc` | Convierte el stream de replicación lógica propio de Postgres (`test_decoding`, nada que instalar) en eventos `std/db-change@1`, uno por fila cambiada. |
+| [`expertise/llm-chat`](expertise/llm-chat/) | `cognitive.llm.chat` | llama.cpp (cualquier GGUF) por defecto; cualquier API compatible con OpenAI (OpenAI, Gemini, …) si `OPENAI_API_KEY` está definida. Historial por sesión. |
+| [`expertise/asr`](expertise/asr/) | `sensorial.asr.transcribe` | faster-whisper (CPU int8). Acepta un WAV completo en `audio_in`, o un stream PCM en vivo en `audio_chunk_in` con transcripciones parciales mientras la persona todavía habla. Termina una utterance por señal del cliente, por silencio final, o por un tope duro. |
+| [`expertise/tts`](expertise/tts/) | `motor.tts.speak` | piper (opcional) → voces del SO (SAPI/espeak). Emite PCM en trozos de ~200ms para un oyente en vivo, sea cual sea el backend, más la cláusula entera como WAV. |
+| [`expertise/sentence-chunker`](expertise/sentence-chunker/) | `logical.text.sentence_chunk` | Agrupa un stream de tokens en cláusulas. Ponlo entre un LLM en streaming y cualquier cosa que trabaje con frases, o el sintetizador se dispara una vez por token. |
+| [`expertise/model-manager`](expertise/model-manager/) | `motor.models.manage` | listar / catálogo / búsqueda en HF / descargar / borrar / set-active |
+| [`expertise/model-fit`](expertise/model-fit/) | `sensorial.hardware.modelfit` | Lee RAM, CPU y GPU/VRAM y ordena el catálogo por lo que realmente corre aquí, con tokens/s estimados y las suposiciones detrás. Solo librería estándar, así que responde antes de instalar nada. |
+| [`expertise/memory-context`](expertise/memory-context/) | `memory.context.window` | SQLite (embebido, archivo local) — persiste turnos por sesión a través de reinicios, `recall` devuelve una ventana recortada a un presupuesto de tokens configurable (drop-oldest, o resumen vía `aura.llm.ChatBackend`). El historial propio de llm-chat es en proceso y sin límite (ver su `main.py`); este es la alternativa durable y consciente del presupuesto — se cablea a un grafo explícitamente, no se conecta solo. |
+| [`expertise/postgres-cdc`](expertise/postgres-cdc/) | `sensorial.postgres.cdc` | Convierte el stream de replicación lógica propio de Postgres (`test_decoding`, nada que instalar) en eventos `std/db-change@1`, uno por fila cambiada. |
 
 Como todos comparten la interfaz de puertos/esquemas, a un grafo que pide
 `sensorial.asr.transcribe` nunca le importa qué motor responde — ese es el plano
 de modelos en la práctica. Si quieres algo que corra sin nada en absoluto para
-envolver un sistema externo nuevo, empieza por [`skills/echo/`](skills/echo/)
+envolver un sistema externo nuevo, empieza por [`expertise/echo/`](expertise/echo/)
 — sin modelo, sin credenciales, sin red.
 
 **Admisión de recursos (hardware finito).** Un nodo arrancado con un presupuesto
-de memoria se niega a admitir skills que no caben, con una explicación en lugar
+de memoria se niega a admitir Expertises que no caben, con una explicación en lugar
 de una muerte silenciosa por falta de memoria:
 
 ```powershell
@@ -1573,21 +1896,21 @@ de una muerte silenciosa por falta de memoria:
 ---
 
 
-### Qué modelo usa cada skill, y cómo cambiarlo
+### Qué modelo usa cada Expertise, y cómo cambiarlo
 
-Dos skills cargan un modelo: **llm-chat** (la pestaña de conversación del
+Dos Expertises cargan un modelo: **llm-chat** (la pestaña de conversación del
 Estudio) y **planner** (la barra de objetivo del Estudio, y `aura do`). Son procesos separados, así que cada uno responde
 la pregunta por su cuenta — y ambos la responden igual, en este orden:
 
 | | Dónde mira | Qué significa |
 |---|---|---|
 | 1 | `AURA_MODEL_PATH` | Un override explícito, se honra tal cual. |
-| 2 | la clave de config `model` de ese skill | **La elección de ese skill.** Pónla para planificar con un modelo y chatear con otro. |
+| 2 | la clave de config `model` de ese Expertise | **La elección de ese Expertise.** Pónla para planificar con un modelo y chatear con otro. |
 | 3 | `~/.aura/models/active.json` | El default de todo el nodo, escrito por `model-manager set-active`. Dejar la clave vacía es la forma de decir "sigue al nodo". |
 | 4 | el default incorporado | `qwen2.5-1.5b-instruct-q4_k_m.gguf`, descargado en el primer uso. |
 
 Cada paso se salta en vez de fallar, así que un ajuste que nombra un archivo
-borrado degrada al siguiente en lugar de dejar al nodo sin skill de chat.
+borrado degrada al siguiente en lugar de dejar al nodo sin Expertise de chat.
 
 **Para que ambos usen el mismo modelo** — el caso común — descarga uno y
 márcalo como activo, dejando ambas claves vacías:
@@ -1599,7 +1922,7 @@ aura do "rank which models fit on this machine" --yes   # qué corre aquí
 ```
 
 **Para darles modelos distintos**, pon la clave `model` en uno de ellos — desde
-la vista **Skills** del plano de control, o:
+la vista **Expertises** del plano de control, o:
 
 ```bash
 curl -X PUT "http://localhost:9080/v1/skills/config?id=example/cognitive/planner"   -H "Authorization: Bearer $(cat ~/.aura/node.token)"   -H 'Content-Type: application/json'   -d '{"model": "gemma-3-4B-it-Q4_K_M.gguf"}'
@@ -1621,7 +1944,7 @@ en una máquina de prueba, 1,9 GB residentes cada uno para un modelo de 1,1 GB.
 Ambos además descargan todas las capas a GPU por defecto (`n_gpu_layers: -1`),
 así que en una tarjeta pequeña el segundo en arrancar acaba en CPU sin avisar.
 `model-fit` dimensiona *un* modelo contra la máquina entera; no sabe cuántos
-skills piensan cargar uno. Compartir una sola instancia cargada significaría que
+Expertises piensan cargar uno. Compartir una sola instancia cargada significaría que
 el planner razone a través de `cognitive.llm.chat` por el grafo en vez de
 importar llama.cpp — ver [el roadmap](ROADMAP-ES.md).
 
@@ -1871,7 +2194,7 @@ Qué demuestra un recibo, sin que el broker confíe en el llamante en absoluto:
 - **el efecto existió y fue autorizado** — la entry está en la cadena, y a la
   cadena solo se llega pasando el checkpoint;
 - **fue permitido o aprobado** — un efecto denegado no compra nada;
-- **es *este* efecto** — la entry nombra la capability, así que un skill no puede
+- **es *este* efecto** — la entry nombra la capability, así que un Expertise no puede
   gastar la aprobación de otro en el token de pagos;
 - **es reciente** — 90 segundos, canjeable tres veces. Un recibo no es un bearer
   token con vida útil útil; el margen existe para reintentar tras un error de
@@ -1889,7 +2212,7 @@ de texto. Un directorio de datos copiado sin su subdirectorio `identity/` produc
 ciphertext que nadie puede abrir, que es el resultado correcto para un archivo de
 base de datos robado.
 
-Un skill que corre como proceso propio usa la misma puerta:
+Un Expertise que corre como proceso propio usa la misma puerta:
 
 ```powershell
 curl -X POST localhost:9080/v1/secrets/resolve `
@@ -1897,7 +2220,7 @@ curl -X POST localhost:9080/v1/secrets/resolve `
   -d '{"receipt":"sha256:…","capability":"motor.api.erp.create_invoice","names":["erp_token"]}'
 ```
 
-**Lo que esto no hace**, dicho claro: no impide que un skill que recibió
+**Lo que esto no hace**, dicho claro: no impide que un Expertise que recibió
 legítimamente una credencial se la quede. Una vez que un valor llega a un
 proceso, ese proceso lo tiene, y nada salvo no revelarlo nunca — un oráculo de
 firma, un proxy de egress — cambia eso. Lo que sí elimina es la credencial
@@ -1960,7 +2283,7 @@ bastante deterministas, y `--json` emite el informe completo.
 
 Dos límites honestos:
 
-- Una sesión que **no se pudo reproducir** (su grafo ya no está, un skill que
+- Una sesión que **no se pudo reproducir** (su grafo ya no está, un Expertise que
   necesita está caído) se cuenta aparte y **no** ensucia la corrida. Convertir
   en silencio "no se pudo probar" en "la prueba falló" enseña a la gente a
   ignorar los resultados.
@@ -1972,7 +2295,7 @@ Dos límites honestos:
 
 ---
 
-## Aislamiento de skills
+## Aislamiento de Expertises
 
 Esta ha sido la mayor brecha de seguridad abierta desde la primera release, y
 el README lo decía. Esto la estrecha; no la cierra, y la diferencia merece
@@ -1992,9 +2315,9 @@ precisión.
 | `microvm` | Una frontera real | Linux+KVM | **solo interfaz, rechazado al arrancar** |
 
 **Qué compra `process`.** El entorno pasa a ser una allowlist en vez de una
-herencia: un skill instalado desde un registry ya no recibe el
+herencia: un Expertise instalado desde un registry ya no recibe el
 `AWS_SECRET_ACCESS_KEY`, el `GITHUB_TOKEN` o el `SSH_AUTH_SOCK` del operador
-solo por arrancarse. Un skill que sí necesita una credencial la nombra con
+solo por arrancarse. Un Expertise que sí necesita una credencial la nombra con
 `--env`. Eso cierra un fallo real y común. **No** es una frontera contra código
 hostil, que todavía puede llegar a la red y al filesystem por syscalls que
 ningún runtime de Go portable intercepta.
@@ -2045,7 +2368,7 @@ límite.
 
 ## El marketplace
 
-Los skills se distribuyen mediante un registro **federable** — cualquiera puede
+Los Expertises se distribuyen mediante un registro **federable** — cualquiera puede
 alojar uno con `aura registry serve`, exactamente igual que un registro de
 contenedores, que es lo que hace creíble la neutralidad del ecosistema.
 
@@ -2059,7 +2382,7 @@ contenedores, que es lo que hace creíble la neutralidad del ecosistema.
 ```
 
 Instalar te muestra exactamente en qué estás confiando *antes* de que aterrice —
-la clave del publicador y los permisos declarados del skill ("puede llamar a
+la clave del publicador y los permisos declarados del Expertise ("puede llamar a
 `api.acme.com` y a nada más") — y entonces pide confirmación.
 
 Garantías del registro, todas aplicadas y testeadas:
@@ -2099,7 +2422,7 @@ actividad) hasta la raíz y la narra con el LLM local:
   why › La causa raíz es que el usuario denegó la entrega del informe confidencial.
 ```
 
-Sin skill de LLM conectado degrada limpiamente a la cadena determinista anotada.
+Sin Expertise de LLM conectado degrada limpiamente a la cadena determinista anotada.
 Llamado sin id de sesión, explica la más reciente.
 
 **`aura replay`** convierte tráfico real grabado en una suite de evaluación:
@@ -2117,7 +2440,7 @@ del grafo actual y compara las salidas:
 ## Federar nodos
 
 Cada nodo funciona de forma autónoma (autonomía hoja-nodo). La federación
-*amplía* lo que un nodo puede resolver proyectando los skills de otro nodo como
+*amplía* lo que un nodo puede resolver proyectando los Expertises de otro nodo como
 si fueran locales.
 
 ```powershell
@@ -2130,8 +2453,8 @@ si fueran locales.
 .\kernel\aura.exe federate http://edge-box:9080 --capability sensorial   # filtrar
 ```
 
-El puente es puro userland: es simultáneamente un cliente-skill del nodo local
-(registrando skills proxy) y un cliente de streams del nodo remoto (conduciendo
+El puente es puro userland: es simultáneamente un cliente-Expertise del nodo local
+(registrando Expertises proxy) y un cliente de streams del nodo remoto (conduciendo
 grafos allí), retransmitiendo envelopes entre ambos. No requirió ningún cambio
 en el kernel, lo que es algo de evidencia de que la frontera del micro-kernel
 está trazada en un sitio útil. También tiene tests (`fed`, 87%), incluido que
@@ -2156,7 +2479,7 @@ QUIC/WebRTC y NAT traversal quedan para más adelante.
 Deep Axiom habla los protocolos del ecosistema en sus bordes, de modo que
 interopera con ellos en lugar de competir.
 
-**Servidor MCP.** Cada skill conectado es automáticamente una tool. Conecta
+**Servidor MCP.** Cada Expertise conectado es automáticamente una tool. Conecta
 Deep Axiom a Claude Code, Cursor o cualquier cliente MCP:
 
 ```powershell
@@ -2166,15 +2489,15 @@ claude mcp add --transport http aura http://localhost:9080/mcp
 ```
 
 Los nombres de las tools provienen de las capacidades; los esquemas de entrada
-se derivan del esquema de ingreso de cada skill.
+se derivan del esquema de ingreso de cada Expertise.
 
 **Hace streaming.** Un `tools/call` de un cliente que envía
 `Accept: text/event-stream` se responde como tal: cada fragmento que produce un
-skill se convierte en un `notifications/progress` de MCP a medida que se
+Expertise se convierte en un `notifications/progress` de MCP a medida que se
 produce, y la respuesta JSON-RPC cierra el stream. Un cliente que no pide
 stream sigue recibiendo el cuerpo JSON completo. Esta frontera era solo
 request/response, lo que la hacía contradecir el argumento sobre el que
-descansa el resto del runtime: un skill que emite token a token no debería
+descansa el resto del runtime: un Expertise que emite token a token no debería
 aplanarse en una única respuesta justo en el borde que un agente externo
 realmente usa.
 
@@ -2191,7 +2514,7 @@ que eso desbloqueó.
 
 **Tarjeta de descubrimiento A2A** en `/.well-known/agent.json`, construida desde
 el catálogo vivo, para que otros agentes puedan descubrir este nodo y sus
-skills. Solo descubrimiento — el protocolo de *mensajes* A2A no está
+Expertises. Solo descubrimiento — el protocolo de *mensajes* A2A no está
 implementado, y "soporte A2A" aquí debe leerse como exactamente ese endpoint.
 
 **Exportación OpenTelemetry.** El log causal se convierte en trazas OTLP — un
@@ -2263,8 +2586,8 @@ se verifica sin conexión.
 
 **Cómo está construido importa más que lo que hace.** Guard no contiene código
 de policy, ni de gate, ni de ledger. Se conecta a `/ws/skill` — el mismo socket
-de inversión de control que usa cualquier skill fuera de proceso, sin
-privilegios de kernel — y registra un skill por cada tool upstream, tipado
+de inversión de control que usa cualquier Expertise fuera de proceso, sin
+privilegios de kernel — y registra un Expertise por cada tool upstream, tipado
 `motor` o `sensorial`. Desde el lado del executor no tienen nada de especial,
 así que heredan gratis el invariante de aprobación humana, el ledger, la
 cancelación y el replay. Un guard que tomara sus propias decisiones sería un
@@ -2277,7 +2600,7 @@ servidor anote una tool como `readOnlyHint`. Guard registra todo como `motor`
 `--trust-annotations` honra el hint y deja esas tools sin gate. El default es
 estricto en esa dirección a propósito: `readOnlyHint` es una afirmación hecha
 por el mismo servidor sobre el que trata la llamada, exactamente igual que una
-atestación C5 es una afirmación del skill que la hizo. Creerle para *saltarse*
+atestación C5 es una afirmación del Expertise que la hizo. Creerle para *saltarse*
 un gate permitiría que un servidor desarmara el guard mintiendo sobre sí mismo;
 creerle para *exigir* uno cuesta un prompt en una tool que solo lee.
 
@@ -2385,11 +2708,62 @@ en [ROADMAP-ES.md](ROADMAP-ES.md) entre lo que bloquea producción.
 
 ### Lo que un nodo no sobrevive
 
-Un proceso, sin failover. Un nodo que muere se lleva su estado de ruteo vivo — el
-log de eventos sobrevive, así que la historia y el replay quedan intactos, pero
-las sesiones que estaban abiertas se fueron. Contesta esto antes de desplegar: si
-AURA se cae, ¿tu aplicación degrada o se detiene? Si degrada, esto es desplegable
-hoy como servicio auxiliar. Si se detiene, el failover va primero.
+Un nodo es un proceso. Lo que pasa cuando muere depende de si había algo
+esperando.
+
+**Con un standby, en el mismo host.** Arranca un segundo nodo sobre el mismo
+directorio de datos con `--standby`:
+
+```bash
+aura up --data /var/lib/aura                 # el nodo
+aura up --data /var/lib/aura --standby       # espera; toma el relevo cuando el primero muere
+```
+
+El standby no tiene ningún reclamo y no abre nada que el nodo vivo esté
+escribiendo — el log causal de eventos solo lo abre quien tiene el
+arrendamiento de escritura, porque abrirlo repara una cola rota y eso solo
+puede hacerlo el escritor. Vigila el arrendamiento y toma el relevo ante
+cualquiera de dos señales:
+
+- *El proceso del líder ya no existe.* En el mismo host el standby puede
+  preguntárselo al sistema operativo, así que un nodo al que le hicieron
+  SIGKILL, que murió por falta de memoria o que se cayó, se reemplaza sin
+  esperar a que nada expire. Medido con dos binarios reales y una sesión en
+  curso: **21–118 ms desde el kill hasta que `/healthz` vuelve a contestar en
+  Linux**, cerca de medio segundo en Windows.
+- *El heartbeat del líder expiró.* La única evidencia que hay sobre un líder
+  vivo pero detenido, y cuesta un `--lease-ttl` completo (10 s por defecto),
+  por construcción: el TTL es la promesa de no desplazar a un nodo que solo se
+  pausó.
+
+La comprobación del proceso solo se cree donde no puede equivocarse en la
+dirección peligrosa — el titular registró este host y este espacio de nombres
+de PID — así que dos contenedores que comparten volumen y hostname pero no
+tabla de procesos nunca razonan sobre los PID del otro. Todo error restante cae
+del lado seguro: un PID reutilizado se lee como "vivo" y el standby espera el
+TTL.
+
+Lo que vuelve es el *mismo nodo*: misma identidad, mismo ledger, mismo token
+de operador, así que los tickets de observación que emitió se siguen
+aceptando. Los Expertises se reconectan solos. Un cliente que se reconecta con
+el mismo `?session=` continúa la sesión — la ventana de deduplicación, los
+índices causales, los gates pendientes y los contadores por salto se
+reconstruyen desde el log — y el log causal guarda los dos lados del kill.
+`scripts/failover_e2e.py` hace exactamente esto contra un binario compilado, y
+de ahí salieron los números de arriba.
+
+**Sin uno.** Nada reinicia el nodo; ese es trabajo de un supervisor (systemd,
+un runtime de contenedores). Un nodo reiniciado se reconstruye en milisegundos
+y luego espera el arrendamiento del muerto, así que la recuperación es de
+alrededor de `--lease-ttl`.
+
+**Lo que ninguno de los dos sobrevive es perder la máquina.** El standby
+necesita el directorio de datos, y el directorio de datos está en la máquina
+que murió. SQLite sobre un sistema de archivos en red no es una forma soportada
+de rodear eso. Enviar el log a una segunda máquina está en el
+[roadmap](ROADMAP-ES.md), y hasta que llegue la pregunta honesta sigue siendo
+la de antes: si esta *máquina* desaparece, ¿tu aplicación degrada o se
+detiene?
 
 ---
 
@@ -2398,13 +2772,13 @@ hoy como servicio auxiliar. Si se detiene, el failover va primero.
 Todo lo anterior descansa sobre cinco contratos pequeños, formalmente
 especificados y con versión congelada, en [`spec/`](spec/). Son lo *único* que
 AURA inventa; una suite de conformidad
-([`spec/conformance/`](spec/conformance/), 59 comprobaciones, caja negra sobre
+([`spec/conformance/`](spec/conformance/), 67 comprobaciones, caja negra sobre
 el protocolo crudo) es cómo una implementación demuestra que cumple C1-C3 — las
 garantías propias de C4 y C5 las comprueba, por separado, un job de CI
 adversarial (ver [Modelo de seguridad](#modelo-de-seguridad)).
 
 - **C1 — Manifiesto** ([spec/c1-manifest.md](spec/c1-manifest.md)): qué es un
-  skill — identidad, tipo, capacidad, puertos tipados con esquemas obligatorios,
+  Expertise — identidad, tipo, capacidad, puertos tipados con esquemas obligatorios,
   permisos y necesidades de recursos declarados, metadata de compensación
   opcional, firma.
 - **C2 — IR de Grafo** ([spec/c2-graph-ir.md](spec/c2-graph-ir.md)): el formato
@@ -2423,7 +2797,7 @@ adversarial (ver [Modelo de seguridad](#modelo-de-seguridad)).
   que un tercero la contrafirme — y la verificación sin conexión que una
   implementación conforme debe soportar.
 - **C5 — Atestación de Inferencia** ([spec/c5-attestation.md](spec/c5-attestation.md)):
-  lo que un skill afirma sobre cómo produjo una salida — motor, modelo,
+  lo que un Expertise afirma sobre cómo produjo una salida — motor, modelo,
   revisión, cuantización, parámetros de muestreo, semilla — direccionado por
   contenido y citado por cada efecto que esa salida causó. C4 responde *bajo
   qué autoridad*; C5 responde *sobre qué base*. Es cuidadoso con sus propios
@@ -2433,10 +2807,10 @@ adversarial (ver [Modelo de seguridad](#modelo-de-seguridad)).
 **La interrupción es una garantía, no una petición.** Un cliente puede abandonar
 una cadena a media ejecución — el "para, cambié de idea" de una conversación en
 vivo. El kernel marca esa cadena como cancelada y no rutea nada más que le
-pertenezca, así que un skill que ignore el cancel y siga generando produce
-salida que no llega a ningún sitio. Además *pide* a cada skill que trabaja en la
+pertenezca, así que un Expertise que ignore el cancel y siga generando produce
+salida que no llega a ningún sitio. Además *pide* a cada Expertise que trabaja en la
 cadena que pare, a cualquier profundidad, y a cada uno lo direcciona con el
-`cause_id` que ese skill reconoce — un skill a tres saltos nunca vio el id que
+`cause_id` que ese Expertise reconoce — un Expertise a tres saltos nunca vio el id que
 nombró el cliente. La cancelación está acotada a esa cadena: una segunda
 frase, o un stream de visión que comparta la sesión, quedan intactos.
 
@@ -2474,7 +2848,7 @@ distancia importa más que la intención.
 > que cierra el agujero por el que cualquiera capaz de hacer POST de un grafo
 > podía renunciar a la mejor garantía del kernel.
 >
-> **Lo que sigue sin aplicarse:** el aislamiento de procesos. Un skill corre con
+> **Lo que sigue sin aplicarse:** el aislamiento de procesos. Un Expertise corre con
 > los privilegios de quien lo arrancó, y `permissions` es una declaración, no un
 > sandbox. Hacerlo real necesita el executor Wasm, que es trabajo posterior a la
 > beta en [Diseñado, aún no construido](#diseñado-aún-no-construido).
@@ -2567,13 +2941,13 @@ como logs de aplicación que nadie puede demostrar que no fueron editados.
 ### Credenciales con alcance
 
 Un nodo tenía exactamente una credencial. La CLI, la UI del navegador, un bridge
-de federación y cada proceso skill presentaban el mismo bearer token, así que
+de federación y cada proceso Expertise presentaban el mismo bearer token, así que
 "puede alcanzar este nodo" y "es el operador de este nodo" eran la misma
 afirmación.
 
 Eso hacía que la garantía del broker de credenciales fuera más débil de lo que se
 lee. Su argumento es que saltarse el Effect Checkpoint te da un 401 — cierto
-contra un proceso fuera del nodo, y falso contra un skill, que tenía el token del
+contra un proceso fuera del nodo, y falso contra un Expertise, que tenía el token del
 operador y por tanto podía registrar un grafo que waiveara su propio gate, sellar
 un efecto y canjear el recibo que acababa de acuñar.
 
@@ -2603,7 +2977,7 @@ Dos propiedades son las que lo hacen real y no nominal:
   de policy sobre las reglas: un modelo de autorización repartido en cuarenta
   handlers existe solo como la suma de cuarenta decisiones, y una ruta añadida el
   año que viene toma por defecto lo que su autor recordara. Aquí una ruta nueva
-  está cerrada a los skills hasta que alguien ensanche la tabla en un diff que un
+  está cerrada a los Expertises hasta que alguien ensanche la tabla en un diff que un
   revisor puede ver.
 
 `aura token ls` lista lo emitido; `aura token revoke <id>` detiene una en su
@@ -2614,10 +2988,10 @@ siendo explicable después.
 El token del propio operador no cambia — sigue siendo `node.token` en el
 directorio de datos, y un nodo que no emite ninguno se comporta igual que antes.
 
-**Lo que esto no hace.** No contiene a un skill al que ya se le entregó una
+**Lo que esto no hace.** No contiene a un Expertise al que ya se le entregó una
 credencial que pidió legítimamente, ni aísla el proceso — ver [Aislamiento de
-skills](#aislamiento-de-skills). Lo que quita es la autoridad de operador
-permanente que cada skill cargaba solo por haber sido arrancado.
+Expertises](#aislamiento-de-expertises). Lo que quita es la autoridad de operador
+permanente que cada Expertise cargaba solo por haber sido arrancado.
 
 ### Atestación — el ledger de efectos ([C4](spec/c4-ledger.md))
 
@@ -2742,7 +3116,7 @@ semilla.
   "prompt_sha256": "b221…", "energy": { "millijoules": 4120.5, "source": "nvml" } }
 ```
 
-Un skill adjunta una a cualquier envelope que emite (`ctx.emit(..., attest=...)`
+Un Expertise adjunta una a cualquier envelope que emite (`ctx.emit(..., attest=...)`
 en el SDK de Python). El kernel la direcciona por contenido, la guarda una vez,
 y cita su hash en la entrada del ledger de **cada efecto al que esa salida
 llevó causalmente** — así una entrada responde "sobre qué base pasó esto", y un
@@ -2750,9 +3124,9 @@ cambio silencioso de modelo altera hashes ya sellados en una cadena de solo
 anexado.
 
 **Qué prueba esto, dicho sin rodeos, porque la exageración es tentadora:** una
-atestación es una *afirmación del skill*, ligada de forma infalsificable a lo
-que causó y al momento en que se hizo. **No** es prueba de que el skill dijo la
-verdad. Un skill que miente sobre su modelo produce un registro inalterable de
+atestación es una *afirmación del Expertise*, ligada de forma infalsificable a lo
+que causó y al momento en que se hizo. **No** es prueba de que el Expertise dijo la
+verdad. Un Expertise que miente sobre su modelo produce un registro inalterable de
 una mentira. Lo garantizado es que la afirmación no puede editarse después, no
 puede desligarse de sus consecuencias, y no puede antedatarse. Cerrar el resto
 requiere atestación por hardware (un quote de TEE); el campo `tee` está
@@ -2799,10 +3173,10 @@ runtime local nunca estorbe la experimentación. Tres se sostienen hoy: el log
 causal de eventos hace una sesión auditable a posteriori, la puerta motor de
 abajo es un invariante del kernel, y el ledger de efectos hace esa auditoría
 verificable criptográficamente. El cuarto todavía no: `permissions` es una
-declaración que el registry te enseña al instalar, no un sandbox, y un skill
+declaración que el registry te enseña al instalar, no un sandbox, y un Expertise
 corre con los privilegios de quien lo arrancó.
 
-**El invariante de la puerta motor.** Toda arista que entrega a un skill
+**El invariante de la puerta motor.** Toda arista que entrega a un Expertise
 `motor.*` lleva la puerta que decidió la política del nodo. El ejecutor la
 aplica al instanciar la sesión, no la herramienta que produjo el grafo, así que
 es igual de cierto para un grafo declarado a mano, para la salida del planner,
@@ -2825,9 +3199,12 @@ Un nodo sirve todo en un solo puerto (9080 por defecto).
 |---|---|
 | `GET /` | La UI del plano de control. |
 | `GET /healthz` | Identidad del nodo, modo, majors de protocolo/IR, uso de admisión. |
-| `GET /v1/skills` | El catálogo vivo de capacidades. |
-| `GET /v1/skills/config?id=<id>` | El schema de config declarado por un skill más sus valores efectivos actuales. |
-| `PUT /v1/skills/config?id=<id>` | Fija overrides de config en runtime; validados, persistidos y empujados al skill vivo. |
+| `POST /v1/watch/tickets` | Emite una credencial para un espectador de una sesión viva: `{session, ttl_s}` → `{ticket, session, expires}`. Solo operador. |
+| `GET /v1/watch?session=<id>` (WebSocket) | Conectarse a una sesión viva como observador de solo lectura: todo lo que la sesión le entrega a su cliente, nada más. A un observador que se queda atrás se le desconecta, nunca se le espera. Ver [Una audiencia sobre una sesión viva](#una-audiencia-sobre-una-sesión-viva). |
+| `GET /v1/stats` | Lo que el nodo está haciendo ahora, en un solo documento JSON: sesiones vivas, la carga de sesiones en cada réplica de cada Expertise, colas de despacho, uso de tokens reportado, especulación, exportación de trazas, salud del store y del log de eventos. Solo operador. |
+| `GET /v1/expertise` · `GET /v1/skills` | El catálogo vivo de capacidades. Dos nombres para una ruta; igual `/v1/expertise/config` y `/v1/skills/config`, y `/ws/expertise` y `/ws/skill`. El nombre anterior es permanente. |
+| `GET /v1/skills/config?id=<id>` | El schema de config declarado por un Expertise más sus valores efectivos actuales. |
+| `PUT /v1/skills/config?id=<id>` | Fija overrides de config en runtime; validados, persistidos y empujados al Expertise vivo. |
 | `GET /v1/graphs` · `GET /v1/graphs/{id}` | Listar / obtener grafos registrados. |
 | `POST /v1/graphs` | Registrar un documento IR C2. |
 | `GET /v1/graphs/{id}/revisions` | Todas las versiones registradas de un grafo, la más nueva primero, con el SHA-256 de cada una. Sin cuerpos. |
@@ -2863,7 +3240,7 @@ Un nodo sirve todo en un solo puerto (9080 por defecto).
 
 | Ruta | Propósito |
 |---|---|
-| `GET /ws/skill` | Un skill se conecta aquí (primer frame: un envelope `register` C3). |
+| `GET /ws/skill` | Un Expertise se conecta aquí (primer frame: un envelope `register` C3). |
 | `GET /v1/stream?graph=<id>[&session=<id>]` | Un cliente abre una sesión contra un grafo. |
 
 Los clientes pueden enviar un envelope C3 completo, o el atajo `{"text": "…"}`
@@ -2901,8 +3278,8 @@ GUIDE.md            La referencia completa, en inglés.
 README-ES.md        La puerta de entrada corta, en español.
 GUIDE-ES.md         Este documento — la referencia completa.
 CONTRIBUTING.md     Cómo contribuir al kernel, SDK y spec (en inglés) —
-                    para agregar un skill, copia skills/echo/ (el ejemplo
-                    mínimo trabajado) o cualquier otro bajo skills/.
+                    para agregar un skill, copia expertise/echo/ (el ejemplo
+                    mínimo trabajado) o cualquier otro bajo expertise/.
 LICENSE.md          Mapa de licencias por componente, licenciamiento comercial.
 LICENSE-APACHE-2.0.txt   Texto completo de Apache-2.0 (spec, SDK, docs).
 LICENSE-AGPL-3.0.txt     Texto completo de AGPLv3 (kernel, UI, skills de primera parte).
@@ -2941,11 +3318,11 @@ sdk/python/         El SDK `aura` para escribir skills (incluye aura.llm.ChatBac
 sdk/node/           @deepaxiom/aura — expone las funciones de una app como
                     skills, o maneja un grafo desde TypeScript. Tipos
                     generados desde spec/schemas.
-skills/             Skills de referencia — ejemplos trabajados que llevan el
+expertise/             Skills de referencia — ejemplos trabajados que llevan el
                     org `example/`, no un catálogo. Uno por forma: echo (el
                     mínimo), llm-chat, asr, tts, sentence-chunker, planner,
                     model-manager, model-fit, memory-context, postgres-cdc. Ver
-                    skills/README.md.
+                    expertise/README.md.
 scripts/            release.ps1 — construye un zip distribuible. gen_ssot.py
                     (spec/ → constantes generadas), gen_ui_reference.py
                     (GUIDE.md + spec/ + el uso del binario → la referencia
@@ -2981,7 +3358,7 @@ python spec\conformance\runner.py --port 9080
 qué no — los cimientos, la conectividad, la voz multicanal en streaming, la
 seguridad del nodo y el ledger de efectos están todos, cliente de navegador
 incluido. Los dieciocho hitos de abajo corren de extremo a extremo; la suite de
-conformidad (59 comprobaciones, `spec/conformance/`) cubre C1-C3, no los hitos,
+conformidad (67 comprobaciones, `spec/conformance/`) cubre C1-C3, no los hitos,
 y las garantías propias del ledger de efectos las comprueba, por separado, un
 job de CI adversarial (ver [Modelo de seguridad](#modelo-de-seguridad)). Existe
 una suite `go test` que cubre *parte* del kernel — ver [cobertura de
@@ -2997,13 +3374,13 @@ regresión.
 | Hito | Qué entregó | Verificación |
 |---|---|---|
 | Kernel de binario único + SDK + distro | `aura up` → UI + chat con LLM local, sin servicios externos | Con tests |
-| Spec + conformidad | Contratos congelados — C1 v1.5, C2 v1.2, C3 v1.6, C4 v1.7, C5 v1.1; suite de caja negra de 59 comprobaciones | Con tests |
+| Spec + conformidad | Contratos congelados — C1 v1.7, C2 v1.2, C3 v1.7, C4 v1.7, C5 v1.2; suite de caja negra de 67 comprobaciones | Con tests |
 | Voz multicanal en streaming | Grafo `voice` + cliente de navegador: transcripciones parciales, respuestas habladas, barge-in funcionando | Kernel con tests; cliente verificado a mano |
-| Conectividad sin OpenAPI | Patrón de conector declarativo, SDK TypeScript, ingreso de webhooks, observación de tráfico | Ingreso y generador con tests; patrón de conector verificado a mano (no se incluye ningún skill de conector de primera parte) |
-| Drivers de modelos + admisión | Skills de ASR / TTS; `--memory-budget` | Admisión y ASR/chunker con tests; drivers a mano |
+| Conectividad sin OpenAPI | Patrón de conector declarativo, SDK TypeScript, ingreso de webhooks, observación de tráfico | Ingreso y generador con tests; patrón de conector verificado a mano (no se incluye ningún Expertise de conector de primera parte) |
+| Drivers de modelos + admisión | Expertises de ASR / TTS; `--memory-budget` | Admisión y ASR/chunker con tests; drivers a mano |
 | Planner + `aura do` | Objetivo en lenguaje natural → plan → ejecución con puertas | Verificado a mano |
 | Explicabilidad + replay | `aura why` (narrado por LLM), `aura replay` | Verificado a mano |
-| Proyección OpenAPI legacy | `aura connect` → operaciones como skills, cuatro salvaguardas | Con tests (`projection` 61%) |
+| Proyección OpenAPI legacy | `aura connect` → operaciones como Expertises, cuatro salvaguardas | Con tests (`projection` 61%) |
 | Registro federable | `aura publish/add/run`, Ed25519 + trust-on-first-use | Con tests (`signing` 90%, `hub` 81%) |
 | Fronteras estándar | Servidor MCP, tarjeta A2A, exportación OpenTelemetry | MCP con tests (63%); OTel a mano |
 | Federación de nodos | `aura federate`, resolución entre nodos | Con tests (`fed` 87%) |
@@ -3011,19 +3388,24 @@ regresión.
 | Ledger de efectos (C4) | Atestación encadenada por hash y firmada de cada efecto; `aura verify`, `GET /v1/ledger[/verify]` | Con tests (`ledger` 89%); detección de manipulación probada por un job de CI con un binario real |
 | Cabeza Merkle + recibos portátiles (C4 v1.2, Fase 4) | Árbol RFC 6962 sobre cada entrada, comprometido en cada checkpoint; `aura receipt` exporta la evidencia de un efecto y `--verify` la comprueba sin base de datos, nodo ni red | Con tests — pruebas de inclusión en cada posición para árboles de tamaño 1-64, de consistencia para cada par (m,n) hasta 48, y casos negativos incluyendo una entrada reescrita con el hash reparado |
 | Anclaje externo (C4 v1.2, Fase 4) | `aura witness <peer>`: un tercero verifica una prueba de consistencia antes de contrafirmar, así una historia reescrita no puede colarse ante quien ya vio la anterior. Cada nodo es un witness | Con tests — extensión honesta aceptada, historia bifurcada rechazada, contrafirma ligada a su nodo, handshake HTTP entre dos nodos |
-| Atestación de inferencia (C5, Fase 4) | Un skill declara motor/modelo/revisión/cuantización/muestreo/semilla; el kernel la direcciona por contenido y la cita en cada efecto que la salida causó. Revisiones de HF fijadas, formatos de pesos pickle rechazados, energía reportada con su fuente | Con tests — de extremo a extremo por el camino real del ejecutor (entregado, denegado, malformado y sin inferencia), más ida y vuelta del recibo |
-| ML-BOM (Fase 4) | `aura bom` emite CycloneDX 1.6 desde el ledger — modelos y skills que corrieron de verdad, no los configurados | Verificado a mano |
+| Atestación de inferencia (C5, Fase 4) | Un Expertise declara motor/modelo/revisión/cuantización/muestreo/semilla; el kernel la direcciona por contenido y la cita en cada efecto que la salida causó. Revisiones de HF fijadas, formatos de pesos pickle rechazados, energía reportada con su fuente | Con tests — de extremo a extremo por el camino real del ejecutor (entregado, denegado, malformado y sin inferencia), más ida y vuelta del recibo |
+| ML-BOM (Fase 4) | `aura bom` emite CycloneDX 1.6 desde el ledger — modelos y Expertises que corrieron de verdad, no los configurados | Verificado a mano |
 | Reversibilidad (`aura undo`, Fase 2) | Deshace un efecto vía su puerto `compensates` declarado — a su vez un efecto gateado y sellado; se rechaza antes de construir la sesión si ya fue deshecho, nunca se entregó, o es irreversible | Con tests (adversariales: doble undo, sin compensación, gate denegado) |
 | Resume de sesión (Fase 2) | La ventana de dedup, los índices causal/en-vuelo, los gates pendientes y los contadores `Seq` por hop de una sesión se reconstruyen desde el log causal al reconectar — da igual si el cliente se cayó o si el propio proceso del kernel reinició, ambos casos toman el mismo camino | Con tests (adversariales: un gate pendiente sobrevive, un cancel sigue alcanzando una cadena multi-hop en vuelo, `Seq` continúa en vez de reiniciarse) |
 | Replay determinista (Fase 2) | `aura replay` compara las entradas selladas del ledger de la sesión original y la reproducida, no solo la transcripción visible al cliente — cierra la cuarta propiedad de la tesis (Reproducible) | Con tests (`ledger.Diff`, puro, 8 casos tabulares) |
 | Concurrencia: group commit, sesiones en lote, reparto entre réplicas | Cada envelope se sigue registrando de forma durable antes de reconocerse; lo que cambió es que quienes ya esperaban se suman a una transacción. El registro de sesiones entró al mismo lote, y la resolución ahora rota entre réplicas de un paquete en vez de responder siempre desde la conexión más reciente | Medido, no afirmado: 200 sesiones concurrentes pasaron de 344 msg/s con p50 489 ms a 1,908 con p50 63 ms, y 1,000 sesiones (16 réplicas) alcanzan 4,215 msg/s con p50 65 ms. El throughput ahora sube con la carga en vez de derrumbarse. Reproducible con `kernel/cmd/loadgen/` |
-| Aislamiento de fallos por sesión | Un panic al rutear falla esa sesión y se registra con su stack, en vez de desenrollarse hasta el tope de la goroutine y llevarse el nodo — todas las demás sesiones, conexiones y el estado en memoria de la cadena del ledger — con él | Probado — un skill que revienta en la entrega falla su propia sesión, el error se reporta en vez de tragarse, y el nodo sigue arrancando y ruteando sesiones nuevas |
-| Transporte QUIC / WebTransport (QoS de C3, hecha real) | Las tres clases de QoS se vuelven tres primitivas de transporte: `realtime` un datagrama QUIC (o su propio stream si excede el tamaño), `reliable` un stream ordenado, `bulk` un stream por transferencia. Se sirve en el mismo número de puerto que TCP; un peer que no alcanza UDP conserva la ruta WebSocket | Probado contra un cliente QUIC real, no simulado — FIFO en el carril reliable, un frame realtime llegando como datagrama de verdad, fallback por tamaño, `bulk` que no retrasa un envelope terminal, un productor que nunca se bloquea, y un skill registrándose por WebTransport en el gateway real (`wtsrv` 78.5%) |
-| Skills Wasm, sandbox real (Fase 3) | `format: wasm` sobre wazero — `filesystem` (preopen WASI) y `egress_http` (host import `env.http_fetch` propio, allowlist de hostname exacto) ambos aplicados, no declaraciones impresas; alojado dentro del proceso, nunca un OS process aparte | Probado contra guests reales compilados `GOOS=wasip1`, no simulado (`wasmrt` + `gateway` de punta a punta; scoping de permisos probado bajo concurrencia) |
-| CDC de Postgres (Fase 3) | `skills/postgres-cdc` — replicación lógica (`test_decoding`, sin instalar extensión) se convierte en eventos causales `std/db-change@1`, uno por fila cambiada | Probado contra un `postgres:16` real de Docker, no simulado — INSERT/UPDATE/DELETE, NULL, filtro de tablas |
-| Cliente MCP + frontera con streaming | `internal/mcpcli` — un cliente MCP sobre stdio y Streamable HTTP; y `tools/call` del lado servidor ahora responde un event stream, así la salida de un skill llega al agente a medida que se produce | Probado — stdio contra un subproceso real (demux concurrente, cancelación, muerte del servidor), desempaquetado SSE, paginación, y la frontera con streaming de punta a punta (`mcpcli` 89.6%, `mcpsrv` 83.2%) |
+| Aislamiento de fallos por sesión | Un panic al rutear falla esa sesión y se registra con su stack, en vez de desenrollarse hasta el tope de la goroutine y llevarse el nodo — todas las demás sesiones, conexiones y el estado en memoria de la cadena del ledger — con él | Probado — un Expertise que revienta en la entrega falla su propia sesión, el error se reporta en vez de tragarse, y el nodo sigue arrancando y ruteando sesiones nuevas |
+| Despacho por sesión, réplicas por carga | Cada sesión rutea en su propia cola acotada, así que un consumidor lento solo se frena a sí mismo; el cancel de un cliente no pasa por la cola. Las sesiones nuevas van a la réplica con menos sesiones vivas, contadas por el kernel | Con tests, incluido el comportamiento en línea que reemplaza; limpio bajo el detector de carreras. Sin cifra de throughput — ver [Muchas sesiones a la vez](#muchas-sesiones-a-la-vez) |
+| Contexto de traza + exportación en vivo (C3 v1.7) | Un `traceparent` W3C viaja en cada salto de la cadena que inicia un cliente, llevado por el kernel y no repetido por los Expertises. `--otlp` exporta spans mientras el nodo corre: sin bloquear, muestreo de sesiones enteras, nunca payloads | Con tests (`otel`), y la propagación de la traza está en la suite de conformidad contra un binario real. No corrido contra un collector de producción |
+| Uso de tokens tal como se reporta (C5 v1.2) | Una atestación puede llevar el `usage` reportado por el motor; el kernel lo mide (`aura_tokens_total`) y los spans lo llevan. `GET /v1/stats` lo reporta junto con la carga por réplica y la presión de colas | Con tests |
+| Economía de streaming en el SDK de Python | Agrupado de deltas (el primer token nunca se retrasa), compactación del historial por bloques que mantiene estable el prefijo del prompt, generación local serializada, un servidor de inferencia compartido para todo Expertise de primera parte, una gramática del planner restringida a las capabilities | Con tests contra dobles. **No** verificado contra llama.cpp ni contra un servidor de inferencia real, que CI no instala |
+| El nombre: Expertise | Lo que las versiones anteriores llamaban skill. Todo identificador anterior se sigue sirviendo — `skill.yaml`, `/ws/skill`, `/v1/skills`, `Skill` — junto al nuevo | Con tests en ambos sentidos, incluido un artefacto publicado con el nombre nuevo que lleva el archivo de manifiesto anterior |
+| Transporte QUIC / WebTransport (QoS de C3, hecha real) | Las tres clases de QoS se vuelven tres primitivas de transporte: `realtime` un datagrama QUIC (o su propio stream si excede el tamaño), `reliable` un stream ordenado, `bulk` un stream por transferencia. Se sirve en el mismo número de puerto que TCP; un peer que no alcanza UDP conserva la ruta WebSocket | Probado contra un cliente QUIC real, no simulado — FIFO en el carril reliable, un frame realtime llegando como datagrama de verdad, fallback por tamaño, `bulk` que no retrasa un envelope terminal, un productor que nunca se bloquea, y un Expertise registrándose por WebTransport en el gateway real (`wtsrv` 78.5%) |
+| Expertises Wasm, sandbox real (Fase 3) | `format: wasm` sobre wazero — `filesystem` (preopen WASI) y `egress_http` (host import `env.http_fetch` propio, allowlist de hostname exacto) ambos aplicados, no declaraciones impresas; alojado dentro del proceso, nunca un OS process aparte | Probado contra guests reales compilados `GOOS=wasip1`, no simulado (`wasmrt` + `gateway` de punta a punta; scoping de permisos probado bajo concurrencia) |
+| CDC de Postgres (Fase 3) | `expertise/postgres-cdc` — replicación lógica (`test_decoding`, sin instalar extensión) se convierte en eventos causales `std/db-change@1`, uno por fila cambiada | Probado contra un `postgres:16` real de Docker, no simulado — INSERT/UPDATE/DELETE, NULL, filtro de tablas |
+| Cliente MCP + frontera con streaming | `internal/mcpcli` — un cliente MCP sobre stdio y Streamable HTTP; y `tools/call` del lado servidor ahora responde un event stream, así la salida de un Expertise llega al agente a medida que se produce | Probado — stdio contra un subproceso real (demux concurrente, cancelación, muerte del servidor), desempaquetado SSE, paginación, y la frontera con streaming de punta a punta (`mcpcli` 89.6%, `mcpsrv` 83.2%) |
 | Gates respondibles | Un gate de aprobación humana levantado por un cliente programático se estaciona en una cola del nodo y se responde desde la UI, `aura approve` o `POST /v1/approvals/{id}`; sin respuesta, se deniega solo | Probado — aprobar, denegar, expiración-deniega-en-vez-de-colgar, doble resolución, y el fallback sin cola que igual rechaza (`approvals` 100%) |
-| `aura guard` (tools MCP detrás del checkpoint) | Los servidores MCP que un agente ya usa se registran como skills — `motor` salvo que el operador opte por confiar en `readOnlyHint` — así cada tool call pasa por policy, gate y ledger sin que guard implemente ninguno | Probado de punta a punta contra un gateway y un executor reales: el servidor upstream **no** se llama antes de la aprobación, **sí** después, una denegación nunca lo alcanza, y las anotaciones no confiadas igual gatean (`guard` 80.9%) |
+| `aura guard` (tools MCP detrás del checkpoint) | Los servidores MCP que un agente ya usa se registran como Expertises — `motor` salvo que el operador opte por confiar en `readOnlyHint` — así cada tool call pasa por policy, gate y ledger sin que guard implemente ninguno | Probado de punta a punta contra un gateway y un executor reales: el servidor upstream **no** se llama antes de la aprobación, **sí** después, una denegación nunca lo alcanza, y las anotaciones no confiadas igual gatean (`guard` 80.9%) |
 | fsync del log de eventos en la ruta de entrega | `AppendEvent` es una transacción por envelope en la ruta caliente; el `synchronous=FULL` por defecto de SQLite hacía que cada token en streaming pagara un fsync. Ahora `NORMAL` (override con `AURA_SQLITE_SYNCHRONOUS`) | Medido, no afirmado: 82 → 1.584 round-trips de envelope/seg por el gateway y el executor reales, p50 12,0 ms → 0,42 ms en una máquina de desarrollo. El cambio además expuso un bug de frontera latente en la ventana de dedup de ingress, corregido junto con él |
 
 ### Qué significa hoy "streaming y persistente" — y qué no
@@ -3066,10 +3448,12 @@ cae la línea:
   especificados y forzados (ver arriba); `bulk` es un nombre en el enum sin
   comportamiento detrás, y se trata como `reliable` para no perder nada en
   silencio contra una regla no especificada.
-- **Una sesión, un socket, un nodo.** No hay vista multi-dispositivo de la
-  misma sesión viva (la forma "un guild, muchos clientes conectados" que tiene
-  Discord), y no hay failover si el nodo dueño cae a media sesión — solo el
-  log de eventos sobrevive a eso; el estado de ruteo vivo no.
+- **Un conductor por sesión, una máquina por nodo.** Una sesión tiene un
+  cliente que puede mandar hacia ella; cualquier número de observadores de
+  solo lectura puede mirarla (ver [Una audiencia sobre una sesión
+  viva](#una-audiencia-sobre-una-sesión-viva)). Un nodo que muere lo reemplaza
+  un standby en el mismo host; una *máquina* que muere se lleva el directorio
+  de datos, y todavía nada envía el log a otro lado.
 - <a id="cobertura-parcial"></a>**Cobertura de tests parcial, concentrada en el
   núcleo.** Medida con `go test ./... -cover`:
 
@@ -3128,7 +3512,7 @@ cae la línea:
 
 Alcance honesto. Todas estas piezas descansan sobre los mismos contratos
 congelados — ninguna cambia C1, C2, C3, C4 ni C5 — pero aún no están
-implementadas. El sandboxing de skills es la que impide que esto sea seguro
+implementadas. El sandboxing de Expertises es la que impide que esto sea seguro
 fuera de una red de confianza:
 
 - ~~**Autenticación del nodo y loopback por defecto**~~ — **hecho.** Un nodo ata
@@ -3136,7 +3520,7 @@ fuera de una red de confianza:
   terminar TLS; una política de nodo decide qué puede actuar sobre el mundo y un
   grafo no puede renunciar a ella. Ver [Modelo de
   seguridad](#modelo-de-seguridad) y [Estado de los hitos](#estado-de-los-hitos).
-- **Un sandbox microVM para skills `format: source`** — la mayor brecha de
+- **Un sandbox microVM para Expertises `format: source`** — la mayor brecha de
   seguridad que queda, hoy estrechada en vez de abierta. `--sandbox process`
   convierte el entorno en una lista de permitidos en lugar de una herencia y
   enjaula el directorio de trabajo, lo que cierra la fuga accidental de
@@ -3145,7 +3529,7 @@ fuera de una red de confianza:
   Cloud Hypervisor, Kata) o gVisor, que necesita Linux con KVM — el backend está
   declarado y **se rechaza al arranque** en vez de simularse, porque una degradación
   silenciosa sería peor que una ausencia. Ver [Aislamiento de
-  skills](#aislamiento-de-skills).
+  Expertises](#aislamiento-de-expertises).
 - **Lo que los modos `site` y `published` deberían hacer** — identidad
   automática del nodo, canales cifrados entre nodos y permisos evaluados en
   tiempo de ejecución. Hoy la cadena del modo cambia dos comportamientos en
@@ -3167,7 +3551,7 @@ fuera de una red de confianza:
 - **Protocolo de periféricos** — un puente MQTT/BLE mínimo que proyecta sensores
   y controles (que no ejecutan lógica) como puertos de grafo — estructuralmente
   idéntico al host de proyecciones OpenAPI.
-- **Más fronteras** — importar servidores MCP externos como skills, el protocolo
+- **Más fronteras** — importar servidores MCP externos como Expertises, el protocolo
   de mensajes A2A completo, y AG-UI hacia los frontends.
 - **Nube gestionada** — un despliegue alojado y multi-tenant. Deliberadamente lo
   último: la nube es solo otro nodo, y el runtime abierto debe estar completo
@@ -3183,10 +3567,10 @@ de forma distinta a propósito, en detalle en [`LICENSE.md`](LICENSE.md):
 
 - **Apache-2.0** para `spec/`, `sdk/`, `scripts/`
   y esta documentación — neutrales y abiertos para siempre. Cualquiera puede
-  construir un kernel, SDK o skill conforme al estándar con cero fricción y
+  construir un kernel, SDK o Expertise conforme al estándar con cero fricción y
   cero obligación; el ecosistema tiene que seguir siendo seguro para autores
-  comerciales de skills para que el marketplace tenga sentido.
-- **AGPLv3, o una licencia comercial,** para `kernel/`, `ui/` y los `skills/`
+  comerciales de Expertises para que el marketplace tenga sentido.
+- **AGPLv3, o una licencia comercial,** para `kernel/`, `ui/` y los `expertise/`
   de primera parte — el producto en sí. Autohospedar, modificar y auditar no
   tienen restricción; ofrecer una copia modificada como servicio de red exige
   publicar tus modificaciones (AGPLv3) o un acuerdo comercial. Las

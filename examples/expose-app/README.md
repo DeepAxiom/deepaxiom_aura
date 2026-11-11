@@ -1,6 +1,6 @@
 # expose-app — adding AI to a backend you already have
 
-Six lines of integration. Two functions that already existed become skills; one
+Six lines of integration. Two functions that already existed become Expertises; one
 of them is a write, and the kernel gates and seals it without this app writing a
 line of gate-handling code.
 

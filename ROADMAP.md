@@ -1,182 +1,164 @@
 # Roadmap
 
-What is left, in the order it blocks somebody. Short on purpose: the previous
-version of this file was 95 KB and most of it described work already finished,
-which is a changelog wearing a roadmap's name. What shipped is in
-[Milestone status](GUIDE.md#milestone-status); this is only what has not.
+AURA is being built to be the operating system for autonomous robots: the
+layer that takes what a machine perceives, runs the models that decide, and
+authorises what it does — fast enough to be in the loop, with every decision
+traceable to what argued for it, and with nothing acting on the world that the
+node did not check first.
+
+This file is the distance between that sentence and the code. It is ordered by
+what a robot needs first, not by what is easiest. What already exists is in
+[Milestone status](GUIDE.md#milestone-status); this is only what does not.
 
 [Versión en español](ROADMAP-ES.md)
 
 ---
 
-## Blocking production
+## Where the line is today
 
-Nothing below is a research problem. They are the difference between "deployable
-as an auxiliary service" and "deployable as something with an SLA".
+Said first, because everything below depends on it.
 
-| | Why it blocks | Shape of the work |
+**What the kernel is good for now** is the decision layer of a machine: streams
+in, models reasoning over them, effects out through a gate, all of it recorded.
+Latencies are those of a Go process routing JSON envelopes over sockets —
+sub-millisecond per hop on loopback, uncontended. That is the right tier for
+"should the arm pick this up", "is this person in the way", "reroute", and the
+wrong one for the servo loop that moves the arm.
+
+**What it is not, and is not going to be,** is a hard-real-time controller. A
+1 kHz control loop belongs on the robot's own controller, where it is today.
+The claim is narrower and more useful: nothing that controller is *asked to do*
+arrives without having passed the node's policy, and nothing it did is missing
+from the record.
+
+**What has not happened yet:** no physical robot has been driven by this code
+in anything this repository tests. Every item under "The robot itself" below is
+the work of making that sentence false.
+
+---
+
+## The robot itself
+
+Nothing here is research. It is the set of connections a machine needs before
+the rest of this runtime is about it at all.
+
+| | Why it comes first | Shape of the work |
 |---|---|---|
-| **Node failover** | *Measured, and smaller than it read.* A node is one process, and nothing starts a replacement — The gap is narrower than it used to read: a session's state *is* recoverable — `resumeFromLog` rebuilds the dedup window, causal indexes, pending gates and per-hop counters whether the client or the kernel was what died — and the SDK reconnects on its own. A single writer is now enforced by a lease, so a standby cannot corrupt the ledger by starting beside a live node. What is left is the orchestration: something that notices the leader is gone and starts the replacement, and a decision about whether that replacement lives on the same machine or another one. | **Reconsider before building.** Recovery after a SIGKILL measures 10.04s, of which 10.03s is waiting out the dead holder's lease; the node itself is back in 3ms, even over a 4,000-entry ledger. So `--lease-ttl` already *is* the recovery-time knob, and a warm standby would spend real complexity skipping a start-up cost measured in milliseconds. What remains genuinely unaddressed is machine loss, which needs the data directory reachable from two hosts — the first thing in this runtime that would require storage it does not ship. See [the degradation contract](GUIDE.md#the-degradation-contract). |
+| **A bridge to the robot's middleware** | A robot already has one — ROS 2 in most cases — and its sensors, actuators and controllers already speak it. Until AURA can subscribe to a topic and call an action, it is a decision layer with nothing to decide about. | Topics, services and actions projected as Expertise, the way `aura connect` projects an OpenAPI document: a topic is a `sensorial` stream, an action is a `motor` effect and is therefore gated and sealed like any other. Read-only by default, promotion per action. |
+| **A stop that is a kernel invariant** | A gate asks before an effect. A robot also needs the opposite: one signal after which *no* `motor.*` delivery leaves the node, whatever is queued, whatever a graph says, until a named person lifts it. Today the nearest thing is a policy edit and a restart. | A node-wide halt in the executor, at the same point the gate is enforced, sealed in the ledger when it is raised and when it is lifted, raisable from a hardware input. It must hold with the UI down and the network gone. |
+| **Sensor data that is not base64** | PCM and frames travel as base64 inside JSON: a third larger than they are, encoded and decoded on every hop. Tolerable for speech, not for cameras. | A binary frame for `realtime` edges — an additive C3 change, not yet specified — and a same-host path that does not copy through the kernel at all. C3 already says data need not transit the kernel when a direct route exists; only the relay is implemented. |
+| **Time** | "Which frame was this decision made on" needs both to carry a clock the machine agrees on. Envelopes carry an id and a causal parent, not a capture time. | A capture timestamp on sensor envelopes, monotonic per source, and the hash of the frame a decision consumed kept even when the frame itself is not (the event log already elides `realtime` payloads to a digest; the digest has to become citable from an effect). |
+| **Running on the machine** | Linux arm64 binaries are built and a Raspberry Pi smoke test exists. Nobody has measured a node on a Jetson with a camera and a model sharing its GPU. | A reference device, a measured budget for perception → decision → effect on it, and that number in this file. |
 
-## Blocking adoption
+## Fast
 
-The engineering is ahead of the distribution by a wide margin, and that gap is
-the actual problem.
+"Ultra-fast" is a claim, and at the moment it is not a measured one. 0.4 removed
+the places where time was being lost for no reason; it did not produce the
+number.
 
-| | Why it blocks | Shape of the work |
+| | State | What is missing |
 |---|---|---|
-| **Publish the SDKs** | `@deepaxiom/aura` and `aura-sdk` are packaged and unpublished. A full-stack team following [the integration guide](GUIDE.md#when-the-app-is-yours) cannot `npm install` it — they vendor it from the repo. | Hours: npm and PyPI, plus a CI job that publishes on tag. |
-| **Publish a container image** | The binaries are done: `v0.3.0` ships six targets with cosign-signed checksums and an SBOM, and the repository is public. The image is built and exercised on every push — it becomes healthy on a fresh volume, drains on SIGTERM and keeps its identity across a restart — but it is not pushed anywhere, so `docker compose up` still builds it locally. | Hours: a push step in the release job, and a registry to push to. |
-| **A web front for the public registry** | `registry.deepaxiom.com` is up and empty. Publishing and installing work from the CLI, but there is nowhere to browse what exists, read a manifest before installing, or find who built a skill. | DeepAxiom Studio, at `studio.deepaxiom.com`: React and Go on the registry's VPS, outside its trust boundary — it reads the registry through the public `r1` API only, never its disk. Browse, download and a developer directory are up; publishing from the browser and accounts are next. |
-| **A public witness** | Anchoring is the network effect. A witness several independent nodes present to is worth more than two nodes anchoring each other, and running one costs almost nothing. | Days: an instance, a URL, and a retention policy someone stands behind. |
+| **A latency budget, measured** | Per-session dispatch queues, load-aware replicas, delta coalescing and a stable prompt prefix are in and tested for correctness. | A figure. `kernel/cmd/loadgen` drives an echo round-trip — no slow consumer, one envelope per message — so it shows none of it. A load generator with a streaming producer, a deliberately slow consumer and a p99 per hop is what turns "a slow session only slows itself" from a tested property into a measured one. |
+| **Deadlines that do something** | Absolute, inherited deadlines exist: a hop may tighten one and never extend it, and a late delivery is dropped rather than sent. | The receiving Expertise is *expected* to degrade and nothing checks that it does. A deadline needs a second half: what runs instead when the budget is gone — a smaller model, a cached answer, a safe default. |
+| **Priority that preempts** | Edges declare a priority and the kernel stamps it on every delivery. | Acting on it is left to the Expertise that receives it; the kernel itself preempts nothing. On a machine with one GPU, a safety-relevant chain has to be able to take the model away from a conversational one, and that has to be the node's decision rather than each Expertise's. |
+| **A context budget in real tokens** | Expertise can report what an engine counted (C5 v1.2) and the kernel meters it. | The per-graph budget is still charged at bytes/4. Charging it from reported usage changes what an existing budget means, which is why it was not done in passing. |
 
-## Narrowing the honest gaps
+## Every decision traceable
 
-Each of these is a place the documentation currently says "this is not
-guaranteed", and closing it moves a line in [Milestone
-status](GUIDE.md#milestone-status).
+This is the part that exists most. The gate, the hash-chained ledger, signed
+approval, inference attestation, witnessing, replay and regression are built
+and tested. What a robot adds:
 
-| | What it would change |
+| | Why a machine needs it |
 |---|---|
-| **microVM sandbox for `format: source`** | Today `--sandbox process` scrubs the environment and jails the working directory; it does not contain hostile code. Until this lands, the marketplace pitch is *publish and host your own*, not *install strangers' code*. `format: wasm` is already genuinely sandboxed. |
-| **TEE chain verification** | Hardware evidence reaches `bound` — the quote is tied to that exact declaration and checkable offline. `verified` requires a vendor chain check, which is declared and refused rather than stubbed, because it has never run against real hardware. |
-| **Short-lived browser credentials** | A web frontend cannot hold the operator token. Today the app's own backend proxies. A session-scoped, short-lived credential would remove that hop. |
-| **Multi-device view of one live session** | One session, one socket. The "many clients watching one conversation" shape does not exist. |
-| **One active model, for the whole node** | `model-manager` marks a model active and `llm-chat` follows it; the planner's local backend still reads `AURA_MODEL_FILE` with its own default, so the switch moves half the system. Both also load their own copy of the weights, which a 4B model makes expensive on a small card. |
+| **A recorder that survives the machine** | The evidence is in the data directory, and the data directory is on the robot. When the robot is what failed, that is the wrong place for it. The ledger can already be anchored at a witness; the *log* cannot be shipped anywhere. Continuous shipping of sealed segments to a second machine is also what would make failover survive losing the first one. |
+| **Replay against recorded perception** | `aura replay` and `aura regress` re-run recorded sessions and diff the effects. For a robot the input is sensor data, most of which the log deliberately does not keep. Replaying a decision needs the frames it saw, opt-in and bounded. |
+| **TEE chain verification** | Hardware evidence reaches `bound`: the quote is tied to one declaration and checkable offline. `verified` needs the manufacturer's chain, which is declared and refused rather than stubbed, because it has never run against real hardware. |
+| **A trace that includes the controller** | A W3C trace context now rides every hop inside a node. It stops at the bridge to the robot's middleware, which does not exist yet. |
 
-## Reading an image, and the two refusals that come with it
+## Secure
 
-**Built:** `deepaxiom/cognitive/imaging-read` — a sample of frames from one
-imaging study in, findings with normalised coordinates out, plus a correlation
-against the report on file, a draft impression and what it could not tell. Two
-new schemas, `std/image-study@1` and `std/imaging-finding@1`.
+| | State | What is missing |
+|---|---|---|
+| **Containment for code that is not yours** | `format: wasm` Expertise run in a real WASI sandbox. `format: source` does not: `--sandbox process` scrubs the environment and jails the working directory, and does not contain hostile code. | A microVM boundary, which is declared and refused at startup rather than degraded. Until it lands, the honest position is *run your own Expertise*, not *install a stranger's*. |
+| **A credential for a viewer, and one for a browser** | A watch ticket lets one viewer observe one session and nothing else. | A frontend still cannot *drive* a session without the application's backend in the middle. The session-scoped credential for that is not built. |
+| **Supply chain for what the robot runs** | Packages are signed and versions are immutable; model revisions are pinned and attested; pickle-format weights are refused. | Nothing verifies that the model a node was *told* to run is the one a fleet operator *approved*. A signed deployment manifest, checked at load, is the missing link between the registry and the attestation. |
+| **Operating without a network** | A node needs nothing external to run. | Approval does. A machine in a field has to be able to act on a policy decided in advance, and the record has to say that is what happened — pre-authorisation with an expiry, sealed like any other approval. |
 
-**Cognitive and never motor**, which is the whole arrangement: nothing in it
-writes. The draft becomes a line in a record only through a `motor.*` effect
-that a named clinician approves at the gate, and the C5 attestation emitted with
-the answer is what lets that effect say on what basis it happened — which model,
-which revision, over which prompt. Without it a ledger can say who signed and
-not what they were shown.
+## Models: deployment and optimisation
 
-Two things it refuses, and both are refusals a consumer will meet on day one:
+A robot is mostly a model-deployment problem with motors attached. What exists
+is a start: a catalogue and downloader (`model-manager`), a hardware-fit
+estimator (`model-fit`), pinned and attested revisions, and — since 0.4 — every
+first-party Expertise able to share one set of weights through one inference
+server.
 
-- **The endpoint it reads through.** The Gemini API, with a key. It is not
-  covered by Google's data processing agreement, and that is a deployment
-  decision rather than this skill's -- what the skill owes is that the decision
-  is visible: the host is the only one in the manifest's egress list, and the
-  engine goes into the C5 attestation of every read, so "which way did this
-  image leave" is answerable from the record rather than from somebody's
-  memory.
-- **Frames nobody de-identified.** An ultrasound carries the patient's name
-  *burned into the pixels*, not only in the tags — DICOM even has an attribute
-  that says so, `BurnedInAnnotation`. This skill cannot check pixels, so it
-  requires the sender to state that they were cleaned, and declines otherwise.
-  Being the place where nobody checked is worse than declining.
-
-**What it does not do yet**, in the order it will be wanted:
-
-| Missing | Why it matters |
+| | What is missing |
 |---|---|
-| **Mask the burn-in** | Today the requirement is pushed to the sender, so a study whose pixels carry a name simply cannot be read. It belongs here: it is the same frame decode the media subsystem already does, and it has a person who approves and an artefact to seal. |
-| **A local reader** | The Gemini API means the frames leave the deployment. A node inside a hospital's own network will want the read to stay there, and the skill's shape does not change — only the backend behind `reader.py`. |
-| **An endpoint under a contract** | Vertex AI was built and then removed: a second path nobody exercises is a second path that rots, and the consumer chose the key. It comes back the day a deployment needs a data processing agreement, and it is the same shape — one module behind `reader.ask`. |
-| **Read a whole series, not a sample** | A CT is twelve hundred images and a reader is given sixteen. Sampling is honest and stated in `limitations`, and it is not the same as reading the study. |
+| **The node owning its inference server** | `AURA_INFERENCE_URL` points at a server; nothing starts it, supervises it or restarts it. Marking a model active does not change what that server has loaded, and admission (`--memory-budget`) does not know it exists. Verified against a fake endpoint only. |
+| **Swapping a model without stopping the machine** | A change of weights is a restart of whatever holds them. What is needed is load-beside, shift, unload — with `aura regress` as the gate that decides whether the shift happens, because that is exactly the question it already answers. And a way back. |
+| **Optimisation as a step, not a download** | `model-fit` chooses among quantisations someone else produced. Producing the right artefact for a given device — quantising, compiling for its accelerator — is not in this repository, and the attestation has no way to say an artefact was derived from a pinned revision rather than downloaded. |
+| **More than one model on one accelerator** | Each Expertise that loads weights loads its own copy. Perception, language and speech on one small GPU need a scheduler that knows what is loaded, what it costs and which chain is waiting. |
+| **Speech that is actually incremental** | An opt-in LocalAgreement policy gives a stable prefix. Measured on a CPU with a small model it did not make partials cheaper, and it made one language's finals worse. A streaming recogniser, rather than a batch one decoded repeatedly, is still the real fix. |
 
-## Media, and the AI over it
+## Video
 
-**The floor is built; the capabilities are not.** [`media/`](media/) is a second
-artefact, `aura-media`, with its own version line: an asset in, an address out.
-It arrived from NAAT, which contracted a video CDN and a WebRTC server rather
-than wait for it — the right call, and it does not remove the need. Four
-capabilities that product needs are all AI over video, every one of them needs
-frames, and **none of the four is built**:
+A robot's main sense. `media/` is a separate artefact with its own version
+line, on purpose: encoding pins a core for minutes and approving an effect must
+never queue behind it.
 
-| Capability | Why the kernel is the right place |
+`aura-media` 0.2 publishes while it encodes — an asset is playable seconds
+after the encode starts, with progress reported — takes a live stream in over
+RTMP and puts out an adaptive HLS ladder with a DVR window that becomes an
+ordinary recording when the stream ends, samples frames in the same decode as
+the encode, and can be told which encoder to use. All of it was run end to end
+against real ffmpeg on Linux. None of it was played in a real player, no
+hardware encoder has encoded a frame, and the live latency was calculated, not
+measured. [`media/README.md`](media/README.md) has the list.
+
+| | What is missing |
 |---|---|
-| **De-identify a clip before it is published** | Faces and on-screen text out of a video a clinician recorded in a consulting room. It has a human who approves and an artefact to seal, so it is a `logical.*` effect and not a filter. It is also the one that forces the hard half: it **produces a new video asset**, so this subsystem encodes, not just decodes. |
-| **Transcribe and subtitle** | `sensorial.asr.transcribe` already exists for dictation. Pointing it at a published video needs the audio demuxed, and buys accessibility plus a searchable body of content. |
-| **Draft a moderation judgement** | A health network without a moderation criterion is a misinformation platform with badges. A draft that cites what an assertion contradicts, with a person deciding behind it, is exactly the gate pattern. Needs sampled keyframes and the transcript. |
-| **Poster and alt text** | Suggest, with a person confirming. Frames again. |
+| **A camera, live, at a latency a robot can use** | HLS is the right shape for an audience and the wrong one for a control loop: seconds of delay by design. Perception needs frames in tens of milliseconds, which means WebRTC or a raw transport, not a playlist. |
+| **Frames to a model without touching a disk** | Frames are sampled to files and uploaded to a store. A perception Expertise needs them handed over in memory, on the binary path above. |
+| **De-identification before anything is kept** | Faces and text out of what a machine records in a place where people are. It has a human who approves and an artefact to seal, so it is a gated effect and not a filter — and it is the capability that forces this subsystem to encode a *new* video rather than only transcode one. |
+| **An object store that is not a directory** | The interface exists; an S3-compatible implementation does not. |
+| **Distribution at scale** | Not a goal. Segments are static files; a CDN in front of them is the answer, and building one here would be building the wrong thing. |
 
-**Build it here, run it beside the kernel — not inside it.** Sharing the code is
-free; sharing the process is what costs. Three reasons, and none is style:
+## A fleet
 
-- **Opposite load curves.** Approving an effect is milliseconds and must never
-  queue; encoding is a core pinned for minutes. One process means a video upload
-  can starve a clinician waiting to sign a note.
-- **Zone crossing.** The consuming product keeps network media and patient data
-  in separate processes on purpose, and the kernel is where PHI dictation is
-  handled. Public video bytes do not belong in it — and when the kernel *does*
-  cross the two, it should be at the de-identification gate, where the crossing
-  is declared and approved.
-- **The pin stops being governable.** Consumers pin one commit so they can say
-  which kernel sealed a note. If libav ships in the same artefact, every codec
-  CVE forces a kernel version bump — and a bump is meant to be a deliberate act
-  with a changelog to read. **So this ships as a second artefact with its own
-  version line**, and a consumer's pin file grows a second entry rather than one
-  entry quietly meaning two things.
+| | State | What is missing |
+|---|---|---|
+| **A node that dies** | `aura up --standby` stands ready beside a live node and takes over when it dies: measured at tens of milliseconds on Linux when both run on one host, because the standby can see the process is gone instead of waiting out the lease. Sessions resume from the causal log. | Losing the *machine*. The standby needs the data directory, and the data directory is on the machine that died. That is the log-shipping item above, and it is the difference between failover and high availability. |
+| **Many machines** | Nodes federate: a graph can resolve an Expertise on another node. | Nothing manages a fleet as one thing — rollout of a policy or a model to a hundred machines, with the record of which machine ran which version when. |
+| **Many clients on one session** | Read-only watchers, each unable to slow the session, with a ticket per viewer and a replay of recent history on attach. | The same over QUIC, and a watcher count that scales past one node's sockets by relaying rather than by raising the limit. |
 
-**What exists.** A job queue with `FOR UPDATE SKIP LOCKED` and N workers, where
-a claim is a lease and a worker that dies loses its job rather than taking it
-with it; ffmpeg for decode and encode; an HLS ladder that never upscales, with
-keyframes aligned across rungs; still frames and a poster out of that same
-decode, because every capability above needs frames and decoding twice costs
-twice; an object store whose sources are served to nobody. It registers as
-`logical.media.transcode` (C1 `format: projection`), so a graph can call it
-without the encode entering the kernel.
+## Getting it into someone's hands
 
-**What is left in the floor.** An S3-compatible store beside the filesystem one
-— the interface is there, the implementation is not. Shaka Packager where
-ffmpeg's HLS muxer stops being enough. Per-job progress, rather than a state
-that only moves when the job ends.
+The engineering is ahead of the distribution, and that distance is the real
+obstacle to anyone finding out whether any of the above is true.
 
-**LiveKit belongs in the same subsystem, and is not started.** It is what NAAT contracted for live
-and for teleconsultation, and it already speaks the two directions this needs:
-Ingress accepts RTMP and WHIP, Egress hands back composed frames and HLS. Real
-time in, frames out, one integration — and it is what makes AI over a live
-stream possible at all, which is the product line this whole section is for.
+| | Shape of the work |
+|---|---|
+| **Publish the SDKs** | `@deepaxiom/aura` and `aura-sdk` are packaged and unpublished. Hours: npm and PyPI, and a CI job that publishes on tag. |
+| **Publish a container image** | Built and exercised on every push; pushed nowhere. Hours. |
+| **A public witness** | Anchoring is the network effect, and running one costs almost nothing. Days: an instance, a URL, a retention policy someone will stand behind. |
+| **Binaries for 0.4** | The last signed release is 0.3.0. |
 
 ## Standards work
 
-| | Status |
+| | State |
 |---|---|
-| **[Signed human approval](spec/proposals/draft-signed-human-approval.md)** | At `-01`, not submitted. The gap it fills is real: the existing IETF agent audit-trail draft records a pseudonymous operator id with no signature. `-01` adds the `context` member — digests of what the approver was shown — which is the half that turns "a named person clicked" into "a named person consented to this document", and which the kernel implements as C4 v1.7. Submitting is what turns a local design into a claim on the category. |
-| **[MCP effect receipts](spec/proposals/mcp-effect-receipts.md)** | Written, not proposed upstream. |
-
-## Test coverage, where it is thin and why it matters
-
-Measured, not remembered — the numbers are in
-[Milestone status](GUIDE.md#milestone-status).
-
-- **`cmd/aura` at 8.8%.** Argument parsing and output formatting over logic
-  tested where it lives. The honest outlier, and low risk.
-- **`gateway` 54%, `store` 54%, `projection` 59%, `grammar` 52%.** The
-  guarantees these implement are covered thoroughly; the accessor error paths
-  around them are not.
-- **The UI is tested at the model layer only.** That layer is now most of the
-  logic — the graph model against the same C2 conformance vectors the kernel
-  uses, the editing operations, the bypass, the conversation fold, the frames
-  and every translation key the source asks for. What has nothing is the part
-  that touches a browser: the components, the audio capture path and the
-  session views.
-
-  The split is deliberate rather than a plan half-executed. Anything that can
-  produce IR the kernel would reject is pure and tested; pointer arithmetic and
-  CSS are verified by driving a real node and looking. Both bugs the i18n suite
-  was written for got past review and shipped, which is the argument for moving
-  more of the browser half into something mechanical.
-- **The seams between components are the real gap.** Every pre-existing bug found
-  in the last round of work — WebTransport serving `/ws/skill` unauthenticated,
-  an open path promoting a scoped credential, `/metrics` public because a rule
-  matched a path shape, `store.Open` not creating its own directory — sat between
-  two components that were each well tested. The conformance suite exercises
-  contracts and the unit tests exercise packages; nothing exercised the joins.
+| **[Signed human approval](spec/proposals/draft-signed-human-approval.md)** | At `-01`, not submitted. It adds the `context` member — digests of what the approver was shown — which is what turns "a named person clicked" into "a named person consented to this", and which the kernel implements as C4 v1.7. |
+| **[Effect receipts for MCP](spec/proposals/mcp-effect-receipts.md)** | Written, not proposed upstream. |
 
 ## Deliberately not doing
 
-- **A hosted control plane.** The neutrality argument only works if the registry
-  and the witness are things you can host yourself.
-- **A learned policy router.** Policy is meant to be readable at a glance by
-  someone auditing it. A model that decides what gets gated is not.
-- **Embedding vendor TEE roots in the binary.** A root that cannot be rotated
-  fails closed at the worst moment or open at the wrong one.
+- **A hard-real-time kernel.** See the top of this file. The servo loop stays
+  where it is; what reaches it is what this controls.
+- **A hosted control plane.** The neutrality argument only works if the
+  registry and the witness are things you can host yourself.
+- **A learned policy router.** Policy is meant to be read at a glance by
+  whoever audits it. A model deciding what gets gated is not that.
+- **A video CDN.** Static segments and someone else's edge.
+- **Embedding manufacturer TEE roots in the binary.** A root that cannot be
+  rotated fails closed at the worst moment or open at the wrong one.
