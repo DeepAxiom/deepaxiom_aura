@@ -26,7 +26,7 @@ Copy-Item "$root\LICENSE-APACHE-2.0.txt" "$out\aura\"
 Copy-Item "$root\LICENSE-AGPL-3.0.txt" "$out\aura\"
 Copy-Item "$root\spec" "$out\aura\spec" -Recurse
 Copy-Item "$root\sdk" "$out\aura\sdk" -Recurse
-Copy-Item "$root\skills" "$out\aura\skills" -Recurse
+Copy-Item "$root\expertise" "$out\aura\expertise" -Recurse
 Get-ChildItem "$out\aura" -Recurse -Directory -Filter "__pycache__" |
     Remove-Item -Recurse -Force
 

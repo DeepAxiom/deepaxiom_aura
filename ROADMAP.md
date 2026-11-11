@@ -142,7 +142,6 @@ obstacle to anyone finding out whether any of the above is true.
 | **Publish the SDKs** | `@deepaxiom/aura` and `aura-sdk` are packaged and unpublished. Hours: npm and PyPI, and a CI job that publishes on tag. |
 | **Publish a container image** | Built and exercised on every push; pushed nowhere. Hours. |
 | **A public witness** | Anchoring is the network effect, and running one costs almost nothing. Days: an instance, a URL, a retention policy someone will stand behind. |
-| **Binaries for 0.4** | The last signed release is 0.3.0. |
 
 ## Standards work
 

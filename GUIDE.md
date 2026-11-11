@@ -368,7 +368,7 @@ not belong in the kernel.
 kernel yourself; Python 3.11+ to run the first-party Expertises; Node 20+ only if
 you want to rebuild the UI. Consumer hardware (8 GB RAM) is enough.
 
-Signed binaries for six targets are on the [v0.3.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0)
+Signed binaries for six targets are on the [v0.4.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.4.0)
 — `aura-windows-amd64.exe` here — with `SHA256SUMS`, its cosign signature and an
 SBOM. Verify before you run; [Verifying a release](SECURITY.md#verifying-a-release)
 has the exact commands. Or build it:

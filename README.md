@@ -290,7 +290,7 @@ under which policy, and whether the chain verifies.
 | **Tested** | Streaming envelopes with per-edge QoS over WebSocket and QUIC · per-session dispatch and load-aware replicas · the gate as a kernel invariant · signed approver identity over what they were shown · the ledger and offline verification · scoped credentials and the credential broker · witness log and its monitor · cancellation · session resume · standby takeover · deterministic replay and effect-level regression · period audit reports · trace context and live span export · reported token usage · read-only watchers with tickets and history · typed ports with compiled grammars · the MCP border both ways · Wasm Expertise in a real sandbox · Postgres CDC · verifiable backup and restore · signing-key rotation |
 | **Hand-verified** | Voice with barge-in · the planner (`aura do`) · `aura why` · ML-BOM |
 | **Tested against stand-ins only** | The shared inference server · the in-process KV state cache · the planner grammar (no llama.cpp in CI) · hardware video encoders (never run) |
-| **Not yet** | A bridge to a robot's middleware · a node-wide stop · binary frames for sensor data · surviving the loss of the machine · containment for `format: source` · TEE evidence beyond `bound` · published SDKs and container image · signed binaries for 0.4 |
+| **Not yet** | A bridge to a robot's middleware · a node-wide stop · binary frames for sensor data · surviving the loss of the machine · containment for `format: source` · TEE evidence beyond `bound` · published SDKs and container image |
 
 A 67-check conformance suite runs the kernel over the wire, and separate CI
 jobs prove the ledger detects tampering by editing a real database behind a
@@ -450,15 +450,14 @@ shape is written up as [a proposal to MCP](spec/proposals/mcp-effect-receipts.md
 
 ## 60 seconds
 
-**0.4 has no signed release yet** — build it from source, below. The signed
-binaries for Linux, macOS and Windows on amd64 and arm64 are still those of the
-[v0.3.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0). Verify before you run — the
+Signed binaries for Linux, macOS and Windows on amd64 and arm64 are on the
+[v0.4.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.4.0). Verify before you run — the
 signature on `SHA256SUMS` proves who built the file, and only then is the sum
 worth checking ([how](SECURITY.md#verifying-a-release)):
 
 ```bash
-curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/aura-linux-amd64
-curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/SHA256SUMS{,.sig,.pem}
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.4.0/aura-linux-amd64
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.4.0/SHA256SUMS{,.sig,.pem}
 cosign verify-blob --certificate-identity-regexp \
   "^https://github.com/DeepAxiom/deepaxiom_aura/.github/workflows/release.yml@.*$" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \

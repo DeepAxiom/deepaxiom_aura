@@ -144,7 +144,6 @@ obstáculo real para que alguien averigüe si algo de lo anterior es cierto.
 | **Publicar los SDKs** | `@deepaxiom/aura` y `aura-sdk` están empaquetados y sin publicar. Horas: npm y PyPI, y un job de CI que publique en tag. |
 | **Publicar una imagen de contenedor** | Se construye y se ejercita en cada push; no se empuja a ningún lado. Horas. |
 | **Un witness público** | El anclaje es el efecto de red, y operar uno no cuesta casi nada. Días: una instancia, una URL, una política de retención que alguien sostenga. |
-| **Binarios de 0.4** | La última release firmada es la 0.3.0. |
 
 ## Trabajo de estándares
 
