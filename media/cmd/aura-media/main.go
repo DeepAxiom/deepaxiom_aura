@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,8 +30,10 @@ import (
 	"aura/media/internal/config"
 	"aura/media/internal/db"
 	"aura/media/internal/ingest"
+	"aura/media/internal/live"
 	"aura/media/internal/pipeline"
 	"aura/media/internal/queue"
+	"aura/media/internal/rtmp"
 	"aura/media/internal/store"
 	"aura/media/internal/worker"
 )
@@ -73,6 +76,15 @@ func run(args []string) error {
 	fs.IntVar(&cfg.MaxFrames, "max-frames", 200, "most still frames to sample from one source")
 	fs.StringVar(&cfg.NodeWS, "node", env("AURA_MEDIA_NODE", ""), "kernel to register with as a skill, e.g. ws://127.0.0.1:9080/ws/skill (empty: do not register)")
 	fs.StringVar(&cfg.NodeToken, "node-token", "", "credential for that kernel (default: AURA_TOKEN, then ~/.aura/node.token)")
+	fs.StringVar(&cfg.VideoEncoder, "video-encoder", env("AURA_MEDIA_VIDEO_ENCODER", pipeline.EncoderX264), "video encoder: "+strings.Join(pipeline.Encoders(), ", "))
+	fs.StringVar(&cfg.Preset, "preset", env("AURA_MEDIA_PRESET", ""), "encoder preset (empty: this build's default for that encoder)")
+	fs.StringVar(&cfg.RateMode, "rate-mode", env("AURA_MEDIA_RATE_MODE", string(pipeline.RateCBRLadder)), "cbr-ladder (a fixed bitrate per rung) or capped-crf (a quality per title, with the rung's bitrate as a ceiling)")
+	fs.IntVar(&cfg.CRF, "crf", envInt("AURA_MEDIA_CRF", 0), "quality target for capped-crf (0: the encoder's customary default)")
+	fs.BoolVar(&cfg.LegacyEncode, "legacy-encode", env("AURA_MEDIA_LEGACY_ENCODE", "") != "", "encode exactly as 0.1.0 did: publish only when finished, no progress, libx264 at fixed bitrates")
+	fs.StringVar(&cfg.RTMPBind, "rtmp-bind", env("AURA_MEDIA_RTMP_BIND", ""), "address to accept live RTMP on, e.g. 0.0.0.0:1935 (empty: no live)")
+	fs.StringVar(&cfg.RTMPURL, "rtmp-url", env("AURA_MEDIA_RTMP_URL", ""), "ingest URL broadcasters are given, without the key, e.g. rtmp://live.example.com/live")
+	fs.DurationVar(&cfg.LiveGrace, "live-grace", 30*time.Second, "how long a broadcaster that dropped has to reconnect before the stream is closed")
+	fs.DurationVar(&cfg.LiveWindow, "live-window", 2*time.Minute, "how much of a live stream its playlist lists (0: all of it); older segments are kept either way")
 	printSchema := fs.Bool("print", false, "migrate: print the DDL instead of applying it")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -122,6 +134,27 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	if err := runner.Check(); err != nil {
 		return err
 	}
+	encoding := cfg.Encoding()
+	if !encoding.IsDefault() && !cfg.LegacyEncode {
+		// The same reasoning as the check above, one level down: an encoder
+		// this ffmpeg was not built with would fail every job at its first
+		// frame, be rescued by the fallback every time, and look from the
+		// outside like a node that was simply slow.
+		//
+		// Being built with an encoder is not the same as it working here, so
+		// after asking ffmpeg whether it has it, a few seconds of test pattern
+		// are actually encoded with it and the result is checked.
+		checkCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := runner.HasEncoder(checkCtx, encoding.Encoder())
+		if err == nil {
+			err = runner.SelfTest(checkCtx, encoding, os.TempDir())
+		}
+		cancel()
+		if err != nil {
+			return err
+		}
+		log.Info("the configured encoder passed its self-test", "encoder", encoding.Encoder(), "rate_mode", string(encoding.Mode()))
+	}
 	token, err := config.ResolveToken(cfg)
 	if err != nil {
 		return err
@@ -161,9 +194,55 @@ func serve(cfg config.Config, log *slog.Logger) error {
 		Lease:      cfg.Lease,
 		FrameEvery: cfg.FrameEvery,
 		MaxFrames:  cfg.MaxFrames,
+		Encoding:   encoding,
+		Legacy:     cfg.LegacyEncode,
 	})
 	if err != nil {
 		return err
+	}
+
+	// Live is off unless there is somewhere for a broadcaster to connect.
+	// When it is on, the listener is opened here, before anything is served:
+	// a port that is already taken is a start-up failure, not something to
+	// discover when the first stream is refused.
+	var streams *live.Manager
+	liveDone := make(chan struct{})
+	if cfg.RTMPBind != "" {
+		streams, err = live.New(live.Config{
+			Repo:       live.OpenRepo(pool),
+			Assets:     repo,
+			Store:      objects,
+			Runner:     runner,
+			Log:        log,
+			WorkDir:    cfg.LiveRoot(),
+			IngestURL:  cfg.IngestURL(),
+			Encoding:   encoding,
+			Grace:      cfg.LiveGrace,
+			Window:     cfg.LiveWindow,
+			FrameEvery: cfg.FrameEvery,
+			MaxFrames:  cfg.MaxFrames,
+		})
+		if err != nil {
+			return err
+		}
+		listener, err := net.Listen("tcp", cfg.RTMPBind)
+		if err != nil {
+			return fmt.Errorf("--rtmp-bind %s: %w", cfg.RTMPBind, err)
+		}
+		ingestServer := &rtmp.Server{Handler: streams, Log: log}
+		go func() {
+			if err := ingestServer.Serve(ctx, listener); err != nil {
+				log.Error("the RTMP listener stopped", "error", err)
+			}
+		}()
+		go func() {
+			defer close(liveDone)
+			streams.Run(ctx)
+		}()
+		log.Info("accepting live streams", "rtmp", cfg.RTMPBind, "ingest_url", cfg.IngestURL(),
+			"grace", cfg.LiveGrace.String(), "window", cfg.LiveWindow.String())
+	} else {
+		close(liveDone)
 	}
 
 	server := &api.Server{
@@ -173,6 +252,7 @@ func serve(cfg config.Config, log *slog.Logger) error {
 		Ingest:      ingestor,
 		Log:         log,
 		Version:     version,
+		Live:        streams,
 		Token:       token,
 		MediaPrefix: "/media",
 		Ready: func() error {
@@ -257,6 +337,15 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	case <-workersDone:
 	case <-time.After(60 * time.Second):
 		log.Error("workers did not stop in time; their jobs will be reclaimed when their leases expire")
+	}
+	// Live streams are closed into VODs on the way out, which means waiting
+	// for ffmpeg to flush and for the last segments to upload. Longer than the
+	// workers get, because a job handed back is encoded again by someone else
+	// and a broadcast is not.
+	select {
+	case <-liveDone:
+	case <-time.After(2 * time.Minute):
+		log.Error("live streams did not close in time; another start will close what they published")
 	}
 	log.Info("stopped cleanly")
 	return nil

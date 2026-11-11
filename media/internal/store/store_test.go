@@ -168,3 +168,56 @@ func mustWrite(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestFSDeleteTreeRemovesOnePackageAndNothingElse(t *testing.T) {
+	s, err := NewFS(t.TempDir(), "", "/media")
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	ctx := context.Background()
+	for _, key := range []string{
+		"out/asset1/master.m3u8", "out/asset1/720p/index.m3u8", "out/asset1/720p/seg_00000.m4s",
+		"out/asset10/master.m3u8", "out/asset2/master.m3u8", "src/asset1",
+	} {
+		if _, err := s.Put(ctx, key, strings.NewReader(key)); err != nil {
+			t.Fatalf("put %s: %v", key, err)
+		}
+	}
+	if err := s.DeleteTree(ctx, "out/asset1"); err != nil {
+		t.Fatalf("delete tree: %v", err)
+	}
+	for _, gone := range []string{"out/asset1/master.m3u8", "out/asset1/720p/index.m3u8", "out/asset1/720p/seg_00000.m4s"} {
+		if _, _, err := s.Open(ctx, gone); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s survived: %v", gone, err)
+		}
+	}
+	// A prefix is a directory, not a string prefix: asset10 is not under
+	// asset1. And the source of the same asset is nowhere near it.
+	for _, kept := range []string{"out/asset10/master.m3u8", "out/asset2/master.m3u8", "src/asset1"} {
+		r, _, err := s.Open(ctx, kept)
+		if err != nil {
+			t.Errorf("%s was deleted with another asset's package: %v", kept, err)
+			continue
+		}
+		r.Close()
+	}
+	// Deleting what is not there is not an error, as with Delete.
+	if err := s.DeleteTree(ctx, "out/never-existed"); err != nil {
+		t.Errorf("deleting an absent tree: %v", err)
+	}
+	// A prefix cannot climb out of the store, and cannot be the store.
+	for _, bad := range []string{"..", "../outside", "out/../..", "", "/", "."} {
+		if err := s.DeleteTree(ctx, bad); err == nil {
+			t.Errorf("DeleteTree(%q) was accepted", bad)
+		}
+	}
+	if r, _, err := s.Open(ctx, "src/asset1"); err != nil {
+		t.Errorf("a refused delete removed something: %v", err)
+	} else {
+		r.Close()
+	}
+	// The optional interface is how the worker finds this.
+	if _, ok := Store(s).(TreeDeleter); !ok {
+		t.Error("the filesystem store does not offer TreeDeleter")
+	}
+}

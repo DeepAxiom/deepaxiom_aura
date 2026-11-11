@@ -41,7 +41,7 @@ const (
 	KindConfigUpdate = "config_update"
 )
 
-// Ports this skill declares. They must match skill.yaml, which is why the
+// Ports this skill declares. They must match expertise.yaml, which is why the
 // manifest is parsed rather than described twice.
 const (
 	PortIn  = "asset_in"
@@ -120,7 +120,7 @@ type Client struct {
 
 var semver = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
-// ManifestJSON reads skill.yaml and returns it as the JSON a register frame
+// ManifestJSON reads expertise.yaml and returns it as the JSON a register frame
 // carries, with the version replaced by the build's when there is a real one.
 //
 // One manifest, parsed — not a second copy written in Go. A skill whose
@@ -129,14 +129,14 @@ var semver = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 func ManifestJSON(raw []byte, version string) ([]byte, error) {
 	var doc map[string]any
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("skill.yaml: %w", err)
+		return nil, fmt.Errorf("expertise.yaml: %w", err)
 	}
 	if semver.MatchString(version) {
 		doc["version"] = version
 	}
 	encoded, err := json.Marshal(doc)
 	if err != nil {
-		return nil, fmt.Errorf("skill.yaml as JSON: %w", err)
+		return nil, fmt.Errorf("expertise.yaml as JSON: %w", err)
 	}
 	return encoded, nil
 }

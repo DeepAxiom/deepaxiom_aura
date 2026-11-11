@@ -21,12 +21,22 @@ type State string
 const (
 	// StateReceived means the bytes are stored and nothing has run yet.
 	StateReceived State = "received"
-	// StateProcessing means a worker holds a job for it right now.
+	// StateProcessing means a worker holds a job for it right now. Since 0.2.0
+	// an asset in this state may already have an Address: the package is
+	// published as it is written, and Growing says so.
 	StateProcessing State = "processing"
-	// StateReady means Address is fetchable.
+	// StateReady means Address is fetchable and the package behind it is
+	// complete. That second half is the promise existing consumers poll for,
+	// and publishing early did not change it.
 	StateReady State = "ready"
 	// StateFailed means every attempt was spent. Error says what happened.
 	StateFailed State = "failed"
+)
+
+// Kind of asset: where its bytes came from.
+const (
+	KindVOD  = "vod"
+	KindLive = "live"
 )
 
 // Rendition is one video variant in the output ladder.
@@ -51,18 +61,28 @@ type Outputs struct {
 
 // Asset is one media object and what became of it.
 type Asset struct {
-	ID           string    `json:"id"`
-	State        State     `json:"state"`
-	SourceKey    string    `json:"-"`
-	SourceBytes  int64     `json:"source_bytes"`
-	SourceSHA256 string    `json:"source_sha256"`
-	MIME         string    `json:"mime,omitempty"`
-	DurationMs   int64     `json:"duration_ms,omitempty"`
-	Address      string    `json:"address,omitempty"`
-	Outputs      Outputs   `json:"outputs"`
-	Error        string    `json:"error,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string  `json:"id"`
+	State        State   `json:"state"`
+	Kind         string  `json:"kind"`
+	SourceKey    string  `json:"-"`
+	SourceBytes  int64   `json:"source_bytes"`
+	SourceSHA256 string  `json:"source_sha256"`
+	MIME         string  `json:"mime,omitempty"`
+	DurationMs   int64   `json:"duration_ms,omitempty"`
+	Address      string  `json:"address,omitempty"`
+	Outputs      Outputs `json:"outputs"`
+	Error        string  `json:"error,omitempty"`
+	// Progress is how far through the encode this asset is, 0..1. It is 1 for
+	// every ready asset, including the ones encoded before the column existed.
+	// A live asset has no length to be a fraction of and stays at 0 until the
+	// stream ends.
+	Progress float64 `json:"progress"`
+	// Growing is true while Address is playable but the package is still being
+	// added to. A consumer that only wants finished assets ignores it and
+	// waits for State to be ready, exactly as before.
+	Growing   bool      `json:"growing,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ErrNotFound is returned for an id that is not in the table.
@@ -75,13 +95,15 @@ type Repo struct{ pool *pgxpool.Pool }
 func Open(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
 const columns = `id, state, source_key, source_bytes, source_sha256, mime,
-	duration_ms, address, outputs, error, created_at, updated_at`
+	duration_ms, address, outputs, error, created_at, updated_at,
+	progress, growing, kind`
 
 func scan(row pgx.Row) (Asset, error) {
 	var a Asset
 	var outputs []byte
 	err := row.Scan(&a.ID, &a.State, &a.SourceKey, &a.SourceBytes, &a.SourceSHA256,
-		&a.MIME, &a.DurationMs, &a.Address, &outputs, &a.Error, &a.CreatedAt, &a.UpdatedAt)
+		&a.MIME, &a.DurationMs, &a.Address, &outputs, &a.Error, &a.CreatedAt, &a.UpdatedAt,
+		&a.Progress, &a.Growing, &a.Kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Asset{}, ErrNotFound
 	}
@@ -92,6 +114,12 @@ func scan(row pgx.Row) (Asset, error) {
 		if err := json.Unmarshal(outputs, &a.Outputs); err != nil {
 			return Asset{}, fmt.Errorf("asset %s has unreadable outputs: %w", a.ID, err)
 		}
+	}
+	// A row written before 0.2.0 has the column's default, 0, whatever state
+	// it reached. Ready has always meant complete, so it reads as complete
+	// here rather than by rewriting every old row during an upgrade.
+	if a.State == StateReady {
+		a.Progress, a.Growing = 1, false
 	}
 	return a, nil
 }
@@ -110,6 +138,23 @@ func (r *Repo) Create(ctx context.Context, a Asset) (Asset, error) {
 		a.SourceBytes, a.SourceSHA256, a.MIME))
 	if err != nil {
 		return Asset{}, fmt.Errorf("create asset: %w", err)
+	}
+	return created, nil
+}
+
+// CreateLive records an asset whose source is a stream that has just started
+// arriving. It is born in processing: there is no stored source for a worker
+// to pick up, and the encode is already running.
+func (r *Repo) CreateLive(ctx context.Context, id string) (Asset, error) {
+	if id == "" {
+		return Asset{}, errors.New("an asset needs an id")
+	}
+	const sql = `INSERT INTO media_asset (id, state, source_key, kind)
+		VALUES ($1, 'processing', '', 'live')
+		RETURNING ` + columns
+	created, err := scan(r.pool.QueryRow(ctx, sql, id))
+	if err != nil {
+		return Asset{}, fmt.Errorf("create live asset: %w", err)
 	}
 	return created, nil
 }
@@ -164,10 +209,62 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	return r.exec(ctx, sql, id)
 }
 
-// MarkProcessing says a worker is on it.
+// MarkProcessing says a worker is on it. It also takes back anything an
+// earlier attempt published: an address that points at a package nobody is
+// writing any more is worse than no address.
 func (r *Repo) MarkProcessing(ctx context.Context, id string) error {
-	const sql = `UPDATE media_asset SET state = 'processing', updated_at = now() WHERE id = $1`
+	const sql = `UPDATE media_asset SET
+			state = 'processing', address = '', growing = false, progress = 0,
+			updated_at = now()
+		WHERE id = $1`
 	return r.exec(ctx, sql, id)
+}
+
+// MarkPublished hands out the address while the package is still being
+// written. The state does not move: it stays processing, and Growing is what
+// tells a consumer the address can already be played.
+//
+// Only an asset that is being processed can be published this way. A worker
+// that lost its lease and is slow to notice must not put an address back on an
+// asset another worker has since failed or finished.
+func (r *Repo) MarkPublished(ctx context.Context, id, address string, out Outputs) error {
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return fmt.Errorf("asset outputs: %w", err)
+	}
+	const sql = `UPDATE media_asset SET
+			address = $2, outputs = $3, duration_ms = $4, growing = true,
+			error = '', updated_at = now()
+		WHERE id = $1 AND state = 'processing'`
+	return r.exec(ctx, sql, id, address, encoded, out.DurationMs)
+}
+
+// Unpublish takes an early address back. Used when the encode that was
+// publishing as it went has failed and another way of encoding the same asset
+// is about to be tried: what was published belongs to the attempt that died.
+func (r *Repo) Unpublish(ctx context.Context, id string) error {
+	const sql = `UPDATE media_asset SET
+			address = '', growing = false, progress = 0, outputs = '{}'::jsonb,
+			updated_at = now()
+		WHERE id = $1 AND state = 'processing'`
+	return r.exec(ctx, sql, id)
+}
+
+// SetProgress records how far the encode has got. It never moves backwards
+// within an attempt, and it never touches an asset that is not being
+// processed. Not finding such an asset is not an error worth a job: the
+// progress of work that has already ended is simply not interesting.
+func (r *Repo) SetProgress(ctx context.Context, id string, fraction float64) error {
+	if fraction < 0 {
+		fraction = 0
+	}
+	if fraction > 1 {
+		fraction = 1
+	}
+	const sql = `UPDATE media_asset SET progress = greatest(progress, $2), updated_at = now()
+		WHERE id = $1 AND state = 'processing'`
+	_, err := r.pool.Exec(ctx, sql, id, fraction)
+	return err
 }
 
 // MarkReady publishes the address and everything the encode produced. This is
@@ -179,14 +276,19 @@ func (r *Repo) MarkReady(ctx context.Context, id, address string, out Outputs) e
 	}
 	const sql = `UPDATE media_asset SET
 			state = 'ready', address = $2, outputs = $3, duration_ms = $4,
-			error = '', updated_at = now()
+			error = '', growing = false, progress = 1, updated_at = now()
 		WHERE id = $1`
 	return r.exec(ctx, sql, id, address, encoded, out.DurationMs)
 }
 
 // MarkFailed records a terminal failure in the words the operator will read.
+// Any early address goes with it: a failed asset has never had one, and a
+// player left pointing at half a package would wait on it for ever.
 func (r *Repo) MarkFailed(ctx context.Context, id, detail string) error {
-	const sql = `UPDATE media_asset SET state = 'failed', error = $2, updated_at = now() WHERE id = $1`
+	const sql = `UPDATE media_asset SET
+			state = 'failed', error = $2, address = '', growing = false,
+			updated_at = now()
+		WHERE id = $1`
 	return r.exec(ctx, sql, id, detail)
 }
 
@@ -195,7 +297,10 @@ func (r *Repo) MarkFailed(ctx context.Context, id, detail string) error {
 // a state that still said "processing" with nobody processing would be a lie an
 // operator has no way to see through.
 func (r *Repo) Requeued(ctx context.Context, id, detail string) error {
-	const sql = `UPDATE media_asset SET state = 'received', error = $2, updated_at = now() WHERE id = $1`
+	const sql = `UPDATE media_asset SET
+			state = 'received', error = $2, address = '', growing = false,
+			updated_at = now()
+		WHERE id = $1`
 	return r.exec(ctx, sql, id, detail)
 }
 

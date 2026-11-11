@@ -193,3 +193,26 @@ func (r readerWithContext) Read(p []byte) (int, error) {
 	}
 	return r.r.Read(p)
 }
+
+// DeleteTree removes everything under a key prefix.
+//
+// It exists for one caller: a worker about to encode an asset again. The last
+// attempt may have published part of a package before it failed, and a second
+// attempt that only overwrote the keys it happened to write again would leave
+// the rest of the first attempt's files standing beside it.
+func (s *FS) DeleteTree(_ context.Context, prefix string) error {
+	full, err := s.Path(prefix)
+	if err != nil {
+		return err
+	}
+	if full == s.Root {
+		// CleanKey refuses an empty key, so this cannot be reached from a
+		// request. It is here because the alternative, if it ever could be, is
+		// every source and every package on the node.
+		return errors.New("refusing to delete the whole store")
+	}
+	if err := os.RemoveAll(full); err != nil {
+		return fmt.Errorf("delete tree %s: %w", prefix, err)
+	}
+	return nil
+}
