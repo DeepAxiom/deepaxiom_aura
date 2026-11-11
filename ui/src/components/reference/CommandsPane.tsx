@@ -30,12 +30,12 @@ export function CommandsPane({ query }: { query: string }) {
   return (
     <div className="ref-pane">
       {UNDOCUMENTED.length > 0 && (
-        <div className="error-banner">
+        <div className="alert" role="alert">
           {t("reference.undocumented", { list: UNDOCUMENTED.join(", ") })}
         </div>
       )}
 
-      {total === 0 && <div className="empty">{t("reference.noMatch")}</div>}
+      {total === 0 && <div className="empty"><div className="empty__title">{t("reference.noMatch")}</div></div>}
 
       {groups.map((g) => (
         <section key={g.section} className="ref-group">

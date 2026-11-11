@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" role="img" aria-labelledby="t d">
+<title id="t">Trace context across a causal chain</title>
+<desc id="d">A client sets a W3C traceparent in the trace field of the envelope that starts a chain. The kernel records it against the chain's root and sets the same value on every envelope it forwards: client to Expertise A, Expertise A to Expertise B, and Expertise B back to the client, without relying on the Expertises echoing it. The exported spans, one per envelope with parent equal to cause, all take the caller's trace id, and the chain's first span hangs off the caller's span. When the client supplies no trace, no envelope of the chain carries a trace key and the exporter derives a trace id from the session id.</desc>
+<style>
+svg{--bg:#f6f6f3;--pn:#fff;--bd:#d9d9d2;--tx:#17191c;--dm:#4f5661;--ft:#7a818c;--ac:#4d7c0f;--af:#a6d92c;--gt:#b45309;--er:#c8322f;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+@media (prefers-color-scheme:dark){svg{--bg:#0d0e10;--pn:#15171a;--bd:#2a2e34;--tx:#e8eaed;--dm:#a2a9b3;--ft:#6f7782;--ac:#b8e83a;--af:#b8e83a;--gt:#f0a429;--er:#f0524f}}
+.bg{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+.pn{fill:var(--pn);stroke:var(--bd);stroke-width:1.5}
+.bx{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+text{fill:var(--tx);font-size:12.5px}
+.cap{fill:var(--ft);font-size:12px;letter-spacing:.12em;font-weight:600}
+.h{font-size:14px;font-weight:600}
+.s{fill:var(--dm)}
+.f{fill:var(--ft);font-size:12px}
+.m{font-family:ui-monospace,"SF Mono","Cascadia Code",Consolas,Menlo,monospace;font-size:12px}
+.a{fill:var(--ac);font-weight:700}.b{font-weight:700}.d{fill:var(--ft)}
+.c{text-anchor:middle}
+.ln{stroke:var(--bd);stroke-width:1.5;fill:none}
+.ar{fill:var(--bd)}
+.tk{stroke:var(--ac);stroke-width:1.5;stroke-dasharray:3 4}
+.oa{fill:none;stroke:var(--ac);stroke-width:2}
+.ev{fill:var(--af);stroke:var(--ac);stroke-width:1}
+.sm{fill:var(--af);stroke:var(--ac);stroke-width:1}
+.el{stroke:var(--ft);stroke-width:1.5;fill:none}
+.t{animation-duration:12s;animation-iteration-count:infinite;animation-timing-function:linear}
+.h1{animation-name:h1}@keyframes h1{0%,8%{opacity:0;transform:translateX(0)}9%{opacity:1;transform:translateX(0)}19%{opacity:1;transform:translateX(38px)}21%,100%{opacity:0;transform:translateX(38px)}}
+.h2{animation-name:h2}@keyframes h2{0%,34%{opacity:0;transform:translateX(0)}35%{opacity:1;transform:translateX(0)}45%{opacity:1;transform:translateX(38px)}47%,100%{opacity:0;transform:translateX(38px)}}
+.h3{animation-name:h3}@keyframes h3{0%,58%{opacity:0;transform:translateX(0)}59%{opacity:1;transform:translateX(0)}69%{opacity:1;transform:translateX(38px)}71%,100%{opacity:0;transform:translateX(38px)}}
+.k1{animation-name:k1}@keyframes k1{0%,8%{opacity:0}9%,19%{opacity:1}21%,100%{opacity:0}}
+.k2{animation-name:k2}@keyframes k2{0%,34%{opacity:0}35%,45%{opacity:1}47%,100%{opacity:0}}
+.k3{animation-name:k3}@keyframes k3{0%,58%{opacity:0}59%,69%{opacity:1}71%,100%{opacity:0}}
+.r0{animation-name:r0}@keyframes r0{0%,2%{opacity:0}3%,8%{opacity:1}10%,100%{opacity:0}}
+.ra{animation-name:ra}@keyframes ra{0%,18%{opacity:0}19%,33%{opacity:1}35%,100%{opacity:0}}
+.rb{animation-name:rb}@keyframes rb{0%,44%{opacity:0}45%,57%{opacity:1}59%,100%{opacity:0}}
+.rc{animation-name:rc}@keyframes rc{0%,68%{opacity:0}69%,80%{opacity:1}83%,100%{opacity:0}}
+.s0{animation-name:s0}@keyframes s0{0%,5%{opacity:0}6%,93%{opacity:1}96%,100%{opacity:0}}
+.s1{animation-name:s1}@keyframes s1{0%,8%{opacity:0}9%,93%{opacity:1}96%,100%{opacity:0}}
+.s2{animation-name:s2}@keyframes s2{0%,32%{opacity:0}33%,93%{opacity:1}96%,100%{opacity:0}}
+.s3{animation-name:s3}@keyframes s3{0%,34%{opacity:0}35%,93%{opacity:1}96%,100%{opacity:0}}
+.s4{animation-name:s4}@keyframes s4{0%,56%{opacity:0}57%,93%{opacity:1}96%,100%{opacity:0}}
+.s5{animation-name:s5}@keyframes s5{0%,58%{opacity:0}59%,93%{opacity:1}96%,100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){*{animation-play-state:paused!important}.t{animation-delay:-10s!important}}
+</style>
+<rect class="bg" x=".75" y=".75" width="958.5" height="418.5" rx="12"/>
+<text class="cap" x="24" y="32">TRACE CONTEXT</text>
+
+<text class="f" x="44" y="62">the client sets trace on the envelope that starts a chain (HTTP ingress: traceparent header)</text>
+<text class="m" x="44" y="86"><tspan class="d">trace: 00-</tspan><tspan class="a">4bf92f3577b34da6a3ce929d0e0e4736</tspan><tspan class="d">-</tspan><tspan class="b">00f067aa0ba902b7</tspan><tspan class="d">-01</tspan></text>
+
+<path class="ln" d="M136 148H204M296 148H364M456 148H524"/>
+<path class="ar" d="M197 143l7 5-7 5zM357 143l7 5-7 5zM517 143l7 5-7 5z"/>
+<rect class="bx" x="44" y="124" width="92" height="48" rx="8"/>
+<rect class="bx" x="204" y="124" width="92" height="48" rx="8"/>
+<rect class="bx" x="364" y="124" width="92" height="48" rx="8"/>
+<rect class="bx" x="524" y="124" width="92" height="48" rx="8"/>
+<text class="c" x="90" y="152">client</text>
+<text class="c" x="250" y="152">Expertise A</text>
+<text class="c" x="410" y="152">Expertise B</text>
+<text class="c" x="570" y="152">client</text>
+<rect class="oa t r0" x="44" y="124" width="92" height="48" rx="8"/>
+<rect class="oa t ra" x="204" y="124" width="92" height="48" rx="8"/>
+<rect class="oa t rb" x="364" y="124" width="92" height="48" rx="8"/>
+<rect class="oa t rc" x="524" y="124" width="92" height="48" rx="8"/>
+<text class="m c a t s1" x="170" y="114">trace 4bf9…4736</text>
+<text class="m c a t s3" x="330" y="114">trace 4bf9…4736</text>
+<text class="m c a t s5" x="490" y="114">trace 4bf9…4736</text>
+<path class="tk t k1" d="M170 160V200"/>
+<path class="tk t k2" d="M330 160V200"/>
+<path class="tk t k3" d="M490 160V200"/>
+<rect class="ev t h1" x="138" y="140" width="26" height="16" rx="3"/>
+<rect class="ev t h2" x="298" y="140" width="26" height="16" rx="3"/>
+<rect class="ev t h3" x="458" y="140" width="26" height="16" rx="3"/>
+
+<rect class="pn" x="44" y="200" width="572" height="68" rx="8"/>
+<text class="s" x="58" y="221">kernel: sets trace on every envelope it forwards in the chain, from its</text>
+<text class="s" x="58" y="238">own record of the chain; it does not rely on Expertises echoing it</text>
+<text class="m" x="58" y="257"><tspan class="d">traceIndex[chain root] = 00-</tspan><tspan class="a">4bf9…4736</tspan><tspan class="d">-</tspan><tspan class="b">00f0…02b7</tspan><tspan class="d">-01</tspan></text>
+
+<rect class="pn" x="44" y="286" width="572" height="110" rx="8"/>
+<text class="h" x="58" y="309">client supplies no trace</text>
+<text class="s" x="58" y="331">no trace key on any envelope of the chain; nothing is minted on the wire</text>
+<text class="s" x="58" y="350">the exporter derives a trace id from the session id, as before v1.7</text>
+<text class="f" x="58" y="378">malformed value: dropped, never refused; the delivery still happens</text>
+
+<rect class="pn" x="640" y="48" width="296" height="348" rx="8"/>
+<text class="h" x="656" y="74">exported spans</text>
+<text class="f" x="656" y="92">one span per envelope; parent = cause</text>
+<text class="m" x="656" y="118"><tspan class="d">traceId </tspan><tspan class="a">4bf9…4736</tspan><tspan class="d"> on every span</tspan></text>
+<rect x="656" y="130" width="264" height="26" rx="6" fill="none" stroke="var(--ft)" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text class="m" x="668" y="147"><tspan class="d">caller's span </tspan><tspan class="b">00f0…02b7</tspan></text>
+<g class="t s0"><path class="el" d="M672 156V173H682"/><rect class="sm" x="682" y="169" width="8" height="8" rx="2"/><text x="696" y="178">client envelope (chain root)</text></g>
+<g class="t s1"><path class="el" d="M686 177V199H696"/><rect class="sm" x="696" y="195" width="8" height="8" rx="2"/><text x="710" y="204">delivery to A</text></g>
+<g class="t s2"><path class="el" d="M700 203V225H710"/><rect class="sm" x="710" y="221" width="8" height="8" rx="2"/><text x="724" y="230">A emits</text></g>
+<g class="t s3"><path class="el" d="M714 229V251H724"/><rect class="sm" x="724" y="247" width="8" height="8" rx="2"/><text x="738" y="256">delivery to B</text></g>
+<g class="t s4"><path class="el" d="M728 255V277H738"/><rect class="sm" x="738" y="273" width="8" height="8" rx="2"/><text x="752" y="282">B emits</text></g>
+<g class="t s5"><path class="el" d="M742 281V303H752"/><rect class="sm" x="752" y="299" width="8" height="8" rx="2"/><text x="766" y="308">delivery to client</text></g>
+<text class="f" x="656" y="352">the chain's first span hangs off the caller's</text>
+<text class="f" x="656" y="370">span; the rest follow cause_id</text>
+</svg>

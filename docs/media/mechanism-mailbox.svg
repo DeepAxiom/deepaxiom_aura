@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" role="img" aria-labelledby="t d">
+<title id="t">Per-session mailboxes</title>
+<desc id="d">Two panels. Left, inline dispatch: three sessions share a skill's one connection and the kernel's read loop routes each envelope inline. When session B's consumer falls behind, the read loop blocks inside B's delivery and the envelopes of sessions A and C wait behind it on the same socket. Right, per-session mailboxes: the read loop only enqueues into each session's bounded queue (default depth 1024), drained by one goroutine per session. Session B fills its own mailbox while A and C keep flowing. If a mailbox becomes full, enqueue blocks the read loop until there is room; nothing is dropped.</desc>
+<style>
+svg{--bg:#f6f6f3;--pn:#fff;--bd:#d9d9d2;--tx:#17191c;--dm:#4f5661;--ft:#7a818c;--ac:#4d7c0f;--af:#a6d92c;--gt:#b45309;--gf:#f0a429;--er:#c8322f;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+@media (prefers-color-scheme:dark){svg{--bg:#0d0e10;--pn:#15171a;--bd:#2a2e34;--tx:#e8eaed;--dm:#a2a9b3;--ft:#6f7782;--ac:#b8e83a;--af:#b8e83a;--gt:#f0a429;--er:#f0524f}}
+.bg{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+.pn{fill:var(--pn);stroke:var(--bd);stroke-width:1.5}
+.bx{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+text{fill:var(--tx);font-size:12.5px}
+.cap{fill:var(--ft);font-size:12px;letter-spacing:.12em;font-weight:600}
+.h{font-size:15px;font-weight:600}
+.s{fill:var(--dm)}
+.f{fill:var(--ft);font-size:12px}
+.m{font-family:ui-monospace,"SF Mono","Cascadia Code",Consolas,Menlo,monospace;font-size:12px}
+.c{text-anchor:middle}.e{text-anchor:end}
+.ln{stroke:var(--bd);stroke-width:1.5;fill:none}
+.ok{fill:var(--ac);font-size:12px}.am{fill:var(--gt);font-size:12px}.rd{fill:var(--er);font-size:12px}
+.or{fill:none;stroke:var(--er);stroke-width:2}
+.og{fill:none;stroke:var(--gt);stroke-width:2}
+.sq{fill:var(--pn);stroke:var(--er);stroke-width:1.5}
+.sl{font-family:ui-monospace,"SF Mono","Cascadia Code",Consolas,Menlo,monospace;font-size:12px;font-weight:700;text-anchor:middle}
+.cell{fill:none;stroke:var(--bd);stroke-width:1}
+.qa{fill:var(--af);stroke:var(--ac);stroke-width:1}
+.qb{fill:var(--gf);stroke:var(--gt);stroke-width:1}
+.p{fill:var(--af);stroke:var(--ac);stroke-width:1}
+.t{animation-duration:12s;animation-iteration-count:infinite;animation-timing-function:linear}
+.fl{animation-name:fl}@keyframes fl{0%,22%{opacity:1}25%,86%{opacity:0}89%,100%{opacity:1}}
+.st{animation-name:st}@keyframes st{0%,23%{opacity:0}26%,85%{opacity:1}88%,100%{opacity:0}}
+.q1{animation-name:q1}@keyframes q1{0%,29%{opacity:0}30%,88%{opacity:1}89%,100%{opacity:0}}
+.q2{animation-name:q2}@keyframes q2{0%,41%{opacity:0}42%,91%{opacity:1}92%,100%{opacity:0}}
+.q3{animation-name:q3}@keyframes q3{0%,53%{opacity:0}54%,94%{opacity:1}95%,100%{opacity:0}}
+.q4{animation-name:q4}@keyframes q4{0%,65%{opacity:0}66%,97%{opacity:1}98%,100%{opacity:0}}
+.pa{animation:pa 1.5s linear infinite}@keyframes pa{to{transform:translateX(124px)}}
+.la{animation:la 1.5s linear infinite}@keyframes la{to{transform:translate(80px,-70px)}}
+.lb{animation:lb 1.5s linear infinite}@keyframes lb{to{transform:translateX(80px)}}
+.lc{animation:lc 1.5s linear infinite}@keyframes lc{to{transform:translate(80px,70px)}}
+.pp{animation:pp .75s linear infinite}@keyframes pp{to{transform:translateX(34px)}}
+.ra{animation:ra .75s linear infinite}@keyframes ra{to{transform:translate(30px,-70px)}}
+.rb{animation:rb .75s linear infinite}@keyframes rb{to{transform:translateX(30px)}}
+.rc{animation:rc .75s linear infinite}@keyframes rc{to{transform:translate(30px,70px)}}
+.dr{animation:dr .75s linear infinite}@keyframes dr{to{transform:translateX(44px)}}
+.ds{animation:dr 3s linear infinite}
+.bl{animation:bl .75s linear infinite}@keyframes bl{0%{opacity:1}70%,100%{opacity:.15}}
+.n5{animation-delay:-.5s}.n10{animation-delay:-1s}.n3{animation-delay:-.375s}
+@media (prefers-reduced-motion:reduce){*{animation-play-state:paused!important}.t{animation-delay:-7s!important}}
+</style>
+<rect class="bg" x=".75" y=".75" width="958.5" height="418.5" rx="12"/>
+<text class="cap" x="24" y="32">PER-SESSION MAILBOXES</text>
+
+<rect class="pn" x="24" y="48" width="444" height="348" rx="8"/>
+<text class="h" x="44" y="78">inline dispatch</text>
+<text class="m e" x="448" y="78" style="fill:var(--ft)">--session-mailbox 0</text>
+<text class="s" x="44" y="98">sessions share the skill's one connection</text>
+<path class="ln" d="M98 200H222M292 200L372 130M292 200H372M292 200L372 270"/>
+<text class="f c" x="160" y="180">one connection</text>
+<rect class="bx" x="44" y="176" width="54" height="48" rx="8"/>
+<text class="c" x="71" y="204">skill</text>
+<g class="t fl">
+<circle class="p pa" cx="98" cy="200" r="3.5"/><circle class="p pa n5" cx="98" cy="200" r="3.5"/><circle class="p pa n10" cx="98" cy="200" r="3.5"/>
+<circle class="p la" cx="292" cy="200" r="3.5"/><circle class="p lb n5" cx="292" cy="200" r="3.5"/><circle class="p lc n10" cx="292" cy="200" r="3.5"/>
+</g>
+<rect class="bx" x="222" y="170" width="70" height="60" rx="8"/>
+<text class="c" x="257" y="197">read loop</text>
+<text class="c f t fl" x="257" y="215">inline</text>
+<g class="t st">
+<rect class="or" x="222" y="170" width="70" height="60" rx="8"/>
+<text class="c rd" x="257" y="215">blocked</text>
+<rect class="sq" x="112" y="191" width="18" height="18" rx="4"/><text class="sl" x="121" y="204">A</text>
+<rect class="sq" x="136" y="191" width="18" height="18" rx="4"/><text class="sl" x="145" y="204">C</text>
+<rect class="sq" x="160" y="191" width="18" height="18" rx="4"/><text class="sl" x="169" y="204">A</text>
+<rect class="sq" x="184" y="191" width="18" height="18" rx="4"/><text class="sl" x="193" y="204">C</text>
+<rect class="sq" x="328" y="191" width="18" height="18" rx="4" style="stroke:var(--gt)"/><text class="sl" x="337" y="204">B</text>
+</g>
+<rect class="bx" x="372" y="110" width="76" height="40" rx="8"/>
+<rect class="bx" x="372" y="180" width="76" height="40" rx="8"/>
+<rect class="bx" x="372" y="250" width="76" height="40" rx="8"/>
+<text class="c" x="410" y="127">session A</text>
+<text class="c" x="410" y="197">session B</text>
+<text class="c" x="410" y="267">session C</text>
+<text class="c ok t fl" x="410" y="143">flowing</text><text class="c rd t st" x="410" y="143">stalled</text>
+<text class="c ok t fl" x="410" y="213">flowing</text><text class="c am t st" x="410" y="213">slow</text>
+<text class="c ok t fl" x="410" y="283">flowing</text><text class="c rd t st" x="410" y="283">stalled</text>
+<rect class="og t st" x="372" y="180" width="76" height="40" rx="8"/>
+<rect class="or t st" x="372" y="110" width="76" height="40" rx="8"/>
+<rect class="or t st" x="372" y="250" width="76" height="40" rx="8"/>
+<text class="s" x="44" y="332">B's consumer falls behind: the read loop blocks inside</text>
+<text class="s" x="44" y="350">B's delivery (reliable edge); A's and C's envelopes wait</text>
+<text class="s" x="44" y="368">behind it on the same socket</text>
+
+<rect class="pn" x="492" y="48" width="444" height="348" rx="8"/>
+<text class="h" x="512" y="78">per-session mailboxes</text>
+<text class="m e" x="916" y="78" style="fill:var(--ft)">--session-mailbox 1024</text>
+<text class="s" x="512" y="98">each session: a bounded queue and one drain goroutine</text>
+<path class="ln" d="M566 200H600M670 200L700 130M670 200H700M670 200L700 270M796 130H840M796 200H840M796 270H840"/>
+<rect class="bx" x="512" y="176" width="54" height="48" rx="8"/>
+<text class="c" x="539" y="204">skill</text>
+<circle class="p pp" cx="566" cy="200" r="3.5"/>
+<circle class="p ra" cx="670" cy="200" r="3.5"/><circle class="p rb n3" cx="670" cy="200" r="3.5"/><circle class="p rc" cx="670" cy="200" r="3.5"/>
+<rect class="bx" x="600" y="170" width="70" height="60" rx="8"/>
+<text class="c" x="635" y="197">read loop</text>
+<text class="c f" x="635" y="215">enqueues</text>
+<text class="f c" x="748" y="298">mailbox, depth 1024</text>
+<defs><g id="mb"><rect class="cell" x="700" y="-8" width="14" height="16" rx="2"/><rect class="cell" x="716" y="-8" width="14" height="16" rx="2"/><rect class="cell" x="732" y="-8" width="14" height="16" rx="2"/><rect class="cell" x="748" y="-8" width="14" height="16" rx="2"/><rect class="cell" x="764" y="-8" width="14" height="16" rx="2"/><rect class="cell" x="780" y="-8" width="14" height="16" rx="2"/></g></defs>
+<use href="#mb" y="130"/><use href="#mb" y="200"/><use href="#mb" y="270"/>
+<rect class="qa bl" x="780" y="122" width="14" height="16" rx="2"/>
+<rect class="qa bl n3" x="780" y="262" width="14" height="16" rx="2"/>
+<g class="t fl"><rect class="qa bl" x="780" y="192" width="14" height="16" rx="2"/></g>
+<rect class="qb t st" x="780" y="192" width="14" height="16" rx="2"/>
+<rect class="qb t q1" x="764" y="192" width="14" height="16" rx="2"/>
+<rect class="qb t q2" x="748" y="192" width="14" height="16" rx="2"/>
+<rect class="qb t q3" x="732" y="192" width="14" height="16" rx="2"/>
+<rect class="qb t q4" x="716" y="192" width="14" height="16" rx="2"/>
+<circle class="p dr" cx="796" cy="130" r="3.5"/>
+<circle class="p dr n3" cx="796" cy="270" r="3.5"/>
+<g class="t fl"><circle class="p dr" cx="796" cy="200" r="3.5"/></g>
+<g class="t st"><circle class="p ds" cx="796" cy="200" r="3.5" style="fill:var(--gf);stroke:var(--gt)"/></g>
+<rect class="bx" x="840" y="110" width="76" height="40" rx="8"/>
+<rect class="bx" x="840" y="180" width="76" height="40" rx="8"/>
+<rect class="bx" x="840" y="250" width="76" height="40" rx="8"/>
+<text class="c" x="878" y="127">session A</text>
+<text class="c" x="878" y="197">session B</text>
+<text class="c" x="878" y="267">session C</text>
+<text class="c ok" x="878" y="143">flowing</text>
+<text class="c ok t fl" x="878" y="213">flowing</text><text class="c am t st" x="878" y="213">slow</text>
+<text class="c ok" x="878" y="283">flowing</text>
+<rect class="og t st" x="840" y="180" width="76" height="40" rx="8"/>
+<text class="s" x="512" y="332">B fills only its own mailbox; A and C keep flowing</text>
+<text class="s" x="512" y="350">if B stays behind and fills it (1024): enqueue blocks the</text>
+<text class="s" x="512" y="368">read loop, counted in waits; no envelope is dropped</text>
+</svg>

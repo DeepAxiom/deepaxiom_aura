@@ -40,7 +40,7 @@ export function EnumsPane({ query }: { query: string }) {
     <div className="ref-pane">
       <p className="ref-lead">{t("reference.enumsLead")}</p>
 
-      {groups.length === 0 && <div className="empty">{t("reference.noMatch")}</div>}
+      {groups.length === 0 && <div className="empty"><div className="empty__title">{t("reference.noMatch")}</div></div>}
 
       {groups.map((g) => (
         <section key={g.name} className="ref-group">

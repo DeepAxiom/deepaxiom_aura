@@ -54,7 +54,17 @@ function pickDefault(list: string[]): string | null {
   return list[0] ?? null;
 }
 
-export function ConversePanel() {
+interface Props {
+  /**
+   * The graph on the canvas, when a typed message can reach it (it has an edge
+   * leaving `client.text_out`). Offered as the default; the picker still wins.
+   */
+  preferGraph?: string | null;
+  /** The live session this panel is holding, so the canvas can follow it. */
+  onSession?: (s: { id: string; graph: string } | null) => void;
+}
+
+export function ConversePanel({ preferGraph, onSession }: Props = {}) {
   const { t } = useTranslation();
   const [transport, setTransport] = useState<Transport>("text");
   const [graphs, setGraphs] = useState<string[]>([]);
@@ -75,13 +85,23 @@ export function ConversePanel() {
   /** The envelope that began the exchange being answered — what a cancel names. */
   const answering = useRef<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  /** True once the person has chosen a graph by hand; from then on theirs stands. */
+  const picked = useRef(false);
 
   useEffect(() => {
     api.graphs().then((list) => {
       setGraphs(list);
       setTextGraph((cur) => cur ?? pickDefault(list));
     }).catch(() => {});
-  }, []);
+  }, [preferGraph]);
+
+  useEffect(() => {
+    if (!preferGraph || picked.current) return;
+    setTextGraph((cur) => {
+      if (cur !== preferGraph) setLines([]);
+      return preferGraph;
+    });
+  }, [preferGraph]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -104,7 +124,14 @@ export function ConversePanel() {
   }, [t]);
 
   const activeGraph = transport === "voice" ? (listening ? VOICE_GRAPH : null) : textGraph;
-  const { open, sendText, sendData, cancel, respondGate } = useSession(activeGraph, onEnvelope);
+  const { session, open, sendText, sendData, cancel, respondGate } = useSession(activeGraph, onEnvelope);
+
+  const report = useRef(onSession);
+  report.current = onSession;
+  useEffect(() => {
+    report.current?.(session && activeGraph && open ? { id: session, graph: activeGraph } : null);
+  }, [session, activeGraph, open]);
+  useEffect(() => () => report.current?.(null), []);
 
   const submit = () => {
     const text = input.trim();
@@ -211,7 +238,7 @@ export function ConversePanel() {
             className="select select--sm"
             aria-label={t("converse.graph")}
             value={textGraph ?? ""}
-            onChange={(e) => { setTextGraph(e.target.value); setLines([]); }}
+            onChange={(e) => { picked.current = true; setTextGraph(e.target.value); setLines([]); }}
           >
             {graphs.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
@@ -260,7 +287,7 @@ export function ConversePanel() {
 
       {error && <div className="alert">{error}</div>}
 
-      <div className="converse__log" ref={logRef}>
+      <div className="converse__log" ref={logRef} role="log" aria-live="polite">
         {lines.length === 0 && (
           <div className="converse__empty">
             {t(transport === "voice" ? "converse.emptyVoice" : "converse.emptyText")}
@@ -302,11 +329,12 @@ export function ConversePanel() {
           <input
             className="input"
             placeholder={t("converse.placeholder")}
+            aria-label={t("converse.placeholder")}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
           />
-          <button className="btn btn--sm" onClick={submit} disabled={!input.trim()}>
+          <button className="btn btn--primary btn--sm" onClick={submit} disabled={!input.trim() || !open}>
             {t("converse.send")}
           </button>
         </div>

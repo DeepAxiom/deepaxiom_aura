@@ -34,12 +34,70 @@ const COMPUTED = [
   "converse.text",
   "converse.voice",
   // Sidebar labels: t(`nav.${id}`), one per ViewId.
+  "nav.pulse",
   "nav.studio",
-  "nav.skills",
+  "nav.sessions",
+  "nav.evidence",
+  "nav.expertise",
   "nav.projections",
   "nav.graphs",
-  "nav.sessions",
   "nav.reference",
+  // Connection indicator: t(`topbar.state.${state}`) / t(`topbar.help.${state}`).
+  "topbar.state.ok",
+  "topbar.state.unauthorized",
+  "topbar.state.unknown",
+  "topbar.state.down",
+  "topbar.help.ok",
+  "topbar.help.unauthorized",
+  "topbar.help.unknown",
+  "topbar.help.down",
+  // Chosen by a ternary inside t(...), which the literal walk cannot see.
+  "palette.themeLight",
+  "palette.themeDark",
+  "evidence.chainIntact",
+  "evidence.chainBroken",
+  "evidence.approved",
+  "evidence.denied",
+  "sessions.expand",
+  "sessions.collapse",
+  "studio.edge.holding",
+  "studio.edge.gate",
+  "token.needed",
+  "token.have",
+  "token.none",
+  "pulse.approvalsOff",
+  "pulse.approvalsWaiting",
+  "pulse.approvalsNone",
+  // t(`sessions.filters.${f}`), t(`expertise.types.${type}`), t(`studio.edge.qos.${qos}`).
+  "sessions.filters.all",
+  "sessions.filters.live",
+  "sessions.filters.ended",
+  "sessions.filters.errors",
+  "expertise.types.sensorial",
+  "expertise.types.cognitive",
+  "expertise.types.motor",
+  "expertise.types.memory",
+  "expertise.types.logical",
+  "studio.edge.qos.reliable",
+  "studio.edge.qos.realtime",
+  "studio.edge.qos.bulk",
+  "graphs.origin.declared",
+  "graphs.origin.planner",
+  "reference.tab.commands",
+  "reference.tab.contracts",
+  "reference.tab.schemas",
+  "reference.tab.enums",
+  "studio.phase.idle",
+  "studio.phase.planning",
+  "studio.phase.executing",
+  "studio.phase.done",
+  "studio.phase.failed",
+  "projections.mode.live",
+  "projections.mode.dry-run",
+  "projections.mode.disabled",
+  "gate.approved",
+  "gate.denied",
+  "studio.keys.search",
   "studio.keys.undo",
   "studio.keys.redo",
   "studio.keys.copy",
@@ -141,6 +199,34 @@ test("the two bundles have exactly the same shape", () => {
     b.filter((k) => !a.includes(k)), [],
     "in Spanish but not English",
   );
+});
+
+test("a plural form exists in both languages or in neither", () => {
+  // `key_one` beside `key` is how a count reads as "1 event" instead of
+  // "1 events". i18next falls back to the bare key for every other count, so
+  // the bare key must exist wherever a `_one` does.
+  for (const [name, bundle] of [["en", en], ["es", es]] as const) {
+    for (const key of leaves(bundle)) {
+      if (!key.endsWith("_one")) continue;
+      const bare = key.slice(0, -"_one".length);
+      assert.equal(typeof lookup(bundle, bare), "string", `${name}: ${key} has no ${bare}`);
+    }
+  }
+});
+
+test("the product word is Expertise, not skill, wherever a person reads it", () => {
+  // The wire and the SDK still say `skill` (paths, manifest keys, directory
+  // names); the UI's own prose must not. Allowed: a path or command in
+  // backticks or with a slash, which names a real file or route.
+  const offenders: string[] = [];
+  for (const [name, bundle] of [["en", en], ["es", es]] as const) {
+    for (const key of leaves(bundle)) {
+      const value = String(lookup(bundle, key));
+      const prose = value.replace(/`[^`]*`/g, "").replace(/\bskills\/[\w-]+/g, "");
+      if (/\bskills?\b/i.test(prose)) offenders.push(`${name}:${key}`);
+    }
+  }
+  assert.deepEqual(offenders, []);
 });
 
 test("no namespace is left behind with nothing using it", () => {

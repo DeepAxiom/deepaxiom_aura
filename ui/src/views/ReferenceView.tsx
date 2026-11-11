@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import { replaceRoute } from "../app/store";
 import { useTranslation } from "react-i18next";
 import { CommandsPane } from "../components/reference/CommandsPane";
 import { ContractsPane } from "../components/reference/ContractsPane";
@@ -20,9 +21,10 @@ import { COMMANDS, CONTRACTS, SCHEMAS, SPEC_VERSION } from "../reference/generat
 const TABS = ["commands", "contracts", "schemas", "enums"] as const;
 type Tab = (typeof TABS)[number];
 
-export function ReferenceView() {
+export function ReferenceView({ tab: tabArg }: { tab?: string }) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<Tab>("commands");
+  const tab: Tab = (TABS as readonly string[]).includes(tabArg ?? "") ? (tabArg as Tab) : "commands";
+  const setTab = (id: Tab) => replaceRoute("reference", id);
   const [query, setQuery] = useState("");
 
   const counts: Record<Tab, number> = {
@@ -35,10 +37,12 @@ export function ReferenceView() {
   return (
     <section className="view view--flush reference">
       <div className="ref-bar">
-        <nav className="ref-tabs">
+        <nav className="ref-tabs" role="tablist">
           {TABS.map((id) => (
             <button
               key={id}
+              role="tab"
+              aria-selected={tab === id}
               className={`ref-tab ${tab === id ? "ref-tab--active" : ""}`}
               onClick={() => setTab(id)}
             >
@@ -51,6 +55,7 @@ export function ReferenceView() {
         <input
           className="input ref-search"
           placeholder={t("reference.search")}
+          aria-label={t("reference.search")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

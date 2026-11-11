@@ -14,16 +14,46 @@ export interface Point {
   y: number;
 }
 
+/** How far below its ports a right-to-left edge runs, and how far it swings out. */
+export const BACK_DROP = 84;
+export const BACK_SWING = 56;
+/** Vertical gap between two right-to-left edges, so they do not draw as one line. */
+export const BACK_LANE = 16;
+
+/** True when an edge runs right-to-left: the reply hop most graphs have. */
+export function isBackward(a: Point, b: Point): boolean {
+  return b.x < a.x - 8;
+}
+
 /**
- * A cubic bezier between two ports, with the control points pushed
- * horizontally. The push scales with the gap so short hops stay tight and long
- * ones bow enough to be followed across a busy graph, and it has a floor so a
- * node wired back to one on its left still bulges instead of folding into a
- * straight line through both boxes.
+ * The path between two ports.
+ *
+ * Left-to-right it is a cubic bezier with the control points pushed
+ * horizontally: the push scales with the gap so short hops stay tight and long
+ * ones bow enough to be followed, with a floor so a short hop still curves.
+ *
+ * Right-to-left it goes *under*: out of the egress, down, back along a
+ * straight run below the nodes, and up into the ingress. A single bezier for
+ * that case is a flat S drawn straight through every node between the two
+ * ends — the reply edge of a four-node chain crossed out the whole graph.
  */
-export function curve(a: Point, b: Point): string {
+export function curve(a: Point, b: Point, lane = 0): string {
+  if (isBackward(a, b)) {
+    const y = Math.max(a.y, b.y) + BACK_DROP + lane * BACK_LANE;
+    const s = BACK_SWING + lane * 8;
+    return (
+      `M ${a.x} ${a.y} C ${a.x + s} ${a.y}, ${a.x + s} ${y}, ${a.x} ${y} ` +
+      `L ${b.x} ${y} C ${b.x - s} ${y}, ${b.x - s} ${b.y}, ${b.x} ${b.y}`
+    );
+  }
   const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
   return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+}
+
+/** Where an edge's label sits: on the path, halfway along. */
+export function edgeMid(a: Point, b: Point, lane = 0): Point {
+  if (isBackward(a, b)) return { x: (a.x + b.x) / 2, y: Math.max(a.y, b.y) + BACK_DROP + lane * BACK_LANE };
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
 /**

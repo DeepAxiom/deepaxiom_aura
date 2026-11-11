@@ -3,11 +3,11 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import type { ConfigParam, SkillConfig } from "../api/types";
 
-/** Inline editor for one skill's runtime-tunable config (C1 `config`).
+/** Inline editor for one Expertise's runtime-tunable config (C1 `config`).
  * Values are read/written straight from the kernel's store — this panel
  * doesn't own any config state itself, it's a thin form over
  * GET/PUT /v1/skills/config. */
-export function SkillConfigPanel({ skillId }: { skillId: string }) {
+export function ExpertiseConfigPanel({ skillId }: { skillId: string }) {
   const { t } = useTranslation();
   const [data, setData] = useState<SkillConfig | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>({});
@@ -30,8 +30,8 @@ export function SkillConfigPanel({ skillId }: { skillId: string }) {
     };
   }, [skillId]);
 
-  if (error) return <div className="error-banner">{t("common.error", { message: error })}</div>;
-  if (!data) return <div className="empty">{t("common.loading")}</div>;
+  if (error) return <div className="alert" role="alert">{t("common.error", { message: error })}</div>;
+  if (!data) return <div className="loading">{t("common.loading")}</div>;
 
   const setField = (key: string, value: unknown) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -52,9 +52,11 @@ export function SkillConfigPanel({ skillId }: { skillId: string }) {
     setSavedNote("");
     try {
       const res = await api.updateSkillConfig(skillId, patch);
-      setData(res);
+      // PUT answers {id, values, pushed_live} with no `schema`; replacing the
+      // loaded document with it left the form with nothing to iterate.
+      setData({ ...data, ...res, schema: res.schema ?? data.schema });
       setForm(res.values);
-      setSavedNote(res.pushed_live ? t("skills.config.savedLive") : t("skills.config.savedNext"));
+      setSavedNote(res.pushed_live ? t("expertise.config.savedLive") : t("expertise.config.savedNext"));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -72,11 +74,11 @@ export function SkillConfigPanel({ skillId }: { skillId: string }) {
         ))}
       </div>
       <div className="config-panel__actions">
-        <button className="btn btn--sm" onClick={save} disabled={!dirty || saving}>
-          {saving ? t("skills.config.saving") : t("skills.config.save")}
+        <button className="btn btn--primary btn--sm" onClick={save} disabled={!dirty || saving}>
+          {saving ? t("expertise.config.saving") : t("expertise.config.save")}
         </button>
         <button className="btn btn--ghost btn--sm" onClick={resetDefaults} disabled={saving}>
-          {t("skills.config.resetDefaults")}
+          {t("expertise.config.resetDefaults")}
         </button>
         {savedNote && <span className="config-panel__note">{savedNote}</span>}
       </div>
@@ -99,8 +101,8 @@ function ConfigField({
       <label>
         {param.key}
         {param.restart_required && (
-          <span className="config-panel__badge" title={t("skills.config.restartRequiredHint")}>
-            {t("skills.config.restartRequired")}
+          <span className="config-panel__badge" title={t("expertise.config.restartRequiredHint")}>
+            {t("expertise.config.restartRequired")}
           </span>
         )}
       </label>

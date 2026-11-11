@@ -18,13 +18,13 @@ export function GateCard({
   };
 
   return (
-    <div className="gate-card">
+    <div className="gate-card" role="group" aria-label={question}>
       <div className="gate-card__q">{question}</div>
       {resolved ? (
         <div className="gate-card__resolved">{t(`gate.${resolved}`)}</div>
       ) : (
         <div className="gate-card__actions">
-          <button className="btn btn--sm" onClick={() => respond(true)}>
+          <button className="btn btn--primary btn--sm" onClick={() => respond(true)}>
             {t("gate.approve")}
           </button>
           <button className="btn btn--ghost btn--sm" onClick={() => respond(false)}>

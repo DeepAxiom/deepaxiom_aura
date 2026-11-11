@@ -105,7 +105,7 @@ export function Inspector({
                 <div className="inspector__manifest">
                   <div className="inspector__mrow">
                     <span>{t("studio.inspector.type")}</span>
-                    <span className={`badge badge--${ports.manifest.type}`}>{ports.manifest.type}</span>
+                    <span className={`type type--${ports.manifest.type}`}>{ports.manifest.type}</span>
                   </div>
                   <div className="inspector__mrow">
                     <span>{t("studio.inspector.format")}</span>

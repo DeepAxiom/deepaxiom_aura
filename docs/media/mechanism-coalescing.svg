@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" role="img" aria-labelledby="t d">
+<title id="t">Delta coalescing</title>
+<desc id="d">A timeline from 0 to 100 milliseconds. A model emits fourteen small text deltas. The first delta is emitted as an envelope immediately. Later deltas that arrive inside the max_delay window of 25 milliseconds after the previous flush are buffered and emitted together as one envelope when the timer fires. A buffer that reaches max_chars, 256 characters, is flushed at once without waiting for the timer. close() flushes what is left, and the final marker is still sent as its own envelope. Fourteen deltas become five text envelopes plus the final marker, and the concatenated text is identical.</desc>
+<style>
+svg{--bg:#f6f6f3;--pn:#fff;--bd:#d9d9d2;--tx:#17191c;--dm:#4f5661;--ft:#7a818c;--ac:#4d7c0f;--af:#a6d92c;--gt:#b45309;--er:#c8322f;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+@media (prefers-color-scheme:dark){svg{--bg:#0d0e10;--pn:#15171a;--bd:#2a2e34;--tx:#e8eaed;--dm:#a2a9b3;--ft:#6f7782;--ac:#b8e83a;--af:#b8e83a;--gt:#f0a429;--er:#f0524f}}
+.bg{fill:var(--bg);stroke:var(--bd);stroke-width:1.5}
+.pn{fill:var(--pn);stroke:var(--bd);stroke-width:1.5}
+.bx{fill:var(--pn);stroke:var(--bd);stroke-width:1.5}
+.ex{fill:var(--pn);stroke:var(--ac);stroke-width:1.5}
+text{fill:var(--tx);font-size:12.5px}
+.cap{fill:var(--ft);font-size:12px;letter-spacing:.12em;font-weight:600}
+.s{fill:var(--dm)}
+.f{fill:var(--ft);font-size:12px}
+.m{font-family:ui-monospace,"SF Mono","Cascadia Code",Consolas,Menlo,monospace;font-size:12px}
+.c{text-anchor:middle}.e{text-anchor:end}
+.ln{stroke:var(--bd);stroke-width:1.5;fill:none}
+.br{stroke:var(--ac);stroke-width:1.5;fill:none}
+.w{stroke:var(--ft);stroke-width:4;stroke-linecap:round}
+.wd{stroke:var(--ft);stroke-width:1.5;stroke-dasharray:3 4}
+.t{animation-duration:12s;animation-iteration-count:infinite;animation-timing-function:linear}
+.ph{stroke:var(--ac);stroke-width:1.5;animation-name:ph}
+@keyframes ph{0%,3%{opacity:0;transform:translateX(0)}4%{opacity:1;transform:translateX(0)}87.3%{opacity:1;transform:translateX(880px)}90%,100%{opacity:0;transform:translateX(880px)}}
+.t1{animation-name:t1}.t2{animation-name:t2}.t3{animation-name:t3}.t4{animation-name:t4}.t5{animation-name:t5}.t6{animation-name:t6}.t7{animation-name:t7}.t8{animation-name:t8}.t9{animation-name:t9}.t10{animation-name:t10}.t11{animation-name:t11}.t12{animation-name:t12}.t13{animation-name:t13}.t14{animation-name:t14}
+.e1{animation-name:e1}.e2{animation-name:e2}.e3{animation-name:e3}.e4{animation-name:e4}.e5{animation-name:e5}.e6{animation-name:e6}
+@keyframes t1{0%,3.7%{opacity:0}4%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t2{0%,8.5%{opacity:0}8.8%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t3{0%,13.3%{opacity:0}13.6%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t4{0%,18%{opacity:0}18.3%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t5{0%,22.8%{opacity:0}23.1%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t6{0%,27.6%{opacity:0}27.9%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t7{0%,32.3%{opacity:0}32.6%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t8{0%,37.1%{opacity:0}37.4%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t9{0%,41.9%{opacity:0}42.2%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t10{0%,46.7%{opacity:0}47%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t11{0%,51.4%{opacity:0}51.7%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t12{0%,56.2%{opacity:0}56.5%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t13{0%,65.8%{opacity:0}66.1%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes t14{0%,70.5%{opacity:0}70.8%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes e1{0%,4%{opacity:0}4.4%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes e2{0%,23.6%{opacity:0}24%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes e3{0%,43.5%{opacity:0}43.9%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes e4{0%,56.6%{opacity:0}57%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes e5{0%,73.7%{opacity:0}74.1%,95%{opacity:1}98%,100%{opacity:0}}
+@keyframes e6{0%,79.6%{opacity:0}80%,95%{opacity:1}98%,100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){*{animation-play-state:paused!important}.t{animation-delay:-10.9s!important}}
+</style>
+<rect class="bg" x=".75" y=".75" width="958.5" height="418.5" rx="12"/>
+<text class="cap" x="24" y="32">DELTA COALESCING</text>
+
+<path class="ln" d="M48 66H912M48 62V70M258 62V70M468 62V70M678 62V70M888 62V70"/>
+<text class="f" x="48" y="56">0 ms</text><text class="f c" x="258" y="56">25</text><text class="f c" x="468" y="56">50</text><text class="f c" x="678" y="56">75</text><text class="f c" x="888" y="56">100 ms</text>
+<path class="w" d="M50 78H256M470 78H600M260 88H466M604 88H785"/>
+<path class="wd" d="M606 78H678M791 88H812"/>
+<text class="f" x="48" y="110">windows: max_delay = 25 ms after each flush; dashed = flushed before the timer fired</text>
+<text class="f" x="48" y="134">deltas from the model, one add() each</text>
+
+<g class="m c">
+<g class="t t1"><rect class="bx" x="48" y="142" width="44" height="24" rx="6"/><text x="70" y="158">Each</text></g>
+<g class="t t2"><rect class="bx" x="98" y="142" width="44" height="24" rx="6"/><text x="120" y="158">ses</text></g>
+<g class="t t3"><rect class="bx" x="149" y="142" width="44" height="24" rx="6"/><text x="171" y="158">sion</text></g>
+<g class="t t4"><rect class="bx" x="199" y="142" width="44" height="24" rx="6"/><text x="221" y="158">has</text></g>
+<g class="t t5"><rect class="bx" x="250" y="142" width="44" height="24" rx="6"/><text x="272" y="158">its</text></g>
+<g class="t t6"><rect class="bx" x="300" y="142" width="44" height="24" rx="6"/><text x="322" y="158">own</text></g>
+<g class="t t7"><rect class="bx" x="350" y="142" width="44" height="24" rx="6"/><text x="372" y="158">mail</text></g>
+<g class="t t8"><rect class="bx" x="401" y="142" width="44" height="24" rx="6"/><text x="423" y="158">box</text></g>
+<g class="t t9"><rect class="bx" x="451" y="142" width="44" height="24" rx="6"/><text x="473" y="158">.</text></g>
+<g class="t t10"><rect class="bx" x="502" y="142" width="44" height="24" rx="6"/><text x="524" y="158">96 ch</text></g>
+<g class="t t11"><rect class="bx" x="552" y="142" width="44" height="24" rx="6"/><text x="574" y="158">96 ch</text></g>
+<g class="t t12"><rect class="bx" x="602" y="142" width="44" height="24" rx="6"/><text x="624" y="158">64 ch</text></g>
+<g class="t t13"><rect class="bx" x="703" y="142" width="44" height="24" rx="6"/><text x="725" y="158">so</text></g>
+<g class="t t14"><rect class="bx" x="754" y="142" width="44" height="24" rx="6"/><text x="776" y="158">on</text></g>
+
+<g class="t e1"><path class="br" d="M70 166V212"/><rect class="ex" x="48" y="212" width="44" height="24" rx="6"/><text x="70" y="228">Each</text></g>
+<g class="t e2"><path class="br" d="M98 170V174H294V170M262 174V212"/><rect class="ex" x="258" y="212" width="132" height="24" rx="6"/><text x="324" y="228">session has its</text></g>
+<g class="t e3"><path class="br" d="M300 170V174H495V170M472 174V212"/><rect class="ex" x="468" y="212" width="110" height="24" rx="6"/><text x="523" y="228">own mailbox.</text></g>
+<g class="t e4"><path class="br" d="M502 170V174H646V170M606 174V212"/><rect class="ex" x="602" y="212" width="84" height="24" rx="6"/><text x="644" y="228">256 chars</text></g>
+<g class="t e5"><path class="br" d="M703 170V174H798V170M791 174V212"/><rect class="ex" x="787" y="212" width="56" height="24" rx="6"/><text x="815" y="228">so on</text></g>
+<g class="t e6"><rect class="ex" x="851" y="212" width="64" height="24" rx="6" style="stroke:var(--tx)"/><text x="883" y="228">final</text></g>
+</g>
+<text class="f" x="104" y="228">envelopes emitted</text>
+<text class="f t e1" x="48" y="254">first delta: sent at once</text>
+<text class="f t e2" x="258" y="254">timer fired: max_delay</text>
+<text class="f t e3" x="468" y="254">timer fired: max_delay</text>
+<text class="f t e4" x="602" y="254">max_chars = 256 reached</text>
+<text class="f t e5" x="787" y="254">close()</text>
+<text class="f t e6" x="851" y="254">own envelope</text>
+<path class="t ph" d="M48 62V262"/>
+
+<rect class="pn" x="24" y="276" width="912" height="120" rx="8"/>
+<text class="s" x="44" y="301">same text, fewer envelopes</text>
+<text class="s e" x="916" y="301">14 deltas in; 5 text envelopes + the final marker out</text>
+<text class="m" x="44" y="328" style="fill:var(--ft)">deltas</text><text class="m" x="124" y="328">Each| ses|sion| has| its| own| mail|box|.</text>
+<text class="m" x="44" y="348" style="fill:var(--ft)">envelopes</text><text class="m" x="124" y="348">Each| session has its| own mailbox.</text>
+<text class="f" x="44" y="378">std/text@1 partials are deltas that consumers append, so both streams read the same; ordering and the causal chain are unchanged</text>
+</svg>
