@@ -4,7 +4,7 @@ Regenerate with: python scripts/gen_ssot.py
 """
 from __future__ import annotations
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 #: The skill type whose edges act on the world.
 EFFECT_TYPE = "motor"

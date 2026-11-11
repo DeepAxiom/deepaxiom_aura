@@ -14,11 +14,36 @@ _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 _SCHEMA_RE = re.compile(r"^[a-z0-9-]+/[a-z0-9_-]+@\d+$")
 
 
-def load_manifest(path: str = "skill.yaml") -> dict[str, Any]:
+# The C1 manifest file, under both of its names. What this runtime runs was
+# called a skill when the file was named; "skill" has since come to mean a
+# prompt handed to a language model, which these are not, so the file is now
+# `expertise.yaml`. The old name keeps working: a package written before the
+# rename loads unchanged, and the contents of the file did not change at all.
+MANIFEST_FILE = "expertise.yaml"
+LEGACY_MANIFEST_FILE = "skill.yaml"
+
+
+def default_manifest_path(directory: str | Path = ".") -> str:
+    """The manifest in `directory`: `expertise.yaml`, else `skill.yaml`.
+
+    Returns the current name when neither exists, so the error a caller then
+    gets names the file they should create rather than the one being retired.
+    """
+    base = Path(directory)
+    for name in (MANIFEST_FILE, LEGACY_MANIFEST_FILE):
+        if (base / name).exists():
+            return str(base / name) if str(base) != "." else name
+    return str(base / MANIFEST_FILE) if str(base) != "." else MANIFEST_FILE
+
+
+def load_manifest(path: str | None = None) -> dict[str, Any]:
+    if path is None:
+        path = default_manifest_path()
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(
-            f"{path} not found — every skill needs a C1 manifest next to its code"
+            f"{path} not found — every Expertise needs a C1 manifest next to its code "
+            f"({MANIFEST_FILE}; {LEGACY_MANIFEST_FILE} is still read)"
         )
     manifest = yaml.safe_load(p.read_text(encoding="utf-8"))
     validate_manifest(manifest)

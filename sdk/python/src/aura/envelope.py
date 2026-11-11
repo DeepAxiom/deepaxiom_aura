@@ -59,10 +59,16 @@ class Envelope:
     # about the payload's production: a consumer validating against the port's
     # schema must not have to know it exists.
     attest: Any = None
+    # C3 v1.7, additive: a W3C `traceparent`. The kernel puts the client's
+    # trace context on what it delivers; a skill hands it back on what it
+    # emits, so the chain stays in one distributed trace. Nothing to set by
+    # hand — Context.emit carries it.
+    trace: str = ""
 
     def to_wire(self) -> dict:
         wire: dict[str, Any] = {"v": self.v, "id": self.id, "kind": self.kind}
-        for key in ("cause_id", "session", "node", "port", "idem", "schema", "receipt"):
+        for key in ("cause_id", "session", "node", "port", "idem", "schema", "receipt",
+                    "trace"):
             value = getattr(self, key)
             if value:
                 wire[key] = value
@@ -90,4 +96,5 @@ class Envelope:
             payload=wire.get("payload"),
             receipt=wire.get("receipt", ""),
             attest=wire.get("attest"),
+            trace=wire.get("trace", "") or "",
         )

@@ -11,7 +11,7 @@ does: the SDK already owns the helpers for skills that load models. It is not a
 frozen contract — C1 through C5 say nothing about it — so it is documented as a
 convention and may change with the SDK's own version.
 
-The writer stays in ``skills/model-manager/active.py``: one thing chooses, many
+The writer stays in ``expertise/model-manager/active.py``: one thing chooses, many
 things read.
 """
 from __future__ import annotations

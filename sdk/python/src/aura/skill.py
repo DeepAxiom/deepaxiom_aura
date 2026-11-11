@@ -230,6 +230,10 @@ class Context:
             schema=schema,
             payload=payload,
             attest=_attest_wire(attest),
+            # The kernel already carries a chain's trace context on its own;
+            # echoing it means the chain keeps it even where the kernel's
+            # bounded index no longer holds the root.
+            trace=self._incoming.trace,
         )
         await self._skill._send(env)
 
@@ -293,9 +297,16 @@ class Skill:
     process can turn a declarative spec (e.g. an OpenAPI-less connector
     definition) into several skills without writing throwaway YAML files to
     disk first.
+
+    Also exported as `Expertise`, which is what the product now calls this:
+    a typed function that is expert at one thing. `Skill` stays — it is in
+    every package already written — and the two are the same class.
+
+    With no `manifest_path`, `expertise.yaml` is read from the working
+    directory, falling back to `skill.yaml`.
     """
 
-    def __init__(self, manifest_path: str = "skill.yaml", *,
+    def __init__(self, manifest_path: str | None = None, *,
                  manifest: dict[str, Any] | None = None,
                  token: str | None = None) -> None:
         if manifest is not None:
@@ -590,3 +601,8 @@ def run_all(skills: list[Skill]) -> None:
         asyncio.run(serve())
     except KeyboardInterrupt:  # pragma: no cover - operator interrupt
         _logger.info("stopped")
+
+
+# The name the product uses. Same class, not a subclass: an `isinstance` check
+# written against either keeps passing.
+Expertise = Skill
