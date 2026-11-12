@@ -308,7 +308,7 @@ bajo qué policy, y si la cadena verifica.
 | **Con pruebas** | Envelopes en streaming con QoS por arista sobre WebSocket y QUIC · despacho por sesión y réplicas por carga · el gate como invariante del kernel · identidad firmada del aprobador sobre lo que se le mostró · el ledger y la verificación sin conexión · credenciales con alcance y el broker de credenciales · el log del witness y su monitor · cancelación · reanudación de sesión · relevo por standby · replay determinista y regresión a nivel de efectos · reportes de auditoría por periodo · contexto de traza y exportación de spans en vivo · uso de tokens reportado · observadores de solo lectura con tickets e historial · puertos tipados con gramáticas compiladas · la frontera MCP en ambos sentidos · Expertises Wasm en un sandbox real · CDC de Postgres · respaldo y restauración verificables · rotación de la clave de firma |
 | **Verificado a mano** | Voz con barge-in · el planner (`aura do`) · `aura why` · ML-BOM |
 | **Probado solo contra dobles** | El servidor de inferencia compartido · la caché de estado KV en proceso · la gramática del planner (no hay llama.cpp en CI) · los encoders de video por hardware (nunca corridos) |
-| **Todavía no** | Un puente al middleware de un robot · un paro a nivel de nodo · tramas binarias para datos de sensores · sobrevivir a la pérdida de la máquina · contención para `format: source` · evidencia TEE más allá de `bound` · SDKs e imagen de contenedor publicados · binarios firmados de 0.4 |
+| **Todavía no** | Un puente al middleware de un robot · un paro a nivel de nodo · tramas binarias para datos de sensores · sobrevivir a la pérdida de la máquina · contención para `format: source` · evidencia TEE más allá de `bound` · SDKs e imagen de contenedor publicados |
 
 Una suite de conformidad de 67 verificaciones ejercita el kernel sobre el
 cable, y jobs de CI aparte demuestran que el ledger detecta manipulación
@@ -468,16 +468,14 @@ después. Esa forma está escrita como
 
 ## 60 segundos
 
-**0.4 todavía no tiene release firmada** — compílalo desde el código, más
-abajo. Los binarios firmados para Linux, macOS y Windows en amd64 y arm64 siguen
-siendo los de la
-[release v0.3.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0). Verifica antes de correr — la firma
+Hay binarios firmados para Linux, macOS y Windows en amd64 y arm64 en la
+[release v0.4.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.4.0). Verifica antes de correr — la firma
 sobre `SHA256SUMS` demuestra quién construyó el archivo, y solo entonces vale la
 pena comprobar la suma ([cómo](SECURITY.md#verifying-a-release)):
 
 ```bash
-curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/aura-linux-amd64
-curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/SHA256SUMS{,.sig,.pem}
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.4.0/aura-linux-amd64
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.4.0/SHA256SUMS{,.sig,.pem}
 cosign verify-blob --certificate-identity-regexp \
   "^https://github.com/DeepAxiom/deepaxiom_aura/.github/workflows/release.yml@.*$" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \

@@ -65,8 +65,8 @@ workflow that built it:
 
 | Artefact | Tag | Workflow | Files |
 |---|---|---|---|
-| `aura` — the kernel | `v0.3.0` | `.github/workflows/release.yml` | `aura-<os>-<arch>`, `sbom.json` |
-| `aura-media` — the media subsystem | `media/v0.1.0` | `.github/workflows/release-media.yml` | `aura-media-<os>-<arch>`, `media-sbom.json` |
+| `aura` — the kernel | `v0.4.0` | `.github/workflows/release.yml` | `aura-<os>-<arch>`, `sbom.json` |
+| `aura-media` — the media subsystem | `media/v0.2.0` | `.github/workflows/release-media.yml` | `aura-media-<os>-<arch>`, `media-sbom.json` |
 
 They are separate because their versions mean different things: a codec CVE
 moves the media line and must leave the kernel's alone, which is what makes

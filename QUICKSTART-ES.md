@@ -13,11 +13,11 @@ kernel en vez de descargarlo. Sin CGO, sin Docker, sin base de datos, sin cuenta
 ## 1 · Consigue el nodo y arráncalo
 
 O bien descarga el binario firmado de tu plataforma desde la
-[release v0.3.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0) y verifícalo
+[release v0.4.0](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.4.0) y verifícalo
 ([cómo](SECURITY.md#verifying-a-release)):
 
 ```bash
-curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/aura-linux-amd64
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.4.0/aura-linux-amd64
 chmod +x aura-linux-amd64 && mv aura-linux-amd64 kernel/aura
 ./kernel/aura up
 ```

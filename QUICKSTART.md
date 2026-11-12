@@ -13,11 +13,11 @@ kernel instead of downloading it. No CGO, no Docker, no database, no account.
 ## 1 · Get the node and start it
 
 Either download the signed binary for your platform from the
-[v0.3.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.3.0) and verify it
+[v0.4.0 release](https://github.com/DeepAxiom/deepaxiom_aura/releases/tag/v0.4.0) and verify it
 ([how](SECURITY.md#verifying-a-release)):
 
 ```bash
-curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.3.0/aura-linux-amd64
+curl -LO https://github.com/DeepAxiom/deepaxiom_aura/releases/download/v0.4.0/aura-linux-amd64
 chmod +x aura-linux-amd64 && mv aura-linux-amd64 kernel/aura
 ./kernel/aura up
 ```
