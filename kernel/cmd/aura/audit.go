@@ -132,8 +132,8 @@ func printAudit(rep ledger.AuditReport) {
 		return
 	}
 
-	fmt.Printf("  %d effect(s) acted on the world · %d delivered · %d refused\n",
-		s.Effects, s.Delivered, s.Denied)
+	fmt.Printf("  %d effect(s) reached the ledger · %d delivered · %d refused · %d expired\n",
+		s.Effects, s.Delivered, s.Denied, s.Expired)
 	fmt.Printf("  %d passed a human gate (%d signed, %d unsigned) · %d cleared by policy\n",
 		s.Gated, s.Signed, s.UnsignedGated, s.Allowed)
 	if s.Signed > 0 {

@@ -14,7 +14,8 @@ import { STATS_WINDOW, navigate, type StatsFeed } from "../app/store";
 import { Empty, ErrorNote, Loading, Meter, Sparkline, TypeBadge } from "../components/ui";
 import { NOT_REPORTED, fmtBytes, fmtCompact, fmtInt, fmtMs, fmtPct, fmtUptime, shortId } from "../lib/format";
 import {
-  cacheHitRatio, mailboxFill, rateSeries, replicaScale, replicaViews, speculationHitRate,
+  cacheHitRatio, inferenceRows, mailboxFill, rateSeries, replicaScale, replicaViews,
+  speculationHitRate, stoppedTotal,
 } from "../lib/stats";
 
 function last(values: (number | null)[]): number | null {
@@ -84,6 +85,9 @@ export function PulseView({ feed, health }: { feed: StatsFeed; health: Health | 
   const scale = replicaScale(views);
   const pending = s.approvals_pending;
   const na = t("pulse.notReported");
+  const infer = s.inference;
+  const inferRows = inferenceRows(s);
+  const stopped = infer?.stopped ?? {};
 
   return (
     <section className="view pulse">
@@ -224,6 +228,91 @@ export function PulseView({ feed, health }: { feed: StatsFeed; health: Health | 
           </section>
         </div>
       </div>
+
+      <section className="panel pulse__infer" aria-labelledby="pulse-infer">
+        <header className="panel__head">
+          <h2 id="pulse-infer">{t("pulse.infer")}</h2>
+          <span className="panel__note">{infer ? t("pulse.inferNote") : ""}</span>
+        </header>
+        {!infer ? (
+          <p className="panel__na">{t("pulse.inferOff")}</p>
+        ) : (
+          <>
+            <dl className="kv kv--row">
+              <div>
+                <dt>{t("pulse.inferEngine")}</dt>
+                <dd className="mono" title={infer.upstream}>
+                  {infer.engine?.models?.length ? infer.engine.models.join(", ") : infer.upstream}
+                </dd>
+              </div>
+              <div>
+                <dt>{t("pulse.inferReachable")}</dt>
+                <dd className={infer.engine && !infer.engine.reachable ? "kv--warn" : ""}>
+                  {!infer.engine ? NOT_REPORTED : infer.engine.reachable ? t("pulse.inferUp") : t("pulse.inferDown")}
+                </dd>
+              </div>
+              <div><dt>{t("pulse.inferInFlight")}</dt><dd>{fmtInt(infer.in_flight)}</dd></div>
+              <div>
+                <dt title={t("pulse.inferRefusedHelp")}>{t("pulse.inferRefused")}</dt>
+                <dd className={infer.refused ? "kv--warn" : ""}>{fmtInt(infer.refused)}</dd>
+              </div>
+              <div>
+                <dt title={t("pulse.inferStoppedHelp", {
+                  chain: fmtInt(stopped.chain_cancelled ?? 0),
+                  session: fmtInt(stopped.session_ended ?? 0),
+                  deadline: fmtInt(stopped.deadline ?? 0),
+                  caller: fmtInt(stopped.caller_gone ?? 0),
+                  speculation: fmtInt(stopped.speculation_superseded ?? 0),
+                  shutdown: fmtInt(stopped.node_stopping ?? 0),
+                })}>{t("pulse.inferStopped")}</dt>
+                <dd>{fmtInt(stoppedTotal(s))}</dd>
+              </div>
+              <div>
+                <dt title={t("pulse.inferPrepareHelp")}>{t("pulse.inferPrepare")}</dt>
+                <dd>{infer.prepare_micros_avg ? `${Math.round(infer.prepare_micros_avg)} µs` : NOT_REPORTED}</dd>
+              </div>
+            </dl>
+            {inferRows.length === 0 ? (
+              <p className="panel__na">{t("pulse.inferEmpty")}</p>
+            ) : (
+              <table className="table table--rows infer">
+                <thead>
+                  <tr>
+                    <th>{t("pulse.inferGraph")}</th>
+                    <th className="num">{t("pulse.inferInFlight")}</th>
+                    <th className="num">{t("pulse.inferCompleted")}</th>
+                    <th className="num">{t("pulse.inferCancelled")}</th>
+                    <th className="num">{t("pulse.inferFailed")}</th>
+                    <th className="num">{t("pulse.tokensIn")}</th>
+                    <th className="num">{t("pulse.tokensOut")}</th>
+                    <th className="num">{t("pulse.inferCache")}</th>
+                    <th className="num">{t("pulse.inferFirstToken")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inferRows.map((g) => (
+                    <tr key={g.graph}>
+                      <td className="mono">{g.graph}</td>
+                      <td className="num">{fmtInt(g.inFlight)}</td>
+                      <td className="num">{fmtInt(g.completed)}</td>
+                      <td className="num">{fmtInt(g.cancelled)}</td>
+                      <td className={`num ${g.failed ? "kv--warn" : ""}`}>{fmtInt(g.failed)}</td>
+                      <td className="num" title={g.floor ? t("pulse.inferFloor") : undefined}>
+                        {fmtCompact(g.inputTokens)}{g.floor ? " +" : ""}
+                      </td>
+                      <td className="num" title={g.floor ? t("pulse.inferFloor") : undefined}>
+                        {fmtCompact(g.outputTokens)}{g.floor ? " +" : ""}
+                      </td>
+                      <td className="num">{fmtPct(g.cache)}</td>
+                      <td className="num">{g.firstTokenMs === null ? NOT_REPORTED : fmtMs(g.firstTokenMs)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </>
+        )}
+      </section>
 
       <div className="pulse__cols pulse__cols--3">
         <section className="panel" aria-labelledby="pulse-store">

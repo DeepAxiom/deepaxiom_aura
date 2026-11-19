@@ -33,6 +33,51 @@ export interface NodeStats {
   approvals_pending?: number;
   /** Read-only observers attached to live sessions (GET /v1/watch). */
   watch?: { watchers: number; cut_off: number };
+  /**
+   * What the node saw pass through its inference plane. Absent when its
+   * Expertise reach their engine directly — which is "the node does not see
+   * inference", not "there was none".
+   */
+  inference?: InferenceStats;
+}
+
+/** A latency distribution as the node counted it: buckets, not a summary. */
+export interface Histogram {
+  /** Upper bounds of buckets[0..n-1]; the last bucket has none. */
+  bounds_ms: number[];
+  buckets: number[];
+  count: number;
+  sum_ms: number;
+}
+
+export interface InferenceGraphStats {
+  graph: string;
+  in_flight: number;
+  requests: number;
+  completed: number;
+  /** Ended by the node or the caller before the engine finished. */
+  cancelled: number;
+  failed: number;
+  /** Requests the engine reported usage for; tokens are a floor below `completed`. */
+  metered: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_input_tokens: number;
+  first_token: Histogram;
+}
+
+export interface InferenceStats {
+  upstream: string;
+  priority?: string;
+  in_flight: number;
+  /** Turned away before reaching the engine. */
+  refused: number;
+  prepare_micros_avg: number;
+  /** Requests ended early, by why. */
+  stopped?: Record<string, number>;
+  usage_requested: boolean;
+  graphs: InferenceGraphStats[];
+  engine?: { reachable: boolean; models?: string[]; checked_at: number; error?: string };
 }
 
 /** a / b, or null when there is nothing to divide by. */
@@ -166,4 +211,48 @@ export function sparkSegments(values: readonly (number | null)[], w: number, h: 
   });
   if (run.length) segments.push(run.join(" "));
   return segments;
+}
+
+export interface InferenceRow {
+  graph: string;
+  inFlight: number;
+  requests: number;
+  completed: number;
+  cancelled: number;
+  failed: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Share of input tokens the engine served from its prefix cache. */
+  cache: number | null;
+  /** Mean time to first token in ms: the histogram's own sum over its count. */
+  firstTokenMs: number | null;
+  /**
+   * True when the engine reported usage for fewer requests than completed, so
+   * the token counts understate what was spent.
+   */
+  floor: boolean;
+}
+
+/** Inference rows for the Pulse table: busiest graph first, then by name. */
+export function inferenceRows(s: NodeStats | null): InferenceRow[] {
+  return (s?.inference?.graphs ?? [])
+    .map((g) => ({
+      graph: g.graph,
+      inFlight: g.in_flight,
+      requests: g.requests,
+      completed: g.completed,
+      cancelled: g.cancelled,
+      failed: g.failed,
+      inputTokens: g.input_tokens,
+      outputTokens: g.output_tokens,
+      cache: ratio(g.cached_input_tokens, g.input_tokens),
+      firstTokenMs: ratio(g.first_token?.sum_ms, g.first_token?.count),
+      floor: g.metered < g.completed,
+    }))
+    .sort((a, b) => b.requests - a.requests || a.graph.localeCompare(b.graph));
+}
+
+/** How many requests the node or a caller ended early, across every reason. */
+export function stoppedTotal(s: NodeStats | null): number {
+  return Object.values(s?.inference?.stopped ?? {}).reduce((sum, n) => sum + n, 0);
 }

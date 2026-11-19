@@ -85,8 +85,8 @@ func printBundleSummary(w io.Writer, b ledger.Bundle) {
 		fmt.Fprintf(w, " (TRUNCATED at %d — this bundle is a prefix)", ledger.MaxTrajectorySteps)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  effects    %d sealed · %d delivered · %d denied\n",
-		s.Effects, s.EffectsDelivered, s.EffectsDenied)
+	fmt.Fprintf(w, "  effects    %d sealed · %d delivered · %d denied · %d expired\n",
+		s.Effects, s.EffectsDelivered, s.EffectsDenied, s.EffectsExpired)
 	if len(s.Models) > 0 {
 		fmt.Fprintf(w, "  models     %v\n", s.Models)
 	}

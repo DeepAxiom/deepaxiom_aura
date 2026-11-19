@@ -20,6 +20,11 @@ __pycache__/
 .venv/
 *.egg-info/
 
+# What bench/inference writes when no --out is given. A result worth keeping
+# is committed deliberately, under a name that says what it measured and on
+# what; a run left behind in a working directory is not that.
+robot-bench-*.json
+
 # node
 node_modules/
 *.tsbuildinfo

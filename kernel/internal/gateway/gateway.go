@@ -32,6 +32,7 @@ import (
 	"aura/kernel/internal/executor"
 	"aura/kernel/internal/grammar"
 	"aura/kernel/internal/identity"
+	"aura/kernel/internal/infer"
 	"aura/kernel/internal/ledger"
 	"aura/kernel/internal/otel"
 	"aura/kernel/internal/projection"
@@ -82,7 +83,13 @@ type Gateway struct {
 	// answers 404 on the secret routes, which is the correct state for a node
 	// whose connectors authenticate with nothing.
 	Broker *broker.Broker
-	Log    *slog.Logger
+	// Infer is the node's inference plane: where a request to a model passes
+	// on its way to the engine, so the node knows what it is for, can stop it,
+	// and can read what it cost. Nil is the node as it always was — Expertise
+	// reach their engine directly and the node sees none of it — and the
+	// inference routes then answer 404 and say how to turn this on.
+	Infer *infer.Plane
+	Log   *slog.Logger
 	// Auth guards the control surface: bearer token plus the WebSocket origin
 	// allowlist. Nil means an unauthenticated node, which only --no-auth
 	// produces and which prints a warning at startup.
@@ -223,6 +230,11 @@ func (g *Gateway) Handler() http.Handler {
 	handle("GET /v1/stream", g.clientWS)
 	handle("GET /v1/watch", g.watchWS)
 	handle("POST /v1/watch/tickets", g.issueWatchTicket)
+	// The inference plane. Registered whether or not an engine is configured,
+	// so that a caller pointed here by mistake is told why it got nothing
+	// instead of being served the app shell.
+	handle("POST /v1/inference/{route...}", g.inference)
+	handle("GET /v1/inference/{route...}", g.inference)
 
 	// Auth wraps the whole mux rather than decorating each route: a route
 	// added later is authenticated by default, which is the failure mode worth
@@ -903,8 +915,13 @@ func (g *Gateway) ServeSkill(conn wire, p Principal) {
 	}
 	defer g.Adm.Release(connID)
 
-	live := &registry.Live{Manifest: manifest, Connected: time.Now(), Send: conn.Send}
+	live := &registry.Live{Manifest: manifest, Connected: time.Now(), Send: conn.Send,
+		TokenID: p.TokenID}
 	instances := g.Reg.Register(connID, live)
+	// Who this connection is, for everything it emits. Fixed at registration:
+	// the manifest it declared and the credential it presented do not change
+	// for the life of the socket, and the envelopes it sends are not asked.
+	emitter := executor.Emitter{Conn: connID, Expertise: manifest.ID, TokenID: p.TokenID}
 	defer g.Reg.Unregister(connID)
 	if err := g.St.UpsertSkill(manifest.ID, manifest.Version, manifest); err != nil {
 		g.Log.Error("persist skill failed", "err", err)
@@ -959,7 +976,7 @@ func (g *Gateway) ServeSkill(conn wire, p Principal) {
 			fail(env.ID, err.Error())
 			continue
 		}
-		if err := g.Mgr.Dispatch(env); err != nil {
+		if err := g.Mgr.DispatchFrom(env, emitter); err != nil {
 			g.Log.Debug("dispatch failed", "skill", manifest.ID, "err", err)
 		}
 	}

@@ -195,6 +195,95 @@ func (g *Gateway) metrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, "aura_tokens_total{kind=\"cached_input\"} %d\n", u.CachedInput)
 		emit("aura_inferences_metered_total",
 			"Inferences whose attestation carried token usage.", "counter", float64(u.Inferences))
+
+		dl := g.Mgr.DeadlineStats()
+		emit("aura_deadline_dropped_total",
+			"Data deliveries not made because their deadline had passed (C2 rule 7). "+
+				"Each one is work that was produced and then thrown away for arriving late.",
+			"counter", float64(dl.Dropped))
+		emit("aura_effects_expired_total",
+			"The part of aura_deadline_dropped_total that were effects: deliveries into a "+
+				"motor Expertise, each sealed in the ledger as expired rather than delivered.",
+			"counter", float64(dl.EffectsExpired))
+		emit("aura_responses_late_total",
+			"First outputs delivered after their respond_by (C2 rule 9). Nothing was "+
+				"dropped; this counts how often the node was slow to start answering.",
+			"counter", float64(dl.LateResponses))
+
+		ln := g.Mgr.LineageStats()
+		emit("aura_lineage_recorded_total",
+			"Deliveries to an Expertise entered into the lineage index.",
+			"counter", float64(ln.Recorded))
+		emit("aura_lineage_evicted_total",
+			"Lineage entries dropped to stay within the per-session bound.",
+			"counter", float64(ln.Evicted))
+		emit("aura_lineage_unverified_total",
+			"Emissions whose stated cause the node no longer held. Each inherited no "+
+				"deadline. Rising with aura_lineage_evicted_total means the bound is too "+
+				"small; rising alone means something emits under causes it was not given.",
+			"counter", float64(ln.Unverified))
+		emit("aura_lineage_foreign_total",
+			"Emissions whose stated cause was a delivery made to a different Expertise. "+
+				"Never legitimate: anything above zero is worth finding.",
+			"counter", float64(ln.Foreign))
+	}
+
+	if g.Infer != nil {
+		in := g.Infer.Stats()
+		emit("aura_inference_in_flight",
+			"Requests this node has at its inference engine right now.",
+			"gauge", float64(in.InFlight))
+		emit("aura_inference_refused_total",
+			"Requests turned away before reaching the engine: a delivery made to another "+
+				"Expertise, a chain already cancelled, a deadline already past.",
+			"counter", float64(in.Refused))
+		emit("aura_inference_prepare_microseconds_avg",
+			"Mean time the node spent on a request before sending it to the engine. "+
+				"This is the node's own share of the latency, not the engine's.",
+			"gauge", in.PrepareMicrosAvg)
+
+		fmt.Fprintf(&b, "# HELP aura_inference_stopped_total Requests ended before the engine "+
+			"finished, by why: the chain was cancelled, the session ended, the deadline passed, "+
+			"the caller left, or the node was stopping.\n"+
+			"# TYPE aura_inference_stopped_total counter\n")
+		for _, kind := range sortedKeys(in.Stopped) {
+			fmt.Fprintf(&b, "aura_inference_stopped_total{reason=%q} %d\n", kind, in.Stopped[kind])
+		}
+
+		const observed = "Observed by the node on the engine's own responses, never taken " +
+			"from what an Expertise reported. "
+		fmt.Fprintf(&b, "# HELP aura_inference_requests_total %sRequests that reached the engine, "+
+			"by graph and by how they ended.\n# TYPE aura_inference_requests_total counter\n", observed)
+		for _, gr := range in.Graphs {
+			fmt.Fprintf(&b, "aura_inference_requests_total{graph=%q,outcome=\"completed\"} %d\n", gr.Graph, gr.Completed)
+			fmt.Fprintf(&b, "aura_inference_requests_total{graph=%q,outcome=\"cancelled\"} %d\n", gr.Graph, gr.Cancelled)
+			fmt.Fprintf(&b, "aura_inference_requests_total{graph=%q,outcome=\"failed\"} %d\n", gr.Graph, gr.Failed)
+		}
+		fmt.Fprintf(&b, "# HELP aura_inference_tokens_total %sTokens by graph and kind. A floor "+
+			"wherever an engine reported no usage: nothing is estimated. cached_input over input "+
+			"is the prefix-cache hit rate.\n# TYPE aura_inference_tokens_total counter\n", observed)
+		for _, gr := range in.Graphs {
+			fmt.Fprintf(&b, "aura_inference_tokens_total{graph=%q,kind=\"input\"} %d\n", gr.Graph, gr.InputTokens)
+			fmt.Fprintf(&b, "aura_inference_tokens_total{graph=%q,kind=\"output\"} %d\n", gr.Graph, gr.OutputTokens)
+			fmt.Fprintf(&b, "aura_inference_tokens_total{graph=%q,kind=\"cached_input\"} %d\n", gr.Graph, gr.CachedInputTokens)
+		}
+		fmt.Fprintf(&b, "# HELP aura_inference_first_token_seconds %sTime from the node sending a "+
+			"request to the engine producing its first output, queueing at the engine "+
+			"included.\n# TYPE aura_inference_first_token_seconds histogram\n", observed)
+		for _, gr := range in.Graphs {
+			var cumulative uint64
+			for i, bound := range gr.FirstToken.BoundsMS {
+				cumulative += gr.FirstToken.Buckets[i]
+				fmt.Fprintf(&b, "aura_inference_first_token_seconds_bucket{graph=%q,le=\"%g\"} %d\n",
+					gr.Graph, float64(bound)/1000, cumulative)
+			}
+			fmt.Fprintf(&b, "aura_inference_first_token_seconds_bucket{graph=%q,le=\"+Inf\"} %d\n",
+				gr.Graph, gr.FirstToken.Count)
+			fmt.Fprintf(&b, "aura_inference_first_token_seconds_sum{graph=%q} %g\n",
+				gr.Graph, float64(gr.FirstToken.SumMS)/1000)
+			fmt.Fprintf(&b, "aura_inference_first_token_seconds_count{graph=%q} %d\n",
+				gr.Graph, gr.FirstToken.Count)
+		}
 	}
 
 	if g.Traces != nil {

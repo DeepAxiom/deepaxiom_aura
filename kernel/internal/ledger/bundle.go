@@ -44,6 +44,7 @@ import (
 	"sort"
 	"time"
 
+	"aura/kernel/internal/spec"
 	"aura/kernel/internal/store"
 )
 
@@ -103,6 +104,7 @@ type BundleSummary struct {
 	Effects          int      `json:"effects"`
 	EffectsDelivered int      `json:"effects_delivered"`
 	EffectsDenied    int      `json:"effects_denied"`
+	EffectsExpired   int      `json:"effects_expired"`
 	Models           []string `json:"models,omitempty"`
 	Capabilities     []string `json:"capabilities,omitempty"`
 	Policies         []string `json:"policies,omitempty"`
@@ -172,9 +174,15 @@ func BuildBundle(st *store.Store, session string) (Bundle, error) {
 		capabilities[e.Capability] = true
 		policies[e.Policy] = true
 		b.Summary.Effects++
-		if e.Outcome == "denied" {
+		// By name, and with no catch-all: the previous form counted anything
+		// that was not `denied` as delivered, which would have reported an
+		// effect that expired — one that did not happen — as one that did.
+		switch e.Outcome {
+		case spec.OutcomeDenied:
 			b.Summary.EffectsDenied++
-		} else {
+		case spec.OutcomeExpired:
+			b.Summary.EffectsExpired++
+		case spec.OutcomeDelivered:
 			b.Summary.EffectsDelivered++
 		}
 

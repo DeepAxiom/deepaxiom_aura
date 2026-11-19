@@ -89,6 +89,21 @@ type Envelope struct {
 	// model, a coarser quantization — rather than to abort. Arriving with a
 	// worse answer beats arriving after nobody is listening.
 	Deadline int64 `json:"deadline,omitempty"`
+	// RespondBy is the unix-millis instant by which the *first output* of this
+	// chain is due (C3 v1.8, from the edge's `respond_ms`).
+	//
+	// A second instant rather than a flag on the first, because they are two
+	// different promises and a delivery can be under both. `deadline` is a
+	// validity bound: past it, what this delivery causes is worthless and is
+	// dropped. `respond_by` is a responsiveness target: past it, the reply is
+	// late and still wanted. Folding them into one field forces a choice
+	// between truncating a reply that merely started slowly and letting a
+	// stale act through — and the envelope can only say one of them.
+	//
+	// Only the front of a stream carries it: once an Expertise's first output
+	// for a delivery has been routed, later outputs inherit none. A miss is
+	// recorded and nothing is dropped.
+	RespondBy int64 `json:"respond_by,omitempty"`
 	// Trace is a W3C Trace Context `traceparent` (C3 v1.7, additive):
 	// "00-<32 hex trace id>-<16 hex parent id>-<2 hex flags>".
 	//

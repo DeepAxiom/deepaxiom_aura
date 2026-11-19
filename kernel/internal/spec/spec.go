@@ -75,10 +75,11 @@ var PolicyDecisions = []string{DecisionAllow, DecisionGate, DecisionDeny}
 const (
 	OutcomeDelivered = "delivered" // The effect was authorized (directly, or after approval) and reached the skill.
 	OutcomeDenied    = "denied"    // A human held the gate and refused the effect.
+	OutcomeExpired   = "expired"   // The effect's deadline passed before it could be delivered, so it was not.
 )
 
 // EffectOutcomes is every outcome a sealed ledger entry may record.
-var EffectOutcomes = []string{OutcomeDelivered, OutcomeDenied}
+var EffectOutcomes = []string{OutcomeDelivered, OutcomeDenied, OutcomeExpired}
 
 // Energy sources (C5): where an attestation's energy figure came from,
 // ordered most to least trustworthy.

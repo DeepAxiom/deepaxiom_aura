@@ -37,6 +37,16 @@
         "type": "string"
       },
       "description": "Labels an approval must bind for this node to accept it (C4 v1.7). Labels only, never digests: those are computed by whoever rendered the material, which is not this node."
+    },
+    "expires_at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix milliseconds. Present when the held delivery is under a deadline (C2 rule 7): an approval that arrives after this instant does not release the effect, which is sealed as expired instead."
+    },
+    "respond_by": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix milliseconds. Present when the held delivery carries a response target (C2 rule 9). Informative: it never prevents a release."
     }
   }
 }

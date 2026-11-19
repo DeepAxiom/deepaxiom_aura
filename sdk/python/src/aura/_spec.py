@@ -63,6 +63,7 @@ POLICY_DECISIONS = (
 EFFECT_OUTCOMES = (
     "delivered",
     "denied",
+    "expired",
 )
 
 #: C5 — where an attestation's energy figure came from, most to least

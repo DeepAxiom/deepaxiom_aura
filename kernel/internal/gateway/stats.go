@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"aura/kernel/internal/executor"
+	"aura/kernel/internal/infer"
 	"aura/kernel/internal/otel"
 	"aura/kernel/internal/registry"
 	"aura/kernel/internal/spec"
@@ -38,10 +39,16 @@ type nodeStats struct {
 	Tokens      *executor.TokenUsage       `json:"tokens,omitempty"`
 	Speculation *executor.SpeculationStats `json:"speculation,omitempty"`
 	Watch       *executor.WatchStats       `json:"watch,omitempty"`
-	Traces      *otel.Stats                `json:"traces,omitempty"`
-	Store       *storeStats                `json:"store,omitempty"`
-	EventLog    *eventLogStats             `json:"event_log,omitempty"`
-	Approvals   *int                       `json:"approvals_pending,omitempty"`
+	Lineage     *executor.LineageStats     `json:"lineage,omitempty"`
+	Deadlines   *executor.DeadlineStats    `json:"deadlines,omitempty"`
+	// Inference is what the node saw pass through its inference plane. Absent
+	// on a node whose Expertise reach their engine directly: that is not
+	// "zero requests", it is "the node does not see them".
+	Inference *infer.Stats   `json:"inference,omitempty"`
+	Traces    *otel.Stats    `json:"traces,omitempty"`
+	Store     *storeStats    `json:"store,omitempty"`
+	EventLog  *eventLogStats `json:"event_log,omitempty"`
+	Approvals *int           `json:"approvals_pending,omitempty"`
 }
 
 // expertiseStats is one connected package and the load on each of its
@@ -89,6 +96,18 @@ func (g *Gateway) stats(w http.ResponseWriter, r *http.Request) {
 		out.Speculation = &spec
 		watch := g.Mgr.WatchStats()
 		out.Watch = &watch
+		lineage := g.Mgr.LineageStats()
+		out.Lineage = &lineage
+		deadlines := g.Mgr.DeadlineStats()
+		out.Deadlines = &deadlines
+	}
+	if g.Infer != nil {
+		// Kicks a background probe when what is known about the engine is
+		// stale, and returns what is known now: this route answers whether or
+		// not the engine does.
+		g.Infer.RefreshEngine()
+		inference := g.Infer.Stats()
+		out.Inference = &inference
 	}
 	if g.Reg != nil {
 		out.Expertise = expertiseLoad(g.Reg)

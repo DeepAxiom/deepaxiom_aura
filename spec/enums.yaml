@@ -96,12 +96,15 @@ policy_decisions:
 
 # C4 — what became of an effect that reached the ledger checkpoint. Distinct
 # from policy_decisions: a decision is what the node ruled *before* the fact: an
-# outcome is what happened after — "gate" always resolves to one of these two.
+# outcome is what happened after. "gate" resolves to delivered or denied; any
+# effect, gated or not, may instead expire.
 effect_outcomes:
   - name: delivered
     description: The effect was authorized (directly, or after approval) and reached the skill.
   - name: denied
     description: A human held the gate and refused the effect.
+  - name: expired
+    description: The effect's deadline passed before it could be delivered, so it was not.
 
 # C5 — where an energy figure in an inference attestation came from. Ordered
 # most to least trustworthy.

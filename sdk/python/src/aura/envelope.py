@@ -64,11 +64,31 @@ class Envelope:
     # emits, so the chain stays in one distributed trace. Nothing to set by
     # hand — Context.emit carries it.
     trace: str = ""
+    # C3 v1.6 / v1.8, additive: the two instants a delivery is bound by, in
+    # unix milliseconds, and the priority of the edge it travelled. 0 = absent.
+    #
+    # `deadline` is a validity bound: after it, nothing this delivery causes
+    # is worth delivering, and the kernel drops what arrives late. `respond_by`
+    # is a responsiveness target: the first output is due by then, a miss is
+    # recorded, nothing is dropped.
+    #
+    # The kernel sets these on what it delivers and an Expertise only reads
+    # them — it does not echo them on what it emits, and the kernel would not
+    # believe it if it did: both are inherited from the kernel's own record of
+    # the delivery being answered. A *client* may set them on the envelope
+    # that starts a chain, which is why `to_wire` still writes them.
+    deadline: int = 0
+    respond_by: int = 0
+    priority: int = 0
 
     def to_wire(self) -> dict:
         wire: dict[str, Any] = {"v": self.v, "id": self.id, "kind": self.kind}
         for key in ("cause_id", "session", "node", "port", "idem", "schema", "receipt",
                     "trace"):
+            value = getattr(self, key)
+            if value:
+                wire[key] = value
+        for key in ("deadline", "respond_by", "priority"):
             value = getattr(self, key)
             if value:
                 wire[key] = value
@@ -97,4 +117,24 @@ class Envelope:
             receipt=wire.get("receipt", ""),
             attest=wire.get("attest"),
             trace=wire.get("trace", "") or "",
+            deadline=_instant(wire.get("deadline")),
+            respond_by=_instant(wire.get("respond_by")),
+            priority=_integer(wire.get("priority")),
         )
+
+
+def _integer(value: Any) -> int:
+    """An integer field off the wire, or 0.
+
+    `bool` is excluded on purpose: in Python it is an `int`, and a peer that
+    sent `"priority": true` did not mean priority 1.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return 0
+
+
+def _instant(value: Any) -> int:
+    """A unix-millisecond instant off the wire, or 0 when absent or nonsense."""
+    value = _integer(value)
+    return value if value > 0 else 0

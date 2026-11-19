@@ -14,7 +14,7 @@ import { filterCommands, score } from "../src/lib/palette.ts";
 import { DEFAULT_ROUTE, buildRoute, parseRoute, sameRoute } from "../src/lib/route.ts";
 import {
   type NodeStats, cacheHitRatio, mailboxFill, pushBounded, rate, rateSeries, ratesBetween, ratio,
-  replicaScale, replicaViews, sparkSegments, speculationHitRate,
+  inferenceRows, replicaScale, replicaViews, sparkSegments, speculationHitRate, stoppedTotal,
 } from "../src/lib/stats.ts";
 import { edgeCrossing, filterTrace, foldTrace, traceIdOf, visibleRows } from "../src/lib/trace.ts";
 import type { Envelope } from "../src/api/types.ts";
@@ -285,6 +285,70 @@ test("anything that is not a route lands on the default", () => {
   assert.deepEqual(parseRoute("#/sessions/%E0%A4%A"), { view: "sessions", args: ["%E0%A4%A"] }, "bad escapes do not throw");
   assert.ok(sameRoute(parseRoute("#/pulse"), DEFAULT_ROUTE));
   assert.ok(!sameRoute({ view: "sessions", args: ["a"] }, { view: "sessions", args: ["b"] }));
+});
+
+/* ── inference, as the node observed it ─────────────────────────── */
+
+const histogram = (count: number, sum_ms: number) => ({
+  bounds_ms: [25, 50, 100], buckets: [count, 0, 0, 0], count, sum_ms,
+});
+
+const observed: NodeStats = {
+  ...base,
+  inference: {
+    upstream: "http://127.0.0.1:8000/v1", in_flight: 1, refused: 2, prepare_micros_avg: 54,
+    usage_requested: true,
+    stopped: { chain_cancelled: 3, deadline: 1 },
+    graphs: [
+      {
+        graph: "(unattributed)", in_flight: 0, requests: 2, completed: 2, cancelled: 0, failed: 0,
+        metered: 0, input_tokens: 0, output_tokens: 0, cached_input_tokens: 0, first_token: histogram(0, 0),
+      },
+      {
+        graph: "voice", in_flight: 1, requests: 40, completed: 34, cancelled: 4, failed: 1,
+        metered: 30, input_tokens: 4000, output_tokens: 600, cached_input_tokens: 3000,
+        first_token: histogram(34, 5100),
+      },
+      {
+        graph: "assistant", in_flight: 0, requests: 40, completed: 40, cancelled: 0, failed: 0,
+        metered: 40, input_tokens: 800, output_tokens: 90, cached_input_tokens: 0,
+        first_token: histogram(40, 2000),
+      },
+    ],
+  },
+};
+
+test("inference: rows are busiest first, and by name where they tie", () => {
+  assert.deepEqual(inferenceRows(observed).map((r) => r.graph), ["assistant", "voice", "(unattributed)"]);
+});
+
+test("inference: cache share and first-token mean come from the node's own counts", () => {
+  const voice = inferenceRows(observed).find((r) => r.graph === "voice")!;
+  assert.equal(voice.cache, 0.75);
+  assert.equal(voice.firstTokenMs, 150);
+  assert.equal(voice.inFlight, 1);
+});
+
+test("inference: a graph the engine reported nothing for shows nothing, not zero", () => {
+  const none = inferenceRows(observed).find((r) => r.graph === "(unattributed)")!;
+  assert.equal(none.cache, null, "0 of 0 tokens is not a 0% cache hit rate");
+  assert.equal(none.firstTokenMs, null, "no samples is not a first token at 0 ms");
+});
+
+test("inference: tokens are marked a floor when the engine reported usage for only some requests", () => {
+  const rows = inferenceRows(observed);
+  assert.equal(rows.find((r) => r.graph === "voice")!.floor, true);
+  assert.equal(rows.find((r) => r.graph === "assistant")!.floor, false);
+});
+
+test("inference: a node that is not in the path of inference has no rows", () => {
+  assert.deepEqual(inferenceRows(base), []);
+  assert.deepEqual(inferenceRows(null), []);
+  assert.equal(stoppedTotal(base), 0);
+});
+
+test("inference: stopped-early is the sum over every reason", () => {
+  assert.equal(stoppedTotal(observed), 4);
 });
 
 /* ── palette ────────────────────────────────────────────────────── */

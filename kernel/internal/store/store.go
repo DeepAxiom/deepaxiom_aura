@@ -134,9 +134,15 @@ func OpenWith(dataDir string, opt Options) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data dir %s: %w", dataDir, err)
 	}
+	// _txlock=immediate: every transaction this store opens is a write, and one
+	// that begins deferred takes the write lock only at its first write. If it
+	// read first (SaveGraph does, to find the newest revision) and another
+	// connection committed in between, SQLite refuses the upgrade at once with
+	// "database is locked" — busy_timeout does not apply to a stale snapshot.
+	// Taking the lock at BEGIN makes the transaction wait its turn instead.
 	dsn := filepath.Join(dataDir, "kernel.db") +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(" + sync + ")" +
-		"&_pragma=wal_autocheckpoint(" + checkpoint + ")"
+		"&_pragma=wal_autocheckpoint(" + checkpoint + ")&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -843,6 +849,49 @@ func (s *Store) SessionEvents(session string, limit int) ([]json.RawMessage, []i
 		times = append(times, e.TS)
 	}
 	return out, times, nil
+}
+
+// scanPage is how many records ScanSession reads at a time. Large enough that
+// a long session costs few reads, small enough that walking one never holds
+// more than a few megabytes however long it is.
+const scanPage = 2048
+
+// ScanSession calls fn for every envelope of a session, in causal-log order,
+// without holding the session in memory. fn returning false stops the walk.
+//
+// SessionEvents caps at 1000 records when asked for "all", which is the right
+// default for an HTTP response and the wrong one for anything rebuilding state
+// from history: a session past its thousandth event resumed with the dedup
+// window, the hop counters and the pending gates of its first minute.
+func (s *Store) ScanSession(session string, fn func(envelope []byte, tsMillis int64) bool) error {
+	for offset := 0; ; offset += scanPage {
+		page, more, err := s.evlog.SessionPage(session, offset, scanPage)
+		if err != nil {
+			return err
+		}
+		if offset == 0 && len(page) == 0 {
+			// Nothing in the log: a data directory written before the segment
+			// log may still hold this session in the events table.
+			legacy, times, err := s.legacySessionEvents(session, 1<<20)
+			if err != nil {
+				return err
+			}
+			for i, raw := range legacy {
+				if !fn(raw, times[i]) {
+					return nil
+				}
+			}
+			return nil
+		}
+		for _, e := range page {
+			if !fn(e.Envelope, e.TS) {
+				return nil
+			}
+		}
+		if !more {
+			return nil
+		}
+	}
 }
 
 // SessionEventsTail returns the last `limit` envelopes of a session's causal

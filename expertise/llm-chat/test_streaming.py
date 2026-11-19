@@ -11,16 +11,23 @@ import time
 import unittest
 from unittest.mock import patch
 
+from aura.delivery import DeliveryRef
 from aura.llm import ChatBackend
 
 import main
 
 
 class _Ctx:
-    def __init__(self, session: str, text: str) -> None:
+    def __init__(self, session: str, text: str, *,
+                 priority: int = 0, deadline: int | None = None) -> None:
         self.payload = {"text": text}
         self.session = session
         self.cancelled = False
+        # What the kernel says about a delivery, as aura.Context reports it: an
+        # ordinary one has priority 0 and no deadline.
+        self.priority = priority
+        self.deadline = deadline
+        self.delivery = DeliveryRef(session=session, id="delivery-1", node="brain", port="text_in")
         self.emitted: list[tuple[str, dict, object]] = []
 
     async def status(self, port, state, detail=""):
@@ -109,6 +116,48 @@ class UsageOnTheAttestation(_ConfigIsolation):
         with patch.object(main.backend, "stream_chat", return_value=iter(["hi"])):
             await main.handle(ctx)
         self.assertNotIn("usage", ctx.emitted[-1][2].to_wire())
+
+
+class WhatTheKernelSaidAboutTheDelivery(_ConfigIsolation):
+    """A delivery's priority and deadline reach the backend, and nowhere else."""
+
+    async def _handle(self, ctx: _Ctx) -> dict:
+        seen: dict = {}
+
+        def fake_stream(messages, **kw):
+            seen.update(kw)
+            return iter(["ok"])
+
+        with patch.object(main.backend, "stream_chat", side_effect=fake_stream):
+            await main.handle(ctx)
+        return seen
+
+    async def test_they_are_handed_to_the_backend(self):
+        ctx = _Ctx("s-sched", "hello", priority=7, deadline=1_900_000_000_000)
+        seen = await self._handle(ctx)
+        self.assertEqual(seen["priority"], 7)
+        self.assertEqual(seen["deadline"], 1_900_000_000_000)
+        # And which delivery the reply is for, so a node in the path of
+        # inference can place the request and stop it.
+        self.assertEqual(seen["delivery"], ctx.delivery)
+        self.assertEqual(seen["delivery"].session, "s-sched")
+
+    async def test_an_ordinary_delivery_sends_no_priority_at_all(self):
+        # Not 0: an engine that was never configured for priorities must see
+        # exactly the request it saw before this existed.
+        seen = await self._handle(_Ctx("s-ordinary", "hello"))
+        self.assertIsNone(seen["priority"])
+        self.assertIsNone(seen["deadline"])
+
+    async def test_they_stay_out_of_the_attestation(self):
+        # When a reply was due is not a property of the inference that
+        # produced it, and a deadline in `params` would make two identical
+        # inferences attest differently.
+        ctx = _Ctx("s-attest", "hello", priority=7, deadline=1_900_000_000_000)
+        await self._handle(ctx)
+        params = ctx.emitted[-1][2].to_wire().get("params", {})
+        self.assertNotIn("priority", params)
+        self.assertNotIn("deadline", params)
 
 
 class StablePrefix(_ConfigIsolation):

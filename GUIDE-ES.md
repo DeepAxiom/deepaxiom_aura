@@ -1537,6 +1537,62 @@ La propagación de deadlines es estándar en RPC desde hace una década y está
 ausente en todo runtime de agentes, que es por qué allí una herramienta lenta
 degrada en un cuelgue en vez de en una respuesta más barata.
 
+**Cómo se hereda.** No lo hace el Expertise. Lo que un Expertise emite nombra la
+entrega que está respondiendo (`cause_id`), y el kernel toma el deadline de su
+propio registro de esa entrega. Un Expertise no devuelve `deadline`, y si lo
+hiciera se ignoraría: un presupuesto que transporta la parte a la que limita
+es un presupuesto que esa parte puede alargar. (Hasta la v0.4.0 el kernel leía
+el deadline del envelope emitido, ningún SDK lo escribía ahí, y por eso un
+deadline se detenía en el primer Expertise de cualquier cadena. Ahora
+sobrevive a la cadena entera.)
+
+**Un deadline es un límite de validez, y corta.** El `data` que llega después
+se descarta. Un efecto descartado así se sella en el ledger como `expired` —
+nunca como `delivered` — y una aprobación que llega después no libera el
+efecto. Al cliente se le avisa una vez por cadena de que la salida tardía se
+está descartando, y un `done` o un `error` siempre viajan.
+
+Eso hace de `deadline_ms` el campo correcto para un acto sobre el mundo y el
+equivocado para una respuesta que solo se quiere pronto. Delante de un modelo
+en streaming, trunca la respuesta cuando pasa el instante:
+
+```json
+{ "from": "client.text_out", "to": "brain.text_in", "deadline_ms": 800 }
+```
+
+Si lo que querías decir es «empieza a responder en 800 ms», ese es otro campo:
+
+```json
+{ "from": "client.text_out", "to": "brain.text_in", "respond_ms": 800 }
+```
+
+`respond_ms` (C2 v1.3) limita la *primera salida*. Viaja con el frente de la
+respuesta y con nada de lo que va detrás, un fallo se registra en el log causal
+y se cuenta (`aura_responses_late_total`), y nunca se descarta nada por él. Una
+arista puede declarar los dos.
+
+**Lo que ve un handler.** Los dos límites, y el tiempo que queda:
+
+```python
+async def handle(ctx):
+    left = ctx.remaining_ms()          # None cuando no hay deadline
+    model = SMALL if left is not None and left < 150 else LARGE
+    ...
+    if ctx.expired:                    # ya nadie espera esto
+        return
+```
+
+`ctx.deadline`, `ctx.respond_by`, `ctx.priority`, `ctx.remaining_ms()`,
+`ctx.respond_within_ms()` y `ctx.expired` en Python; `ctx.deadline`,
+`ctx.respondBy`, `ctx.priority` y `ctx.remainingMs()` en TypeScript.
+
+> **Al actualizar un grafo que ya usa `deadline_ms`.** Hasta ahora un deadline
+> no se heredaba más allá del primer Expertise, así que un `deadline_ms`
+> delante de un productor en streaming limitaba solo esa entrega. Ahora limita
+> todo lo que esa entrega causa, como el contrato decía desde siempre. Un grafo
+> que dependía del comportamiento anterior para decir «responde pronto» verá
+> respuestas cortadas: cambia esa arista a `respond_ms`.
+
 ### Qué modelo respondió, decidido por policy
 
 ```yaml
@@ -1825,6 +1881,83 @@ aceptaba la conexión y luego se quedaba parado retenía la sesión para siempre
 nada lo reportaba. Y el planner respeta `OPENAI_BASE_URL`, que antes ignoraba,
 así que un nodo configurado para un proveedor ya no planifica contra otro con
 la llave equivocada.
+
+### Inferencia a través del nodo
+
+Apuntado directo a un motor, las llamadas a modelos de un Expertise son
+invisibles para el nodo: enruta la pregunta hacia dentro y la respuesta hacia
+fuera y nunca ve la inferencia que hay en medio. No puede decir para qué era una
+petición, no puede detener ninguna, y todo lo que sabe del coste es lo que un
+Expertise reportó después.
+
+Dale el motor al nodo, y apunta el Expertise al nodo:
+
+```bash
+aura up --inference-url http://127.0.0.1:8000/v1      # la URL base compatible con OpenAI del motor
+export AURA_ENGINE_API_KEY=...                         # solo si el motor pide una; nunca como flag
+export AURA_INFERENCE_URL=node                         # en el entorno del Expertise
+```
+
+`node` es literal. La dirección se deriva de `AURA_WS_URL`, así que hay un solo
+ajuste para «dónde está mi nodo» y no dos que puedan discrepar. El nodo sirve
+`/v1/inference/chat/completions`, `/completions`, `/embeddings`, `/rerank` y
+`/models`, y reenvía cada una al motor.
+
+Una petición dice para qué entrega es:
+
+```python
+backend.stream_chat(messages, delivery=ctx.delivery, deadline=ctx.deadline)
+```
+
+`ctx.delivery` es una referencia, no una credencial. El nodo busca la entrega en
+su propio registro, y a partir de ahí:
+
+- **Sabe de quién es el trabajo.** La petición se cuenta contra el grafo que
+  corre su sesión. Una que no nombra entrega se sirve igual, como trabajo sin
+  atribuir.
+- **Declara la prioridad.** Una `priority` escrita en la petición se retira —
+  un Expertise no elige su propia urgencia — y la prioridad de la arista por la
+  que viajó la entrega se escribe en la convención del motor, cuando al nodo se
+  le dijo que el motor tiene una (`--inference-priority vllm` o `sglang`). Solo
+  para un motor arrancado para respetarla: vLLM responde con error a una
+  prioridad distinta de cero salvo que se lance con
+  `--scheduling-policy priority`.
+- **Detiene la petición.** Una cadena cancelada, una sesión terminada, un
+  deadline vencido, un nodo que se está apagando: cada uno cierra la petición
+  en el motor. Antes, cancelar era un mensaje al Expertise y la esperanza de
+  que lo notara; un handler bloqueado esperando un slot no lo notaba nunca.
+- **Lee el coste del motor.** El nodo pide el uso por su cuenta y retira del
+  stream el fragmento extra, así que quien no lo pidió no lo recibe. Lo leído
+  está en Pulse y en `/metrics` (`aura_inference_*`), por grafo — separado de
+  los tokens que los Expertises atestan, porque uno es observado y el otro
+  afirmado.
+
+`messages` y `tools` llegan al motor byte a byte como el Expertise los escribió:
+el nodo edita los campos de primer nivel de una petición sin recodificar el
+resto. Un cuerpo con una clave de primer nivel repetida se rechaza, porque dos
+parsers leyéndolo distinto es una forma de decirle una cosa al nodo y otra al
+motor.
+
+**Qué lo convierte en una frontera.** Por defecto todo Expertise corre con el
+token de operador del nodo, y entonces el nodo simplemente le cree a cada uno
+en qué entrega está trabajando. Con un token acotado (`aura token issue
+--capability …`) una petición solo puede hablar por una entrega enviada bajo
+esa misma credencial — una hecha a otro Expertise se rechaza — y el token
+alcanza las rutas de inferencia y nada más. Para el lado del motor de esa
+frontera, el motor debe aceptar conexiones solo del nodo; esta versión no
+arranca ni aísla el motor por ti.
+
+**Lo que todavía no es.** Es un paso directo. No hay cola: una petición que
+llega se envía, y cómo le va al trabajo urgente bajo carga sigue siendo cosa del
+motor. Ordenar por prioridad y deadline, un carril libre para las cadenas
+críticas y evidencia de inferencia sellada en el ledger es lo siguiente.
+Tampoco se ha corrido nada de esto contra un motor real —
+`scripts/inference_e2e.py` conduce un nodo real y un Expertise real del SDK
+contra uno falso, e imprime lo que costó pasar por el nodo en la máquina donde
+corrió.
+
+Los workers de TypeScript tienen lo mismo como `ctx.inference()`, que devuelve
+la URL base del nodo y las cabeceras que hay que enviar.
 
 ### El planner no puede inventar una capability
 
@@ -3201,7 +3334,8 @@ Un nodo sirve todo en un solo puerto (9080 por defecto).
 | `GET /healthz` | Identidad del nodo, modo, majors de protocolo/IR, uso de admisión. |
 | `POST /v1/watch/tickets` | Emite una credencial para un espectador de una sesión viva: `{session, ttl_s}` → `{ticket, session, expires}`. Solo operador. |
 | `GET /v1/watch?session=<id>` (WebSocket) | Conectarse a una sesión viva como observador de solo lectura: todo lo que la sesión le entrega a su cliente, nada más. A un observador que se queda atrás se le desconecta, nunca se le espera. Ver [Una audiencia sobre una sesión viva](#una-audiencia-sobre-una-sesión-viva). |
-| `GET /v1/stats` | Lo que el nodo está haciendo ahora, en un solo documento JSON: sesiones vivas, la carga de sesiones en cada réplica de cada Expertise, colas de despacho, uso de tokens reportado, especulación, exportación de trazas, salud del store y del log de eventos. Solo operador. |
+| `GET /v1/stats` | Lo que el nodo está haciendo ahora, en un solo documento JSON: sesiones vivas, la carga de sesiones en cada réplica de cada Expertise, colas de despacho, uso de tokens reportado, especulación, exportación de trazas, salud del store y del log de eventos, linaje de entregas, lo que hicieron los deadlines y — en un nodo arrancado con `--inference-url` — la inferencia tal como el nodo la observó, por grafo. Solo operador. |
+| `POST /v1/inference/chat/completions` · `/completions` · `/embeddings` · `/rerank`, `GET /v1/inference/models` | Compatibles con OpenAI, reenviadas al motor del nodo. Una petición nombra la entrega para la que es con `X-Aura-Session`, `X-Aura-Delivery`, `X-Aura-Node` y `X-Aura-Port`; el nodo la cuenta entonces contra ese grafo, declara su prioridad y la cierra en el motor cuando su cadena se cancela o su deadline vence. Abiertas a un token acotado de Expertise, que solo puede hablar por entregas enviadas bajo él. 404 con el motivo en un nodo sin motor. Ver [Inferencia a través del nodo](#inferencia-a-través-del-nodo). |
 | `GET /v1/expertise` · `GET /v1/skills` | El catálogo vivo de capacidades. Dos nombres para una ruta; igual `/v1/expertise/config` y `/v1/skills/config`, y `/ws/expertise` y `/ws/skill`. El nombre anterior es permanente. |
 | `GET /v1/skills/config?id=<id>` | El schema de config declarado por un Expertise más sus valores efectivos actuales. |
 | `PUT /v1/skills/config?id=<id>` | Fija overrides de config en runtime; validados, persistidos y empujados al Expertise vivo. |

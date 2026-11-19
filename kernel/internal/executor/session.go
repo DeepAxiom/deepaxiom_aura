@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"aura/kernel/internal/approver"
 	"aura/kernel/internal/channel"
@@ -43,6 +44,9 @@ type dest struct {
 	// deadlineMS: how long a delivery here is worth waiting for. Rides on the
 	// envelope so the receiver can degrade rather than arrive late.
 	deadlineMS int
+	// respondMS: how soon the first output caused by a delivery here is due
+	// (C2 v1.3). A target, not a validity bound — see budget.go.
+	respondMS int
 	// priority orders preemption between contending chains. Higher wins.
 	priority int
 	// from is the producing endpoint ("ref.port"), needed to key speculation
@@ -133,11 +137,36 @@ type Session struct {
 	usage *usageCounters
 	// watch is this session's read-only audience. See watch.go.
 	watch watchSet
+
+	// lineage remembers which delivery caused which — see lineage.go. It is
+	// what deadlines are inherited through and what an emission's stated cause
+	// is checked against.
+	lineage *lineageIndex
+	// deadlines counts what the two bounds did. Node-wide once a Manager owns
+	// the session; a private one otherwise, so a Session built directly in a
+	// test never has to be handed one.
+	deadlines *deadlineCounters
+	// expiryNoted is the set of chain+destination pairs already told that
+	// their late output is being dropped. See dropExpired.
+	expiryNoted *cancelledSet
+	// onCancel is the Manager's slot for whoever needs to hear that work was
+	// abandoned (resolve.go). A pointer to the slot rather than a copy of the
+	// function, so an observer installed after this session started is still
+	// the one it tells. Nil for a Session built without a Manager.
+	onCancel *cancelObserver
+	// now is the clock. A field so a test can move time instead of sleeping
+	// through it.
+	now func() time.Time
 }
 
 type pendingGate struct {
 	env channel.Envelope
 	to  dest
+	// inh is what the held emission inherited, with its bounds already
+	// tightened by the gated edge at the moment it was held. Parked here
+	// because the answer may come minutes later and the budget does not
+	// restart when a human finally replies.
+	inh inherited
 }
 
 // applyPolicy enforces the kernel's safety invariant: an edge that delivers
@@ -276,6 +305,11 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		ctxLedger:  newContextLedger(g.ContextBudget),
 		sendClient: sendClient,
 		traces:     newTraceIndex(maxTraceRoots),
+
+		lineage:     newLineageIndex(maxLineage, nil),
+		deadlines:   &deadlineCounters{},
+		expiryNoted: newCancelledSet(maxCancelled),
+		now:         time.Now,
 	}
 	seen := map[*registry.Live]bool{}
 	for _, live := range resolved {
@@ -299,6 +333,7 @@ func NewSession(id string, g *Graph, reg *registry.Registry, st *store.Store,
 		d := dest{
 			ref: toRef, port: toPort, gate: e.Gate, qos: qos, from: e.From,
 			speculative: e.Speculative, deadlineMS: e.DeadlineMS, priority: e.Priority,
+			respondMS: e.RespondMS,
 		}
 		if toRef != ClientRef {
 			live := resolved[toRef]
@@ -496,7 +531,7 @@ func (s *Session) emitStatus(causeID string, payload []byte) {
 // answerFromPin stands in for a node instead of dispatching to it.
 //
 // Returns false when the node is not pinned, so the caller delivers normally.
-func (s *Session) answerFromPin(src channel.Envelope, d dest) bool {
+func (s *Session) answerFromPin(src channel.Envelope, d dest, b bounds) bool {
 	pin, ok := s.pins[d.ref]
 	if !ok || d.ref == ClientRef {
 		return false
@@ -526,6 +561,12 @@ func (s *Session) answerFromPin(src channel.Envelope, d dest) bool {
 		Kind:    channel.KindData,
 		Schema:  pin.Schema,
 		Payload: pin.Payload,
+		// The node was never run, so there is no delivery for its output to
+		// inherit from. It carries the bounds the delivery it stands in for
+		// would have carried, so a pinned node sits inside a chain's budget
+		// exactly as the real one would.
+		Deadline:  b.validUntil,
+		RespondBy: b.respondBy,
 	}
 	// Back through Route, so a pinned output is fanned out, logged, gated and
 	// sealed by exactly the same code as a real one. Anything less would make
@@ -534,7 +575,14 @@ func (s *Session) answerFromPin(src channel.Envelope, d dest) bool {
 	return true
 }
 
-func (s *Session) Route(env channel.Envelope) {
+// Route ingests an envelope on the kernel's own authority: a client frame, an
+// ingress delivery, a pinned output. What an Expertise emits goes through
+// RouteFrom, which knows who is speaking.
+func (s *Session) Route(env channel.Envelope) { s.RouteFrom(env, Emitter{}) }
+
+// RouteFrom ingests an envelope emitted by a source, logs it, and forwards a
+// new causally-linked envelope per matching edge (C3).
+func (s *Session) RouteFrom(env channel.Envelope, em Emitter) {
 	raw, _ := json.Marshal(env)
 	if err := s.st.AppendEvent(s.ID, env.ID, env.CauseID, env.Kind, raw); err != nil {
 		s.log.Error("event log append failed", "err", err)
@@ -574,6 +622,11 @@ func (s *Session) Route(env channel.Envelope) {
 	// the event log and binding them to nothing serves no purpose.
 	s.recordAttestation(root, env)
 
+	// Once per emission, not once per edge: what an emission inherits is a
+	// fact about the delivery that caused it, and the front of a stream is
+	// taken exactly once however many edges it fans out along.
+	inh := s.inherit(env, em)
+
 	key := env.Node + "." + env.Port
 	dests := s.routes[key]
 	if len(dests) == 0 {
@@ -589,14 +642,14 @@ func (s *Session) Route(env channel.Envelope) {
 	}
 	for _, d := range dests {
 		if d.speculative {
-			s.forwardSpeculatively(env, d, root)
+			s.forwardSpeculatively(env, d, root, inh)
 			continue
 		}
 		if d.gate == GateHumanApproval {
-			s.holdForApproval(env, d)
+			s.holdForApproval(env, d, inh)
 			continue
 		}
-		s.forward(env, d)
+		s.forward(env, d, inh)
 	}
 }
 
@@ -606,11 +659,11 @@ func (s *Session) Route(env channel.Envelope) {
 // hands that value downstream *as if it were final*, then reconciles when the
 // true final arrives. See speculation.go for why the effect type system is
 // what makes this safe rather than reckless.
-func (s *Session) forwardSpeculatively(env channel.Envelope, d dest, root string) {
+func (s *Session) forwardSpeculatively(env channel.Envelope, d dest, root string, inh inherited) {
 	if env.Kind != channel.KindData || root == "" {
 		// Terminal and control envelopes are not speculation material: a
 		// `done` or an `error` is the tail of work, not a guess about it.
-		s.forward(env, d)
+		s.forward(env, d, inh)
 		return
 	}
 
@@ -624,7 +677,7 @@ func (s *Session) forwardSpeculatively(env channel.Envelope, d dest, root string
 		// waiting is what speculation exists to avoid.
 		guess := env
 		guess.Payload = markFinal(running)
-		s.forward(guess, d)
+		s.forward(guess, d, inh)
 		s.spec.speculate(key, guess.ID)
 		return
 	}
@@ -647,7 +700,7 @@ func (s *Session) forwardSpeculatively(env channel.Envelope, d dest, root string
 	}
 	real := env
 	real.Payload = running
-	s.forward(real, d)
+	s.forward(real, d, inh)
 }
 
 // abandonSpeculation stops work started on a guess that turned out wrong.
@@ -658,6 +711,9 @@ func (s *Session) forwardSpeculatively(env channel.Envelope, d dest, root string
 // cancel correctly handles this correctly for free.
 func (s *Session) abandonSpeculation(envelopeID string, d dest) {
 	s.cancelled.add(envelopeID)
+	// Whatever was started on the wrong guess is abandoned by the id it was
+	// caused by, which is all a speculative miss has to name it with.
+	s.notifyCancel("", envelopeID, CancelBySpeculation)
 	if d.skill == nil {
 		return
 	}
@@ -703,6 +759,10 @@ func (s *Session) handleCancel(env channel.Envelope) {
 		return
 	}
 	s.cancelled.add(root)
+	// Asking an Expertise to stop is best-effort: it decides when to notice.
+	// Anything the node itself is running on the chain's behalf does not get
+	// to decide — it is told here, and stops.
+	s.notifyCancel(root, "", CancelByClient)
 
 	hops := s.inFlight.take(root)
 	s.log.Debug("cancel propagated", "session", s.ID, "root", root, "skills", len(hops))
@@ -718,9 +778,33 @@ func (s *Session) handleCancel(env channel.Envelope) {
 	}
 }
 
-// forward emits a new envelope for the edge hop: new id, cause = source id,
-// deterministic idem so kernel retries deduplicate downstream.
-func (s *Session) forward(src channel.Envelope, d dest) {
+// deliveryResult is what became of one attempt to deliver along an edge.
+type deliveryResult int
+
+const (
+	// resultSent: the envelope was handed to its destination.
+	resultSent deliveryResult = iota
+	// resultExpired: its deadline had passed, so it was not.
+	resultExpired
+	// resultRefused: policy, the context budget or a failed seal stopped it,
+	// and the chain has already been told why.
+	resultRefused
+	// resultPinned: a pinned node answered in the destination's place.
+	resultPinned
+)
+
+// forward delivers an emission along one edge, under whatever the emission
+// inherited tightened by what the edge declares.
+func (s *Session) forward(src channel.Envelope, d dest, inh inherited) deliveryResult {
+	inh.bounds = boundFor(inh.bounds, d, s.now())
+	return s.deliver(src, d, inh)
+}
+
+// deliver emits a new envelope for the edge hop: new id, cause = source id,
+// deterministic idem so kernel retries deduplicate downstream. inh.bounds are
+// final — already tightened by this edge — which is what lets a gated
+// delivery keep the budget it was held under rather than a fresh one.
+func (s *Session) deliver(src channel.Envelope, d dest, inh inherited) deliveryResult {
 	// The dynamic half of the policy check. Only `data` counts against a rate
 	// limit: a `done` or an `error` is the tail of work already authorized, and
 	// refusing to deliver one would leave the consumer waiting forever for
@@ -730,15 +814,15 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 			s.log.Warn("policy refused delivery", "session", s.ID,
 				"to", d.ref+"."+d.port, "err", err)
 			s.emitError(src.ID, err.Error())
-			return
+			return resultRefused
 		}
 	}
 
 	// A pinned node is answered instead of dispatched to. After the rate check
 	// above, because asking for something you are not allowed to ask for is
 	// still a policy violation.
-	if s.answerFromPin(src, d) {
-		return
+	if s.answerFromPin(src, d, inh.bounds) {
+		return resultPinned
 	}
 
 	hopKey := d.ref + "." + d.port
@@ -753,17 +837,34 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 		Idem:   fmt.Sprintf("%s:%s:%s", src.Idem, d.ref, d.port),
 		Schema: src.Schema, Kind: src.Kind, Payload: src.Payload,
 		Priority: d.priority, Speculative: d.speculative,
+		// C3 v1.6 / v1.8: absolute instants, computed once at the hop that
+		// declares them and then *inherited* rather than recomputed. A budget
+		// that restarted at every hop would let a three-hop chain quietly
+		// spend three times what its author allowed. Inherited through the
+		// kernel's own record of the delivery that caused `src` (see
+		// Session.inherit), never from anything an Expertise wrote.
+		Deadline: inh.validUntil, RespondBy: inh.respondBy,
 	}
-	// C3 v1.6: an absolute instant, computed once at the hop that declares it
-	// and then *inherited* rather than recomputed. A budget that restarted at
-	// every hop would let a three-hop chain quietly spend three times what its
-	// author allowed.
-	out.Deadline = inheritDeadline(src.Deadline, d.deadlineMS)
 	// C3 v1.7: the trace context a client supplied rides every hop of the
 	// chain it started. Looked up by root rather than copied from `src`, so it
 	// survives a skill built on an SDK that predates the field and never
 	// echoes it back.
 	out.Trace = s.traceFor(src)
+
+	root := s.rootOf(src)
+	now := s.now()
+
+	// C2 rule 7: a delivery whose deadline has already passed is dropped
+	// rather than sent. The receiver would compute an answer nobody is waiting
+	// for, and on a busy node that work displaces work that still matters.
+	//
+	// First of everything that follows, on purpose. A delivery that is not
+	// going to happen must not be charged to the context budget, must not be
+	// remembered as in flight, and above all must not be sealed as an effect
+	// that happened — see dropExpired.
+	if s.dropExpired(out, d, root, src.ID, now) {
+		return resultExpired
+	}
 
 	// C2 v1.2: refuse to deliver into a chain that has already blown the
 	// graph's context budget, rather than letting a model discover it as a
@@ -772,17 +873,36 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 		s.log.Warn("context budget exceeded", "session", s.ID,
 			"to", d.ref+"."+d.port, "err", err)
 		s.emitError(src.ID, err.Error())
-		return
+		return resultRefused
+	}
+
+	// C2 rule 9: the front of a reply arriving after its target is recorded,
+	// and delivered. Cleared once reported, so each hop further down does not
+	// report the same lateness again.
+	if out.Kind == channel.KindData && past(out.RespondBy, now) {
+		s.noteLateResponse(out, d, now)
+		out.RespondBy = 0
 	}
 
 	// Keep the chain traceable back to the client message that started it, and
 	// remember what this destination will call the work we are handing it.
 	// `src.ID` is exactly the cause_id the destination sees on `out`, which is
 	// what a cancel must carry to be recognised there.
-	root := s.rootOf(src)
 	if root != "" {
 		s.causal.set(out.ID, root)
 		s.inFlight.record(root, hop{to: d, causeID: src.ID})
+	}
+	// And remember the delivery itself: what it was caused by, who it went to
+	// and what it is bound by. Whatever that Expertise emits in answer will
+	// name this id, and this is what it is checked against and inherits from.
+	if d.skill != nil {
+		s.lineage.record(delivery{
+			id: out.ID, prev: inh.prev, root: root,
+			cause: src.ID, priority: d.priority,
+			ref: d.ref, port: d.port,
+			expertise: d.skill.Manifest.ID, token: d.skill.TokenID,
+			validUntil: out.Deadline, respondBy: out.RespondBy,
+		})
 	}
 
 	// The Effect Checkpoint (C4): a data envelope landing in a motor skill is
@@ -807,15 +927,8 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 			s.emitError(src.ID, fmt.Sprintf(
 				"refusing to deliver an effect this node could not seal (%v); "+
 					"policy on_seal_failure is `refuse`", err))
-			return
+			return resultRefused
 		}
-	}
-
-	// C3 v1.6: a delivery whose deadline has already passed is dropped rather
-	// than sent. The receiver would compute an answer nobody is waiting for,
-	// and on a busy node that work displaces work that still matters.
-	if s.dropExpired(out, d) {
-		return
 	}
 
 	raw, _ := json.Marshal(out)
@@ -840,6 +953,7 @@ func (s *Session) forward(src channel.Envelope, d dest) {
 	if err != nil {
 		s.emitError(src.ID, fmt.Sprintf("delivery to %s.%s failed: %v", d.ref, d.port, err))
 	}
+	return resultSent
 }
 
 // loggable is what gets persisted for an envelope.
@@ -872,10 +986,14 @@ func (s *Session) loggable(env channel.Envelope, raw []byte, qos string) []byte 
 }
 
 // holdForApproval implements the human-approval gate (C2 rule 4).
-func (s *Session) holdForApproval(env channel.Envelope, d dest) {
+func (s *Session) holdForApproval(env channel.Envelope, d dest, inh inherited) {
 	reqID := channel.NewID()
+	// The edge's own budget is spent from now, the moment the delivery was
+	// attempted — not from whenever a human answers. Tightened once, here,
+	// and parked with the held envelope.
+	inh.bounds = boundFor(inh.bounds, d, s.now())
 	s.pendMu.Lock()
-	s.pending[reqID] = pendingGate{env: env, to: d}
+	s.pending[reqID] = pendingGate{env: env, to: d, inh: inh}
 	s.pendMu.Unlock()
 
 	question := map[string]any{
@@ -901,6 +1019,18 @@ func (s *Session) holdForApproval(env channel.Envelope, d dest) {
 	// own rendering.
 	if labels := s.approvalContextRequired(); len(labels) > 0 {
 		question["context_required"] = labels
+	}
+	// When the held delivery is under a deadline, the question says when the
+	// answer stops mattering (additive). A yes that arrives after it approves
+	// an act that is no longer valid, and is sealed as `expired` rather than
+	// carried out — so the approver should be able to see the clock. It is
+	// also what lets a resumed session rebuild the budget this delivery was
+	// held under; see resumeFromLog.
+	if inh.validUntil != 0 {
+		question["expires_at"] = inh.validUntil
+	}
+	if inh.respondBy != 0 {
+		question["respond_by"] = inh.respondBy
 	}
 	payload, _ := json.Marshal(question)
 	req := channel.Envelope{
@@ -955,7 +1085,17 @@ func (s *Session) resolveGate(resp channel.Envelope) {
 			s.approved[held.env.ID] = approval
 			s.apprMu.Unlock()
 		}
-		s.forward(held.env, held.to)
+		// deliver, not forward: the bounds were fixed when the delivery was
+		// held. A deadline that passed while a human was deciding has passed.
+		if s.deliver(held.env, held.to, held.inh) == resultExpired {
+			// The approval is not lost: dropExpired sealed the effect as
+			// `expired` with it attached. What the approver is owed is to be
+			// told their yes did not result in the act.
+			s.takeApproval(held.env.ID) // unused when the destination is not motor
+			s.emitError(resp.ID, fmt.Sprintf(
+				"delivery to %s.%s was approved after its deadline and was not made",
+				held.to.ref, held.to.port))
+		}
 		return
 	}
 	s.sealDenial(held, approval)
@@ -1112,8 +1252,24 @@ func (s *Session) recordAttestation(root string, env channel.Envelope) {
 // `on_seal_failure`) and not the executor's. See SealFailure for why there is no
 // option where both the node stays up and the ledger stays complete.
 func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) error {
+	receipt, err := s.seal(*out, d, root, spec.OutcomeDelivered)
+	if err != nil {
+		return err
+	}
+	// Empty when there was nothing to seal — not an effect, or no ledger.
+	if receipt != "" {
+		out.Receipt = receipt
+	}
+	return nil
+}
+
+// seal writes the ledger entry for an effect with the given outcome and
+// returns its hash. sealEffect is the delivered case; an effect dropped for
+// its deadline goes through here too (dropExpired), with `expired`, and its
+// receipt goes nowhere because there is no delivery to carry it.
+func (s *Session) seal(out channel.Envelope, d dest, root, outcome string) (string, error) {
 	if s.ldg == nil || d.skill == nil || d.skill.Manifest.Type != TypeMotor || out.Kind != channel.KindData {
-		return nil
+		return "", nil
 	}
 	decision := spec.DecisionAllow
 	if d.gate == GateHumanApproval {
@@ -1133,7 +1289,7 @@ func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) error {
 		Actor:        d.skill.Manifest.ID + "@" + d.skill.Manifest.Version,
 		Capability:   d.skill.Manifest.Capability,
 		Decision:     decision,
-		Outcome:      spec.OutcomeDelivered,
+		Outcome:      outcome,
 		Policy:       s.policy.Hash(),
 		Payload:      out.Payload,
 		Compensation: compensationOf(d.skill.Manifest),
@@ -1147,10 +1303,9 @@ func (s *Session) sealEffect(out *channel.Envelope, d dest, root string) error {
 	}
 	receipt, err := s.ldg.Seal(req)
 	if err != nil {
-		return fmt.Errorf("sealing %s: %w", req.Capability, err)
+		return "", fmt.Errorf("sealing %s: %w", req.Capability, err)
 	}
-	out.Receipt = receipt
-	return nil
+	return receipt, nil
 }
 
 // sealDenial attests a gated effect a human refused. Unlike a delivered

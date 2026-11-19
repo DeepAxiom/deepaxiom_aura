@@ -123,6 +123,10 @@ type AuditSummary struct {
 	Effects   int `json:"effects"`
 	Delivered int `json:"delivered"`
 	Denied    int `json:"denied"`
+	// Expired is how many effects were not carried out because their deadline
+	// passed first. Neither delivered nor denied: nobody refused them, and
+	// they did not happen. Effects is the sum of the three.
+	Expired int `json:"expired"`
 	// Gated is how many effects a human was asked about; Allowed is how many
 	// the policy cleared without asking.
 	Gated   int `json:"gated"`
@@ -267,6 +271,8 @@ func BuildAuditWith(st *store.Store, nodeID, pubkeyB64 string, from, until time.
 			s.Delivered++
 		case spec.OutcomeDenied:
 			s.Denied++
+		case spec.OutcomeExpired:
+			s.Expired++
 		}
 		if e.Decision == spec.DecisionGate {
 			s.Gated++

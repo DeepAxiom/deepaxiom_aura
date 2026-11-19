@@ -42,6 +42,10 @@ class _FakeContext:
         self.payload = {"text": text}
         self.session = session
         self.cancelled = False
+        # An ordinary delivery, as aura.Context reports one.
+        self.priority = 0
+        self.deadline = None
+        self.delivery = None
         self.emitted: list[tuple[str, object]] = []
 
     async def status(self, port, state, detail=""):

@@ -89,6 +89,17 @@ type Edge struct {
 	// late and useless. Zero means no deadline.
 	DeadlineMS int `json:"deadline_ms,omitempty"`
 
+	// RespondMS is how soon the first output caused by a delivery on this edge
+	// is due (C2 v1.3, additive). Zero means no target.
+	//
+	// Distinct from DeadlineMS on purpose. A deadline says "after this, do not
+	// bother" and the kernel enforces it by dropping what is late — right for
+	// an act on the world, wrong for a spoken reply, which would be cut off
+	// mid-sentence for having started slowly. This says "start answering by
+	// then": it travels with the front of the stream, a miss is recorded, and
+	// nothing is dropped. See C2 rule 9.
+	RespondMS int `json:"respond_ms,omitempty"`
+
 	// Priority orders preemption when two chains contend. Higher wins. A new
 	// utterance preempting a half-spoken reply is priority in action; before
 	// this it was hard-coded in the voice graph's client.
@@ -143,6 +154,9 @@ func ParseGraph(raw []byte) (*Graph, error) {
 		}
 		if e.DeadlineMS < 0 {
 			return nil, fmt.Errorf("edge %s -> %s: deadline_ms cannot be negative", e.From, e.To)
+		}
+		if e.RespondMS < 0 {
+			return nil, fmt.Errorf("edge %s -> %s: respond_ms cannot be negative", e.From, e.To)
 		}
 		if e.Speculative && e.Gate == GateHumanApproval {
 			// Not a type-system question, a coherence one: an edge asking for

@@ -120,6 +120,69 @@ class RemoteEndpoint(unittest.TestCase):
         self.assertEqual(used, "local")
 
 
+class ThroughTheNode(unittest.TestCase):
+    """`AURA_INFERENCE_URL=node`: the plan request goes to the planner's own
+    node, with its node credential and the delivery it is planning for."""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {}, clear=False)
+        self.env.start()
+        for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "AURA_INFERENCE_MODEL", "AURA_TOKEN"):
+            os.environ.pop(name, None)
+        os.environ["AURA_INFERENCE_URL"] = "node"
+        os.environ["AURA_WS_URL"] = "wss://robot.local:9443/ws/skill"
+        os.environ["AURA_TOKEN"] = "node-token"
+
+    def tearDown(self):
+        self.env.stop()
+
+    def _plan(self, **kwargs):
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["url"] = req.full_url
+            seen["headers"] = {k.lower(): v for k, v in req.header_items()}
+            return _answer([{"capability": "motor.email.send", "payload": {}}])
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            backends.plan_openai("email bob", CATALOG, CONFIG, **kwargs)
+        return seen
+
+    def test_the_address_is_the_nodes_own(self):
+        seen = self._plan()
+        self.assertEqual(seen["url"], "https://robot.local:9443/v1/inference/chat/completions")
+        self.assertEqual(seen["headers"]["authorization"], "Bearer node-token")
+
+    def test_the_delivery_is_named(self):
+        ref = backends.DeliveryRef(session="sess-1", id="deliv-1", node="planner", port="goal_in")
+        seen = self._plan(delivery=ref)
+        self.assertEqual(seen["headers"]["x-aura-session"], "sess-1")
+        self.assertEqual(seen["headers"]["x-aura-delivery"], "deliv-1")
+        self.assertEqual(seen["headers"]["x-aura-node"], "planner")
+        self.assertEqual(seen["headers"]["x-aura-port"], "goal_in")
+
+    def test_make_plan_hands_the_delivery_on(self):
+        ref = backends.DeliveryRef(session="sess-1", id="deliv-1")
+        got = {}
+
+        def fake(goal, catalog, config, delivery=None):
+            got["delivery"] = delivery
+            return "r", [{"capability": "x", "payload": {}}]
+
+        with mock.patch.dict(backends._BACKEND_FNS, {"openai": fake}):
+            backends.make_plan("goal", CATALOG, backend="auto", config=CONFIG, delivery=ref)
+        self.assertEqual(got["delivery"], ref)
+
+    def test_a_node_token_never_goes_to_an_engine_reached_directly(self):
+        # The same process, pointed straight at an engine: no credential and
+        # no delivery headers, even when a delivery is passed.
+        os.environ["AURA_INFERENCE_URL"] = "http://127.0.0.1:8080/v1"
+        ref = backends.DeliveryRef(session="sess-1", id="deliv-1")
+        seen = self._plan(delivery=ref)
+        self.assertNotIn("authorization", seen["headers"])
+        self.assertFalse([h for h in seen["headers"] if h.startswith("x-aura-")])
+
+
 # ── a GBNF interpreter small enough to trust ───────────────────────────────
 #
 # Supports exactly what plan_grammar emits: literals, character classes,
