@@ -134,9 +134,15 @@ func OpenWith(dataDir string, opt Options) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data dir %s: %w", dataDir, err)
 	}
+	// _txlock=immediate: every transaction this store opens is a write, and one
+	// that begins deferred takes the write lock only at its first write. If it
+	// read first (SaveGraph does, to find the newest revision) and another
+	// connection committed in between, SQLite refuses the upgrade at once with
+	// "database is locked" — busy_timeout does not apply to a stale snapshot.
+	// Taking the lock at BEGIN makes the transaction wait its turn instead.
 	dsn := filepath.Join(dataDir, "kernel.db") +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(" + sync + ")" +
-		"&_pragma=wal_autocheckpoint(" + checkpoint + ")"
+		"&_pragma=wal_autocheckpoint(" + checkpoint + ")&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
