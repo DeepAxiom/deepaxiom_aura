@@ -74,9 +74,17 @@ import (
 // that is actually behind, not per session.
 const DefaultMailboxDepth = 1024
 
+// queued is one envelope waiting in a mailbox, with who emitted it. The
+// emitter has to wait in the queue beside the envelope: by the time the drain
+// goroutine routes it, the connection it arrived on is no longer in scope.
+type queued struct {
+	env channel.Envelope
+	em  Emitter
+}
+
 // mailbox is one session's inbound queue.
 type mailbox struct {
-	ch   chan channel.Envelope
+	ch   chan queued
 	done chan struct{}
 	once sync.Once
 	wg   sync.WaitGroup
@@ -148,7 +156,7 @@ func (m *Manager) startMailbox(sess *Session) {
 		return
 	}
 	mb := &mailbox{
-		ch:   make(chan channel.Envelope, m.mailboxDepth),
+		ch:   make(chan queued, m.mailboxDepth),
 		done: make(chan struct{}),
 	}
 	sess.mailbox = mb
@@ -180,12 +188,12 @@ func (m *Manager) startMailbox(sess *Session) {
 			case <-mb.done:
 				abandon()
 				return
-			case env := <-mb.ch:
+			case q := <-mb.ch:
 				m.mbox.queued.Add(-1)
 				// route recovers a panic and returns it as an error. Inline, the
 				// caller logged that; here there is no caller left to, and route
 				// has already logged it with the session and the stack.
-				_ = m.route(sess, env)
+				_ = m.route(sess, q.env, q.em)
 			}
 		}
 	}()
@@ -220,7 +228,7 @@ func (m *Manager) stopMailbox(sess *Session) {
 
 // enqueue hands an envelope to a session's mailbox. It blocks only when that
 // session is `depth` envelopes behind, and never on a session that has ended.
-func (m *Manager) enqueue(mb *mailbox, env channel.Envelope) {
+func (m *Manager) enqueue(mb *mailbox, env queued) {
 	select {
 	case <-mb.done:
 		m.mbox.dropped.Add(1)

@@ -123,7 +123,7 @@ def _attestation(config: dict, messages: list[dict], reply: str,
     return att
 
 
-def _produce(messages, generation_kwargs, stop, queue, loop, usage=None) -> None:
+def _produce(messages, generation_kwargs, stop, queue, loop, usage=None, schedule=None) -> None:
     """Run the model in a worker thread, pushing tokens to the event loop.
 
     `stream_chat` is a synchronous generator. Iterating it on the loop blocks
@@ -135,10 +135,16 @@ def _produce(messages, generation_kwargs, stop, queue, loop, usage=None) -> None
     `stop` goes into the backend as well as being checked here: a reply
     queued behind another session's on the single local context has to be
     able to give up its place, and only the backend is waiting at that point.
+
+    `schedule` is what the kernel said about this delivery — its priority and
+    its deadline — kept apart from `generation_kwargs` on purpose: those are
+    sampling parameters and go into the attestation, and when a reply was due
+    is not a property of the inference that produced it.
     """
     stream = None
     try:
-        stream = backend.stream_chat(messages, stop=stop, usage=usage, **generation_kwargs)
+        stream = backend.stream_chat(
+            messages, stop=stop, usage=usage, **generation_kwargs, **(schedule or {}))
         for token in stream:
             if stop.is_set():
                 break
@@ -191,9 +197,23 @@ async def handle(ctx: Context) -> None:
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     usage: dict = {}
+    # The delivery's own bounds, handed to the backend. A priority reaches an
+    # engine that understands one (see AURA_INFERENCE_PRIORITY); the deadline
+    # stops the generation when it passes, because the kernel will drop what
+    # is emitted after it and a model producing words nobody will receive is
+    # holding a slot someone else is waiting for. Ordinary priority is sent as
+    # nothing at all rather than as 0, so an engine that was never told about
+    # priorities sees exactly the request it saw before.
+    #
+    # And which delivery this reply is for. With inference going through the
+    # node, that is what lets it place the request — its graph, its priority,
+    # its deadline — and close it at the engine if the chain is cancelled,
+    # rather than relying on this handler noticing in time.
+    schedule = {"priority": ctx.priority or None, "deadline": ctx.deadline,
+                "delivery": ctx.delivery}
     worker = asyncio.create_task(asyncio.to_thread(
         _produce, list(messages), _generation_kwargs(skill.config),
-        generation.stop, queue, loop, usage))
+        generation.stop, queue, loop, usage, schedule))
 
     # Fewer, larger frames for the same text — see aura.stream. The first
     # token still leaves immediately; coalesce_ms: 0 is the old one-envelope-

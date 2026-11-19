@@ -46,6 +46,57 @@ export interface HandlerContext {
   session: string;
   /** True once the caller has abandoned this chain — stop early if you can. */
   readonly cancelled: boolean;
+  /**
+   * The id of the delivery this handler is answering. It is what anything you
+   * do on this work's behalf names — an inference request, a log line — so the
+   * node can tell which chain it belongs to.
+   */
+  readonly id: string;
+  /**
+   * The instant, in unix milliseconds, after which nothing this delivery
+   * causes is worth delivering; `undefined` when there is no such bound.
+   *
+   * A validity bound: the kernel drops a result returned after it. Use
+   * `remainingMs()` to decide whether to do the expensive thing or the quick
+   * one — an answer in time beats a better one late.
+   */
+  readonly deadline: number | undefined;
+  /**
+   * The instant by which your first output is due, or `undefined`. A target,
+   * not a validity bound: missing it is recorded and nothing is dropped.
+   */
+  readonly respondBy: number | undefined;
+  /** Scheduling priority of the edge this delivery travelled. Higher wins; 0 is ordinary. */
+  readonly priority: number;
+  /**
+   * Milliseconds left before `deadline`, or `undefined` when there is none.
+   * Never negative: 0 means the deadline has passed.
+   */
+  remainingMs(): number | undefined;
+  /**
+   * How to call a model through this node, on this delivery's behalf.
+   *
+   * Returns the node's OpenAI-compatible base URL and the headers that say
+   * which delivery the request is for:
+   *
+   * ```ts
+   * const { baseUrl, headers } = ctx.inference();
+   * const res = await fetch(`${baseUrl}/chat/completions`, {
+   *   method: "POST",
+   *   headers: { "Content-Type": "application/json", ...headers },
+   *   body: JSON.stringify({ model, messages, stream: true }),
+   * });
+   * ```
+   *
+   * Naming the delivery is what lets the node count the request against this
+   * graph, give it the priority and deadline this delivery is under, and close
+   * it at the engine if the chain is cancelled. The node must have been
+   * started with `--inference-url`; otherwise the route answers 404 and says so.
+   *
+   * The headers include this process's credential for the node. Send them to
+   * `baseUrl` and nowhere else.
+   */
+  inference(): { baseUrl: string; headers: Record<string, string> };
 }
 
 export type Handler = (
@@ -369,6 +420,11 @@ export class AuraNode {
     };
 
     const causeId = env.cause_id ?? "";
+    // Read once off the delivery. The kernel sets these; a handler only ever
+    // reads them, and nothing here echoes them back — the kernel inherits a
+    // chain's bounds from its own record of this delivery, not from us.
+    const deadline = instant(env.deadline);
+    const respondBy = instant(env.respond_by);
     const ctx: HandlerContext = {
       raw,
       config: skill.config,
@@ -376,6 +432,23 @@ export class AuraNode {
       get cancelled() {
         return causeId !== "" && skill.cancelled.has(causeId);
       },
+      id: env.id,
+      deadline,
+      respondBy,
+      priority: Number.isInteger(env.priority) ? (env.priority as number) : 0,
+      remainingMs: () => (deadline === undefined ? undefined : Math.max(0, deadline - Date.now())),
+      inference: () => ({
+        baseUrl: inferenceUrl(this.options.url),
+        headers: {
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+          // A reference, not a credential: the node looks the delivery up in
+          // its own record and decides what it means.
+          ...(env.session ? { "X-Aura-Session": env.session } : {}),
+          "X-Aura-Delivery": env.id,
+          ...(env.node ? { "X-Aura-Node": env.node } : {}),
+          ...(env.port ? { "X-Aura-Port": env.port } : {}),
+        },
+      }),
     };
 
     let result: Record<string, unknown>;
@@ -415,6 +488,28 @@ export class AuraNode {
     });
     skill.socket?.send(JSON.stringify(out));
   }
+}
+
+/**
+ * A unix-millisecond instant off the wire, or `undefined` when it is absent or
+ * not something a clock could have produced. Absent and nonsense are treated
+ * alike on purpose: a handler should never be told it is late on the strength
+ * of a field it cannot trust.
+ */
+function instant(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * The node's inference base URL, derived from where its socket is:
+ * `ws://host:9080/ws/skill` becomes `http://host:9080/v1/inference`, and
+ * `wss://` becomes `https://`. Derived rather than configured, because a
+ * worker already has to know where its node is to connect at all.
+ */
+export function inferenceUrl(wsUrl: string): string {
+  const url = new URL(wsUrl);
+  const scheme = url.protocol === "wss:" ? "https:" : url.protocol === "ws:" ? "http:" : url.protocol;
+  return `${scheme}//${url.host}/v1/inference`;
 }
 
 /** Create a node. See `AuraNode.expose`. */

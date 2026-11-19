@@ -42,6 +42,10 @@ export interface Envelope {
     };
   };
   trace?: string;
+  deadline?: number;
+  respond_by?: number;
+  priority?: number;
+  speculative?: boolean;
 }
 
 /** C1 Skill Manifest — aura:spec:manifest@1 */
@@ -123,6 +127,7 @@ export interface GraphIR {
 export interface Edge {
   speculative?: boolean;
   deadline_ms?: number;
+  respond_ms?: number;
   priority?: number;
 }
 

@@ -57,6 +57,24 @@
       "type": "string",
       "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
       "description": "C3 v1.7: a W3C Trace Context traceparent. Supplied by a client on the envelope that starts a chain; carried by the kernel on every hop of that chain."
+    },
+    "deadline": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "C3 v1.6: the unix-millisecond instant after which nothing this delivery causes is worth delivering. Set by the kernel on what it delivers, or by a client on the envelope that starts a chain; an Expertise reads it and never sets it. Late data is dropped. See spec/c2-graph-ir.md rule 7."
+    },
+    "respond_by": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "C3 v1.8: the unix-millisecond instant by which the first output of this chain is due. A target, not a validity bound: a miss is recorded and nothing is dropped. Set like `deadline`. See spec/c2-graph-ir.md rule 9."
+    },
+    "priority": {
+      "type": "integer",
+      "description": "C3 v1.6: the scheduling priority of the edge this delivery travelled. Higher wins; absent means 0, ordinary."
+    },
+    "speculative": {
+      "type": "boolean",
+      "description": "C3 v1.6: this delivery was made on partial upstream output and may be cancelled if the producer's final output differs (C2 rule 6)."
     }
   },
   "allOf": [

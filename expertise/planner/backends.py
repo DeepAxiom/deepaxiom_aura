@@ -21,6 +21,7 @@ import unicodedata
 import urllib.request
 from pathlib import Path
 
+from aura.delivery import DeliveryRef, node_headers, node_inference_url, via_node
 from aura.models import active_model_path, active_record, models_dir
 from catalog import catalog_lines
 
@@ -127,7 +128,9 @@ def remote_endpoint() -> tuple[str, str, str] | None:
     2. ``AURA_INFERENCE_URL`` — an inference server this node runs itself. No
        key. This is what lets the planner stop loading its own copy of the
        weights: it becomes one more client of the server llm-chat already
-       uses.
+       uses. The value ``node`` means the node itself, which forwards to its
+       engine and knows what the request is for; the address is then derived
+       from where the node's socket is (see ``aura.delivery``).
 
     None when neither is configured.
     """
@@ -136,11 +139,14 @@ def remote_endpoint() -> tuple[str, str, str] | None:
         return os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip(), key, ""
     server = os.getenv("AURA_INFERENCE_URL", "").strip()
     if server:
+        if via_node():
+            server = node_inference_url()
         return server, "", os.getenv("AURA_INFERENCE_MODEL", "").strip()
     return None
 
 
-def plan_openai(goal: str, catalog: list[dict], config: dict) -> tuple[str, list[dict]]:
+def plan_openai(goal: str, catalog: list[dict], config: dict,
+                delivery: DeliveryRef | None = None) -> tuple[str, list[dict]]:
     endpoint = remote_endpoint()
     if endpoint is None:
         raise RuntimeError("no remote endpoint: set OPENAI_API_KEY or AURA_INFERENCE_URL")
@@ -156,6 +162,13 @@ def plan_openai(goal: str, catalog: list[dict], config: dict) -> tuple[str, list
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
+    elif via_node():
+        # Through the node: this process's own node credential, and which
+        # delivery the plan is being made for, so the node can count it
+        # against the right graph and stop it if the goal is withdrawn. Never
+        # on the other branches — sent to an engine reached directly, the same
+        # header would be a node token handed to a third party.
+        headers.update(node_headers(delivery))
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions", data=body, headers=headers)
     with urllib.request.urlopen(req, timeout=60) as r:
@@ -251,8 +264,12 @@ _BACKEND_FNS = {"openai": plan_openai, "local": plan_local, "keyword": plan_keyw
 
 
 def make_plan(goal: str, catalog: list[dict], *, backend: str,
-              config: dict) -> tuple[str, str, list[dict]]:
-    """Returns (backend_used, reasoning, steps) with a degradation chain."""
+              config: dict, delivery: DeliveryRef | None = None) -> tuple[str, str, list[dict]]:
+    """Returns (backend_used, reasoning, steps) with a degradation chain.
+
+    `delivery` is the delivery the goal arrived as (`ctx.delivery`). Only the
+    remote backend uses it, and only when the request goes through the node.
+    """
     order = {
         # A configured remote endpoint — hosted or this node's own server —
         # goes first: with a server running, loading a second copy of the
@@ -264,7 +281,14 @@ def make_plan(goal: str, catalog: list[dict], *, backend: str,
     for name in order:
         try:
             fn = _BACKEND_FNS[name]
-            reasoning, steps = fn(goal, catalog) if name == "keyword" else fn(goal, catalog, config)
+            if name == "keyword":
+                reasoning, steps = fn(goal, catalog)
+            elif name == "openai" and delivery is not None:
+                # Named, and only when there is one: a backend that takes the
+                # three arguments it always took is still a backend.
+                reasoning, steps = fn(goal, catalog, config, delivery=delivery)
+            else:
+                reasoning, steps = fn(goal, catalog, config)
             return name, reasoning, steps
         except Exception as exc:  # noqa: BLE001
             last_err = exc

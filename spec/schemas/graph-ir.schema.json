@@ -136,6 +136,11 @@
           "minimum": 0,
           "description": "C2 v1.2: how long a delivery here is worth waiting for. Absolute once on the wire; inheritable, never extendable."
         },
+        "respond_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "C2 v1.3: how soon the first output caused by a delivery here is due. A responsiveness target carried by the front of the chain; a miss is recorded and nothing is dropped."
+        },
         "priority": {
           "type": "integer",
           "description": "C2 v1.2: preemption order when chains contend. Higher wins."

@@ -565,6 +565,10 @@ input[type="checkbox"] { accent-color: var(--live); width: 15px; height: 15px; }
 .pulse__grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s-3); }
 .pulse__cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--s-3); align-items: stretch; }
 .pulse__cols--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pulse__infer { margin: var(--s-3) 0; }
+.kv--row { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); column-gap: var(--s-4); margin-bottom: var(--s-3); }
+.infer { width: 100%; }
+.infer th.num, .infer td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pulse__side { display: grid; gap: var(--s-3); }
 
 .tile {

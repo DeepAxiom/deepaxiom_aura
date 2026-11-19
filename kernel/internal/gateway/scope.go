@@ -155,6 +155,14 @@ var skillRoutes = []struct {
 	// discloses the skill's own declared parameters and nothing about the node.
 	{method: http.MethodGet, path: "/v1/skills/config/", prefix: true, why: "its own declared config"},
 	{method: http.MethodGet, path: "/v1/expertise/config/", prefix: true, why: "the same, under its current name"},
+	// Calling a model, through the node. This is what lets an Expertise hold a
+	// narrow credential and still do inference: the alternative is handing it
+	// the engine's address, at which point the node knows nothing about what
+	// it asks for. Safe to grant because a request made here can only speak
+	// for a delivery sent under this same credential — see
+	// executor.Session.resolveDelivery — so the route gives a token nothing
+	// that was not already its own.
+	{path: "/v1/inference/", prefix: true, why: "inference on behalf of its own deliveries"},
 }
 
 // Allows reports whether a principal may make this request.

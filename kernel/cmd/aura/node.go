@@ -29,6 +29,7 @@ import (
 	"aura/kernel/internal/gateway"
 	"aura/kernel/internal/grammar"
 	"aura/kernel/internal/identity"
+	"aura/kernel/internal/infer"
 	"aura/kernel/internal/lease"
 	"aura/kernel/internal/ledger"
 	"aura/kernel/internal/mcpsrv"
@@ -96,7 +97,18 @@ type nodeOptions struct {
 	StandbyStop     <-chan struct{}
 	StandbyWatching func(lease.Info)
 	SkillConfig     map[string]map[string]any
-	Log             *slog.Logger
+	// InferenceURL, when set, puts the node in the path of inference: it is
+	// the OpenAI-compatible base URL of an engine the node forwards to, and
+	// Expertise then call the node rather than the engine. Empty leaves the
+	// node as it was — out of that path, seeing none of it.
+	//
+	// InferenceKey is the engine's own credential, if it wants one.
+	// InferencePriority names how the engine spells a request's priority
+	// ("vllm" or "sglang"); empty for an engine with no such field.
+	InferenceURL      string
+	InferenceKey      string
+	InferencePriority string
+	Log               *slog.Logger
 }
 
 // Startup is how long each phase of buildNode took.
@@ -382,6 +394,18 @@ func buildNode(opt nodeOptions) (*node, error) {
 		Grammars:   grammar.NewRegistry(),
 		ConfigFile: opt.SkillConfig,
 		Traces:     traces,
+	}
+
+	if opt.InferenceURL != "" {
+		plane, err := infer.New(infer.Config{
+			Upstream: opt.InferenceURL, APIKey: opt.InferenceKey,
+			Priority: opt.InferencePriority, Version: version, Log: log,
+		}, gateway.InferenceResolver(mgr))
+		if err != nil {
+			return fail(err)
+		}
+		gateway.ConnectInference(mgr, plane)
+		gw.Infer = plane
 	}
 
 	timing.Total = time.Since(buildStarted)

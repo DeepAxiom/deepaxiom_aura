@@ -17,10 +17,20 @@ Config (env):
   AURA_INFERENCE_URL  an OpenAI-compatible inference server this node runs
                       itself (llama-server, vLLM, ...), e.g.
                       http://127.0.0.1:8080/v1. No key needed. See below.
+                      Or the word `node`: call the model *through* this
+                      Expertise's node (started with --inference-url), which
+                      then knows what each request is for, stops it at the
+                      engine when its chain is cancelled, and counts what it
+                      cost. See aura.delivery and `stream_chat(delivery=...)`.
   AURA_INFERENCE_MODEL  model name to send there (default: OPENAI_MODEL)
   AURA_INFERENCE_EXTRA  JSON object merged into every request body sent
                         there — server-specific knobs such as
                         {"cache_prompt": true}
+  AURA_INFERENCE_PRIORITY  how that server spells a request's scheduling
+                        priority: `vllm` (lowest value served first, so the
+                        caller's priority is sent negated) or `sglang`
+                        (highest first, sent as is). Unset or anything else:
+                        no priority is sent. See `stream_chat`.
   AURA_LLM_TIMEOUT    seconds a remote read may stall (default 120)
   AURA_LLM_CACHE_MB   in-process KV state cache for the local backend, in MiB
                       (default 0 = off). See _attach_state_cache.
@@ -47,12 +57,14 @@ import logging
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 
 from .attest import Attestation
+from .delivery import NODE, DeliveryRef, node_headers, node_inference_url
 
 _logger = logging.getLogger("aura.llm")
 
@@ -73,6 +85,17 @@ _SAFE_WEIGHT_SUFFIXES = frozenset({".gguf", ".safetensors"})
 
 # A Hugging Face commit sha: 40 hex characters.
 _REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+
+# What to multiply the caller's priority by before a self-hosted server sees
+# it. The runtime's convention is "higher wins". SGLang agrees; vLLM serves
+# the LOWEST value first, so the sign flips there. An engine that is not
+# listed gets no field at all: guessing a convention would hand the most
+# urgent request the back of somebody's queue.
+_PRIORITY_SIGN = {"vllm": -1, "sglang": 1}
+
+# A socket timeout runs on a monotonic clock and a deadline is wall time.
+# When a read gives up this close to the deadline, the deadline is why.
+_DEADLINE_SLACK_S = 0.05
 
 
 class UnsafeWeightsError(RuntimeError):
@@ -179,11 +202,25 @@ class ChatBackend:
         # adding the new variable never silently moves traffic.
         self._inference_url = (
             "" if self._api_key else os.getenv("AURA_INFERENCE_URL", "").strip())
+        # `AURA_INFERENCE_URL=node`: inference goes through this Expertise's
+        # own node, which then knows what each request is for. The address is
+        # derived from where the node's socket is rather than configured a
+        # second time. See aura.delivery.
+        self._via_node = self._inference_url.lower() == NODE
+        if self._via_node:
+            self._inference_url = node_inference_url()
         self._extra_body: dict = {}
+        self._priority_sign = 0
         if self._inference_url:
             self._base_url = self._inference_url
             self._model = os.getenv("AURA_INFERENCE_MODEL", "").strip() or self._model
             self._extra_body = _extra_body_from_env()
+            # Through the node, the priority is the node's to state: it reads
+            # the edge the delivery travelled and writes it in whatever
+            # convention its engine uses. Sending one from here as well would
+            # be this process naming its own urgency, which the node removes.
+            if not self._via_node:
+                self._priority_sign = _priority_sign_from_env()
         self._timeout = _float_env("AURA_LLM_TIMEOUT", 120.0)
         # Whether the endpoint accepts `stream_options`. Assumed until an
         # endpoint says otherwise with a 400, then remembered: asking again on
@@ -260,6 +297,9 @@ class ChatBackend:
         repeat_penalty: float | None = None,
         stop: threading.Event | None = None,
         usage: dict | None = None,
+        priority: int | None = None,
+        deadline: int | None = None,
+        delivery: DeliveryRef | None = None,
     ) -> Iterator[str]:
         """Yield response text chunks as they arrive.
 
@@ -280,11 +320,48 @@ class ChatBackend:
         belong to whichever finished most recently. Left empty when the
         engine reports nothing: a count this code made up would be worse than
         none, since budgets get set from it.
+
+        `priority` is the caller's scheduling priority in the runtime's
+        convention: HIGHER wins. It only ever leaves this process towards a
+        self-hosted server (`AURA_INFERENCE_URL`), and only when
+        `AURA_INFERENCE_PRIORITY` says how that server spells it — negated
+        for `vllm`, as is for `sglang`. A hosted API never sees it, and the
+        in-process model has no queue to order. Two things this does not
+        promise. vLLM honours the field only when started with
+        `--scheduling-policy priority` and answers a non-zero priority with an
+        error otherwise, so setting the variable against a default vLLM breaks
+        every prioritised request. And where vLLM does honour it, it reorders
+        the requests still waiting; it does not interrupt one that is already
+        generating (vllm-project/vllm#40004). Neither was run against a real
+        engine from here: `bench/inference` is the harness that does it.
+
+        `deadline` is an absolute instant in unix milliseconds. The stream
+        ends once it has passed — through the same door as `stop`, so the
+        connection is closed and the model released — and while a deadline is
+        set no socket wait lasts longer than the time left. It ends quietly,
+        like `stop`: the caller knows its own deadline and can tell a reply
+        that finished from one that ran out of time. It is enforced here and
+        nowhere else: no engine reads a deadline, so none is sent. In-process
+        it is checked while queueing for the model and between tokens; a
+        prompt evaluation already running there cannot be interrupted.
+
+        `delivery` is the delivery this reply is for — `ctx.delivery` — and
+        matters only when inference goes through the node
+        (`AURA_INFERENCE_URL=node`). There it is what the node places the
+        request by: its graph, the priority of the edge it travelled, its
+        deadline, and whether its chain is still wanted. `priority` is then
+        not sent at all, because the node reads it from its own record. Without
+        a delivery the request is still served, as unattributed work. On every
+        other path it is ignored: an engine reached directly has no use for
+        it, and the node credential it travels with must never be sent to one.
         """
+        if deadline is not None:
+            stop = _Until(stop, deadline)
         if self.is_cloud:
             yield from self._stream_cloud(
                 messages, max_tokens, temperature, top_p, top_k, repeat_penalty,
-                stop=stop, usage=usage)
+                stop=stop, usage=usage, priority=priority, deadline=deadline,
+                delivery=delivery)
         else:
             yield from self._stream_local(
                 messages, max_tokens, temperature, top_p, top_k, repeat_penalty,
@@ -461,6 +538,8 @@ class ChatBackend:
         self, messages: list[dict], max_tokens: int, temperature: float,
         top_p: float | None, top_k: int | None, repeat_penalty: float | None,
         *, stop: threading.Event | None = None, usage: dict | None = None,
+        priority: int | None = None, deadline: int | None = None,
+        delivery: DeliveryRef | None = None,
     ) -> Iterator[str]:
         if top_k is not None or repeat_penalty is not None:
             _logger.debug(
@@ -476,13 +555,35 @@ class ChatBackend:
         }
         if top_p is not None:
             payload["top_p"] = top_p
+        # The sign is only ever read from the environment for a self-hosted
+        # server. The key check is for a backend that acquired a key after it
+        # was built: a hosted API rejects the unknown field with a 400.
+        if priority is not None and self._priority_sign and not self._api_key:
+            payload["priority"] = self._priority_sign * int(priority)
         # Server-specific knobs for a self-hosted endpoint. Never sent to a
         # hosted API: those reject unknown fields with a 400.
         for key, value in self._extra_body.items():
             payload.setdefault(key, value)
 
-        with self._open_stream(payload) as resp:
-            for raw_line in resp:
+        if deadline is not None and _seconds_left(deadline) <= 0:
+            # Already late. Sending it anyway would cost the engine a prompt
+            # evaluation for a reply nobody is waiting for.
+            return
+        try:
+            opened = self._open_stream(payload, deadline, delivery)
+        except OSError as exc:
+            # The engine did not even answer in time — queued behind other
+            # work, most likely. That is the deadline doing its job, not a
+            # failure of the endpoint, so it ends the stream like any other
+            # expiry. A timeout with time still on the clock is the stall
+            # timeout, and stays an error.
+            if (deadline is not None and _is_timeout(exc)
+                    and _seconds_left(deadline) <= _DEADLINE_SLACK_S):
+                return
+            raise
+        with opened as resp:
+            lines = resp if deadline is None else _lines_until(resp, deadline, self._timeout)
+            for raw_line in lines:
                 if stop is not None and stop.is_set():
                     # Leaving the `with` closes the socket, which is the only
                     # cancel a streaming HTTP completion has — and the one
@@ -505,7 +606,8 @@ class ChatBackend:
                 if token:
                     yield token
 
-    def _open_stream(self, payload: dict):
+    def _open_stream(self, payload: dict, deadline: int | None = None,
+                     delivery: DeliveryRef | None = None):
         """POST a streaming completion, asking for token usage when the
         endpoint will give it.
 
@@ -520,6 +622,11 @@ class ChatBackend:
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
+        elif self._via_node:
+            # This process's node credential and the delivery the request is
+            # for. Only on this branch: the same headers sent to an engine
+            # reached directly would hand it a token for the node.
+            headers.update(node_headers(delivery))
         url = f"{self._base_url.rstrip('/')}/chat/completions"
 
         def post(body: dict):
@@ -528,8 +635,9 @@ class ChatBackend:
             # A timeout on every socket read. Without one a provider that
             # accepts the connection and then stalls holds this worker thread,
             # and the session behind it, forever — the reply never fails, so
-            # nothing ever reports it.
-            return urllib.request.urlopen(req, timeout=self._timeout)
+            # nothing ever reports it. With a deadline the wait is whatever is
+            # left of it, when that is less.
+            return urllib.request.urlopen(req, timeout=_wait_for(self._timeout, deadline))
 
         if not self._usage_supported:
             return post(payload)
@@ -543,6 +651,96 @@ class ChatBackend:
                 "for this endpoint", self._base_url)
             self._usage_supported = False
             return post(payload)
+
+
+class _Until:
+    """A `stop` that also fires at an instant.
+
+    The stream loops ask one question — `stop.is_set()` — at exactly the
+    points where abandoning a generation is safe and really frees the model:
+    while queueing for it, and between chunks. A deadline is the same question
+    with a clock in it, so it goes through that door instead of growing a
+    second set of checks beside the first.
+    """
+
+    __slots__ = ("_stop", "_deadline")
+
+    def __init__(self, stop: threading.Event | None, deadline: int) -> None:
+        self._stop = stop
+        self._deadline = deadline
+
+    def is_set(self) -> bool:
+        if self._stop is not None and self._stop.is_set():
+            return True
+        return _seconds_left(self._deadline) <= 0
+
+
+def _seconds_left(deadline: int) -> float:
+    """Seconds until `deadline` (unix milliseconds); negative once passed."""
+    return deadline / 1000.0 - time.time()
+
+
+def _wait_for(stall: float, deadline: int | None) -> float:
+    """How long one socket wait may last: the stall timeout, or what is left
+    before the deadline when that is less."""
+    if deadline is None:
+        return stall
+    # Never zero or negative: to a socket those mean "do not block" and
+    # "invalid", not "give up now".
+    return max(min(stall, _seconds_left(deadline)), 0.001)
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """urllib raises a connect timeout wrapped in URLError and a read timeout
+    bare; both are the same event here."""
+    return isinstance(exc, TimeoutError) or isinstance(
+        getattr(exc, "reason", None), TimeoutError)
+
+
+def _socket_under(resp):
+    """The socket a urllib response reads from, or None if it cannot be found.
+
+    urllib has no public way to change a read timeout once the request is
+    made: the value given to `urlopen` is fixed on the socket for the life of
+    the response. This reaches through `HTTPResponse.fp` (a BufferedReader)
+    to its SocketIO and the socket under that — a layout CPython has kept
+    since 3.0 but does not promise. If it ever changes this returns None and
+    each read stays bounded by the timeout the connection was opened with,
+    which was already no longer than the time left at that moment.
+    """
+    raw = getattr(getattr(resp, "fp", None), "raw", None)
+    sock = getattr(raw, "_sock", None)
+    return sock if callable(getattr(sock, "settimeout", None)) else None
+
+
+def _lines_until(resp, deadline: int, stall: float) -> Iterator[bytes]:
+    """The lines of a streaming response, giving up at `deadline`.
+
+    A check between chunks is not enough. The wait that matters is the one for
+    a chunk that has not arrived — an engine still queueing the request, or
+    stalled mid-reply — and that wait happens inside the socket read, where no
+    check runs. So the read timeout is re-armed before every line to whatever
+    time is left.
+    """
+    sock = _socket_under(resp)
+    lines = iter(resp)
+    while True:
+        if _seconds_left(deadline) <= 0:
+            return
+        if sock is not None:
+            try:
+                sock.settimeout(_wait_for(stall, deadline))
+            except OSError:
+                sock = None
+        try:
+            line = next(lines)
+        except StopIteration:
+            return
+        except TimeoutError:
+            if _seconds_left(deadline) <= _DEADLINE_SLACK_S:
+                return
+            raise
+        yield line
 
 
 def _local_usage(llm, produced: int) -> dict:
@@ -583,6 +781,19 @@ def _extra_body_from_env() -> dict:
         _logger.warning("AURA_INFERENCE_EXTRA must be a JSON object; ignoring it")
         return {}
     return parsed
+
+
+def _priority_sign_from_env() -> int:
+    mode = os.getenv("AURA_INFERENCE_PRIORITY", "").strip().lower()
+    if not mode:
+        return 0
+    sign = _PRIORITY_SIGN.get(mode)
+    if sign is None:
+        _logger.warning(
+            "AURA_INFERENCE_PRIORITY=%r is not one of %s; no priority will be sent",
+            mode, sorted(_PRIORITY_SIGN))
+        return 0
+    return sign
 
 
 def _quantization_of(filename: str) -> str:

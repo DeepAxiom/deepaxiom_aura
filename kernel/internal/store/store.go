@@ -851,6 +851,49 @@ func (s *Store) SessionEvents(session string, limit int) ([]json.RawMessage, []i
 	return out, times, nil
 }
 
+// scanPage is how many records ScanSession reads at a time. Large enough that
+// a long session costs few reads, small enough that walking one never holds
+// more than a few megabytes however long it is.
+const scanPage = 2048
+
+// ScanSession calls fn for every envelope of a session, in causal-log order,
+// without holding the session in memory. fn returning false stops the walk.
+//
+// SessionEvents caps at 1000 records when asked for "all", which is the right
+// default for an HTTP response and the wrong one for anything rebuilding state
+// from history: a session past its thousandth event resumed with the dedup
+// window, the hop counters and the pending gates of its first minute.
+func (s *Store) ScanSession(session string, fn func(envelope []byte, tsMillis int64) bool) error {
+	for offset := 0; ; offset += scanPage {
+		page, more, err := s.evlog.SessionPage(session, offset, scanPage)
+		if err != nil {
+			return err
+		}
+		if offset == 0 && len(page) == 0 {
+			// Nothing in the log: a data directory written before the segment
+			// log may still hold this session in the events table.
+			legacy, times, err := s.legacySessionEvents(session, 1<<20)
+			if err != nil {
+				return err
+			}
+			for i, raw := range legacy {
+				if !fn(raw, times[i]) {
+					return nil
+				}
+			}
+			return nil
+		}
+		for _, e := range page {
+			if !fn(e.Envelope, e.TS) {
+				return nil
+			}
+		}
+		if !more {
+			return nil
+		}
+	}
+}
+
 // SessionEventsTail returns the last `limit` envelopes of a session's causal
 // log, oldest first. See seglog.Log.SessionTail.
 func (s *Store) SessionEventsTail(session string, limit int) ([]json.RawMessage, error) {

@@ -233,3 +233,131 @@ test("two functions with the same name are refused", async () => {
     "a duplicate name was accepted; one of the two could never be reached");
   await k.close();
 });
+
+// The contract says a worker is expected to degrade as its deadline nears. It
+// could not: the deadline was on the envelope and the handler was never shown
+// it, nor the id of the delivery it was answering.
+test("a handler can see the delivery it is answering and what bounds it", async () => {
+  const k = fakeKernel();
+  const aura = nodeFor(k);
+  let seen = null;
+  aura.expose("get-order", (_input, ctx) => {
+    seen = {
+      id: ctx.id, deadline: ctx.deadline, respondBy: ctx.respondBy,
+      priority: ctx.priority, remaining: ctx.remainingMs(),
+    };
+    return {};
+  });
+  await aura.start();
+  await waitFor(() => k.registrations.length === 1);
+
+  const replies = [];
+  k.onFrame = (env) => replies.push(env);
+  const deadline = Date.now() + 60_000;
+  k.sockets[0].send(JSON.stringify({
+    v: "1", id: "req-7", session: "s1", node: "n", port: "request_in",
+    kind: "data", schema: "std/api-request@1", payload: { op: "get-order" },
+    deadline, respond_by: deadline - 59_000, priority: 5,
+  }));
+  await waitFor(() => replies.some((e) => e.kind === "data"));
+
+  assert.equal(seen.id, "req-7");
+  assert.equal(seen.deadline, deadline);
+  assert.equal(seen.respondBy, deadline - 59_000);
+  assert.equal(seen.priority, 5);
+  assert.ok(seen.remaining > 0 && seen.remaining <= 60_000, `remaining was ${seen.remaining}`);
+
+  const reply = replies.find((e) => e.kind === "data");
+  assert.equal(reply.deadline, undefined,
+    "a worker echoed its deadline; the kernel inherits it from its own record, never from us");
+  await aura.stop();
+  await k.close();
+});
+
+test("a delivery with no bounds reports none, and a nonsense one is not believed", async () => {
+  const k = fakeKernel();
+  const aura = nodeFor(k);
+  const seen = [];
+  aura.expose("get-order", (_input, ctx) => {
+    seen.push({ deadline: ctx.deadline, remaining: ctx.remainingMs(), priority: ctx.priority });
+    return {};
+  });
+  await aura.start();
+  await waitFor(() => k.registrations.length === 1);
+
+  const replies = [];
+  k.onFrame = (env) => replies.push(env);
+  const frame = (id, extra) => JSON.stringify({
+    v: "1", id, session: "s1", node: "n", port: "request_in",
+    kind: "data", schema: "std/api-request@1", payload: { op: "get-order" }, ...extra,
+  });
+  k.sockets[0].send(frame("plain", {}));
+  k.sockets[0].send(frame("junk", { deadline: "soon", priority: "high" }));
+  k.sockets[0].send(frame("past", { deadline: 1 }));
+  await waitFor(() => replies.filter((e) => e.kind === "data").length === 3);
+
+  assert.deepEqual(seen[0], { deadline: undefined, remaining: undefined, priority: 0 });
+  assert.deepEqual(seen[1], { deadline: undefined, remaining: undefined, priority: 0 });
+  assert.equal(seen[2].remaining, 0, "a deadline already passed must read as 0, never negative");
+  await aura.stop();
+  await k.close();
+});
+
+// Calling a model through the node: the worker says which delivery the request
+// is for, and the node decides what that means.
+test("a handler is told how to reach its node's inference routes for this delivery", async () => {
+  const k = fakeKernel();
+  const aura = nodeFor(k, { token: "node-token" });
+  let seen = null;
+  aura.expose("get-order", (_input, ctx) => {
+    seen = ctx.inference();
+    return {};
+  });
+  await aura.start();
+  await waitFor(() => k.registrations.length === 1);
+
+  const replies = [];
+  k.onFrame = (env) => replies.push(env);
+  k.sockets[0].send(JSON.stringify({
+    v: "1", id: "req-9", session: "sess-1", node: "shop", port: "request_in",
+    kind: "data", schema: "std/api-request@1", payload: { op: "get-order" },
+  }));
+  await waitFor(() => replies.some((e) => e.kind === "data"));
+
+  const port = new URL(k.url()).port;
+  assert.equal(seen.baseUrl, `http://127.0.0.1:${port}/v1/inference`,
+    "the address must be derived from the socket's, not configured a second time");
+  assert.deepEqual(seen.headers, {
+    Authorization: "Bearer node-token",
+    "X-Aura-Session": "sess-1",
+    "X-Aura-Delivery": "req-9",
+    "X-Aura-Node": "shop",
+    "X-Aura-Port": "request_in",
+  });
+  await aura.stop();
+  await k.close();
+});
+
+test("a node without auth yields no credential, and wss becomes https", async () => {
+  const { inferenceUrl } = await import("../dist/index.js");
+  assert.equal(inferenceUrl("wss://robot.local:9443/ws/skill?token=abc"), "https://robot.local:9443/v1/inference");
+  assert.equal(inferenceUrl("ws://localhost:9080/ws/expertise"), "http://localhost:9080/v1/inference");
+
+  const k = fakeKernel();
+  const aura = nodeFor(k, { token: "" });
+  let seen = null;
+  aura.expose("get-order", (_input, ctx) => { seen = ctx.inference(); return {}; });
+  await aura.start();
+  await waitFor(() => k.registrations.length === 1);
+  const replies = [];
+  k.onFrame = (env) => replies.push(env);
+  k.sockets[0].send(JSON.stringify({
+    v: "1", id: "req-1", session: "s1", node: "n", port: "request_in",
+    kind: "data", schema: "std/api-request@1", payload: { op: "get-order" },
+  }));
+  await waitFor(() => replies.some((e) => e.kind === "data"));
+  assert.equal(seen.headers.Authorization, undefined);
+  assert.equal(seen.headers["X-Aura-Delivery"], "req-1");
+  await aura.stop();
+  await k.close();
+});

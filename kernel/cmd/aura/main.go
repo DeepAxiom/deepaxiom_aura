@@ -137,6 +137,7 @@ Usage:
           [--memory-budget 8Gi] [--event-log-max 20Gi] [--config <file>]
           [--open-witness] [--session-mailbox 1024]
           [--otlp http://collector:4318] [--otlp-sample 0.1]
+          [--inference-url http://127.0.0.1:8000/v1] [--inference-priority vllm|sglang]
   aura chat ["message"] [--graph chat] [--port 9080]
   aura do "natural-language goal" [--yes] [--port 9080]
   aura connect --openapi <url|file> [--name x] [--base-url y] [--header "K: V"]
@@ -259,6 +260,18 @@ func cmdUp(args []string) {
 		"stand by for the node that currently owns --data and take over when it dies. "+
 			"Opens nothing the live node is writing; on the same host it notices a dead "+
 			"process in about a tenth of a second instead of waiting out --lease-ttl")
+	inferenceURL := fs.String("inference-url", "",
+		"put this node in the path of inference: the OpenAI-compatible base URL of an engine "+
+			"it forwards to, e.g. http://127.0.0.1:8000/v1 (default: $AURA_ENGINE_URL; empty = off). "+
+			"Expertise then call the node (AURA_INFERENCE_URL=node), which knows what each request "+
+			"is for, cuts it at the engine when its chain is cancelled or its deadline passes, and "+
+			"counts what it cost per graph. The engine's own key, if it wants one, is read from "+
+			"$AURA_ENGINE_API_KEY — never from a flag, which would put it in the process list")
+	inferencePriority := fs.String("inference-priority", "",
+		"how that engine spells a request's priority: vllm (lowest value first) or sglang "+
+			"(highest first). Empty sends none. Only for an engine started to honour it: vLLM "+
+			"answers a non-zero priority with an error unless launched with "+
+			"--scheduling-policy priority")
 	noAuth := fs.Bool("no-auth", false, "disable the bearer token (single-user loopback nodes only)")
 	pprofAddr := fs.String("pprof", "", "expose Go profiling on this address (e.g. 127.0.0.1:6060); off by default")
 	withExamples := fs.Bool("with-examples", false,
@@ -349,6 +362,10 @@ func cmdUp(args []string) {
 		OTLPEndpoint:   firstNonEmpty(*otlpEndpoint, os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
 		OTLPSample:     *otlpSample,
 		OTLPHeaders:    otel.ParseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+
+		InferenceURL:      firstNonEmpty(*inferenceURL, os.Getenv("AURA_ENGINE_URL")),
+		InferenceKey:      os.Getenv("AURA_ENGINE_API_KEY"),
+		InferencePriority: *inferencePriority,
 	})
 	if errors.Is(err, lease.ErrStandbyStopped) {
 		fmt.Println("  stopped while standing by; nothing was taken over")
@@ -452,6 +469,7 @@ func cmdUp(args []string) {
 		trustedProxy: *trustedProxy,
 		quic:         quicEndpoint(wt),
 		evlog:        st.EventLogStats(), eventLogMax: eventLogMaxBytes,
+		inference: inferenceUpstream(gw), inferencePriority: *inferencePriority,
 	})
 
 	srv := &http.Server{
@@ -532,6 +550,18 @@ func cmdUp(args []string) {
 		// the durable writes matters more than finishing one HTTP response.
 		ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 		defer cancel()
+		// First, before waiting for anything: end what the node has running
+		// at its inference engine. Those handlers are long-lived by nature —
+		// each is a generation in progress — and Shutdown below waits for
+		// handlers. Left alone, a node stopped mid-reply would spend its whole
+		// drain window waiting on a model, be killed at the end of it, and
+		// never reach the store's Close. Cutting them also releases the
+		// engine, which is the other thing a stopping node owes.
+		if gw.Infer != nil {
+			if cut := gw.Infer.Shutdown(); cut > 0 {
+				fmt.Printf("  cut %d inference request(s) at the engine\n", cut)
+			}
+		}
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Warn("some connections did not close within the drain window", "err", err)
 		}
@@ -540,6 +570,14 @@ func cmdUp(args []string) {
 		// database closes with no transaction open against it.
 		fmt.Printf("  stopped cleanly — the ledger and the event log are consistent\n")
 	}
+}
+
+// inferenceUpstream is the engine a node forwards to, or "" when it has none.
+func inferenceUpstream(gw *gateway.Gateway) string {
+	if gw.Infer == nil {
+		return ""
+	}
+	return gw.Infer.Upstream()
 }
 
 // drainTimeout bounds the graceful shutdown window.
@@ -576,6 +614,11 @@ type bannerInfo struct {
 	public       bool
 	trustedProxy bool
 	tls          bool
+	// inference is the engine this node forwards to, credentials removed, or
+	// empty when it is not in the path of inference at all. inferencePriority
+	// is the convention it writes priorities in.
+	inference         string
+	inferencePriority string
 }
 
 // printBanner is the one place a running node explains its own security
@@ -634,6 +677,21 @@ func printBanner(b bannerInfo) {
 
 	if b.budget > 0 {
 		fmt.Printf("  budget    %s (R15 admission)\n", gateway.FormatBytes(b.budget))
+	}
+
+	// Whether the node sees inference at all. Stated either way: an operator
+	// who believes cancellation reaches the engine, on a node whose Expertise
+	// call that engine directly, believes something that is not true.
+	if b.inference != "" {
+		priority := "no priority sent"
+		if b.inferencePriority != "" {
+			priority = "priority as " + b.inferencePriority
+		}
+		fmt.Printf("  inference %s://localhost:%d/v1/inference -> %s (%s)\n",
+			b.scheme, b.port, b.inference, priority)
+		fmt.Printf("            Expertise reach it with AURA_INFERENCE_URL=node\n")
+	} else {
+		fmt.Printf("  inference not through this node (--inference-url to see, stop and count it)\n")
 	}
 
 	if b.token == "" {

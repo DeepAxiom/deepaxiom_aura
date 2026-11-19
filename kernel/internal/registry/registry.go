@@ -269,6 +269,13 @@ type Live struct {
 	// round-robin land unevenly and made "the newest wins" mean nothing when
 	// two connections arrived in the same instant.
 	conn string
+	// TokenID is the scoped credential this connection registered with, or
+	// empty for the operator token (a file, not a row) and for skills the
+	// kernel hosts itself. It is what lets the executor tell two processes
+	// serving the same capability apart: without it "was this work given to
+	// you" can only be answered per manifest, and a second provider of a
+	// capability is indistinguishable from the first.
+	TokenID string
 	// Send writes to the skill's transport, serialized. The qos argument is
 	// the declared class of the edge the message travels on (C3 rule 4): it
 	// decides whether a slow receiver blocks the producer or loses frames.

@@ -59,8 +59,8 @@ number.
 | | State | What is missing |
 |---|---|---|
 | **A latency budget, measured** | Per-session dispatch queues, load-aware replicas, delta coalescing and a stable prompt prefix are in and tested for correctness. | A figure. `kernel/cmd/loadgen` drives an echo round-trip — no slow consumer, one envelope per message — so it shows none of it. A load generator with a streaming producer, a deliberately slow consumer and a p99 per hop is what turns "a slow session only slows itself" from a tested property into a measured one. |
-| **Deadlines that do something** | Absolute, inherited deadlines exist: a hop may tighten one and never extend it, and a late delivery is dropped rather than sent. | The receiving Expertise is *expected* to degrade and nothing checks that it does. A deadline needs a second half: what runs instead when the budget is gone — a smaller model, a cached answer, a safe default. |
-| **Priority that preempts** | Edges declare a priority and the kernel stamps it on every delivery. | Acting on it is left to the Expertise that receives it; the kernel itself preempts nothing. On a machine with one GPU, a safety-relevant chain has to be able to take the model away from a conversational one, and that has to be the node's decision rather than each Expertise's. |
+| **Deadlines that do something** | A deadline is inherited down a whole chain, through the kernel's own record of each delivery rather than through anything an Expertise carries; late `data` is dropped, a late effect is sealed `expired`, and an approval after the deadline releases nothing. A separate response target (`respond_ms`) bounds the first output without cutting anything. Handlers can read both and the time left. Tested; the cost per delivery is not yet measured. | The receiving Expertise is *expected* to degrade and nothing checks that it does. A deadline needs a second half: what runs instead when the budget is gone — a smaller model, a cached answer, a safe default. The graph cannot declare that yet, so it is still each Expertise's to implement. |
+| **Priority that preempts** | Edges declare a priority and the kernel stamps it on every delivery. With inference going through the node, the node — not the Expertise — writes that priority on the request it forwards, in the engine's own convention, and removes any the request claimed for itself. | The node still preempts nothing: it has no queue, so what a priority achieves is whatever the engine does with it, and vLLM's reorders waiting requests without interrupting running ones. On a machine with one GPU, a safety-relevant chain has to be able to take the model away from a conversational one, and that needs a queue and a reserved lane in the node. |
 | **A context budget in real tokens** | Expertise can report what an engine counted (C5 v1.2) and the kernel meters it. | The per-graph budget is still charged at bytes/4. Charging it from reported usage changes what an existing budget means, which is why it was not done in passing. |
 
 ## Every decision traceable
@@ -91,11 +91,14 @@ A robot is mostly a model-deployment problem with motors attached. What exists
 is a start: a catalogue and downloader (`model-manager`), a hardware-fit
 estimator (`model-fit`), pinned and attested revisions, and — since 0.4 — every
 first-party Expertise able to share one set of weights through one inference
-server.
+server. That server can now sit behind the node (`aura up --inference-url`):
+the node then knows which graph and delivery each request is for, closes it at
+the engine when its chain is cancelled or its deadline passes, and reads what
+it cost off the engine's own responses.
 
 | | What is missing |
 |---|---|
-| **The node owning its inference server** | `AURA_INFERENCE_URL` points at a server; nothing starts it, supervises it or restarts it. Marking a model active does not change what that server has loaded, and admission (`--memory-budget`) does not know it exists. Verified against a fake endpoint only. |
+| **The node owning its inference server** | The node can stand in front of a server and see, place, stop and count what passes. It still does not start that server, supervise it or restart it. Marking a model active does not change what the server has loaded, and admission (`--memory-budget`) does not know it exists. Nothing keeps an Expertise from reaching the engine directly if it can. Verified against a fake engine only: no number here came from a real one. |
 | **Swapping a model without stopping the machine** | A change of weights is a restart of whatever holds them. What is needed is load-beside, shift, unload — with `aura regress` as the gate that decides whether the shift happens, because that is exactly the question it already answers. And a way back. |
 | **Optimisation as a step, not a download** | `model-fit` chooses among quantisations someone else produced. Producing the right artefact for a given device — quantising, compiling for its accelerator — is not in this repository, and the attestation has no way to say an artefact was derived from a pinned revision rather than downloaded. |
 | **More than one model on one accelerator** | Each Expertise that loads weights loads its own copy. Perception, language and speech on one small GPU need a scheduler that knows what is loaded, what it costs and which chain is waiting. |

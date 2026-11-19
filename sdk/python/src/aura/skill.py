@@ -54,6 +54,7 @@ from .envelope import (
     new_id,
 )
 from .attest import Attestation
+from .delivery import DeliveryRef
 from .manifest import load_manifest, validate_manifest
 
 _logger = logging.getLogger("aura.skill")
@@ -198,6 +199,84 @@ class Context:
         """This skill's node ref inside the running graph."""
         return self._incoming.node
 
+    @property
+    def delivery(self) -> DeliveryRef:
+        """The delivery this handler is answering, as something to hand on.
+
+        Pass it to whatever does work on this delivery's behalf, so the node
+        can tell what that work is for::
+
+            backend.stream_chat(messages, delivery=ctx.delivery)
+
+        With inference going through the node (`AURA_INFERENCE_URL=node`) that
+        is what lets the node give the request this delivery's priority and
+        deadline, count it against this graph, and close it at the engine if
+        the chain is cancelled. It is a reference, not a credential, and it is
+        safe to pass to a worker thread.
+        """
+        return DeliveryRef(session=self._incoming.session, id=self._incoming.id,
+                           node=self._incoming.node, port=self._incoming.port)
+
+    # --- time and priority (C2 rules 7 and 9) --------------------------------
+    #
+    # The contract has always said an Expertise is "expected to degrade" as its
+    # deadline approaches — fewer beams, a smaller model, a shorter answer —
+    # rather than arrive late. Until these existed it could not: the deadline
+    # was on the envelope and nothing handed it to the handler.
+
+    @property
+    def deadline(self) -> int | None:
+        """The instant, in unix milliseconds, after which nothing this delivery
+        causes is worth delivering — or None when there is no such bound.
+
+        It is a *validity* bound. The kernel drops `data` you emit after it, so
+        work that will not finish in time is work to skip or to shorten::
+
+            if ctx.remaining_ms() is not None and ctx.remaining_ms() < 150:
+                model = SMALL_MODEL   # an answer in time beats a better one late
+
+        Read-only, and absolute: it does not restart at each hop, and emitting
+        does not carry it — the kernel inherits it from its own record of this
+        delivery.
+        """
+        return self._incoming.deadline or None
+
+    @property
+    def respond_by(self) -> int | None:
+        """The instant by which your *first output* is due, or None.
+
+        A responsiveness target, not a validity bound: missing it is recorded
+        and nothing is dropped. Use it to start answering sooner — stream the
+        first sentence before the rest is ready — not to give up.
+        """
+        return self._incoming.respond_by or None
+
+    @property
+    def priority(self) -> int:
+        """The scheduling priority of the edge this delivery travelled. Higher
+        wins; 0 is ordinary."""
+        return self._incoming.priority
+
+    def remaining_ms(self) -> int | None:
+        """Milliseconds left before `deadline`, or None when there is none.
+
+        Never negative: 0 means the deadline has passed and whatever `data` you
+        emit now will be dropped.
+        """
+        return _until(self._incoming.deadline)
+
+    def respond_within_ms(self) -> int | None:
+        """Milliseconds left before `respond_by`, or None when there is none.
+        0 means the first output is already late."""
+        return _until(self._incoming.respond_by)
+
+    @property
+    def expired(self) -> bool:
+        """True once `deadline` has passed. A handler in a loop should check
+        this beside `cancelled`: the two mean the same thing for the work in
+        hand — nobody is waiting for it any more."""
+        return bool(self._incoming.deadline) and _now_ms() >= self._incoming.deadline
+
     async def emit(
         self, port: str, payload: Any, *, kind: str = KIND_DATA,
         attest: "Attestation | dict | None" = None,
@@ -245,6 +324,18 @@ class Context:
 
     async def error(self, port: str, detail: str) -> None:
         await self.emit(port, {"state": "error", "detail": detail}, kind=KIND_ERROR)
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _until(instant: int) -> int | None:
+    """Milliseconds from now until an absolute instant; None when there is
+    none, 0 when it has passed."""
+    if not instant:
+        return None
+    return max(0, instant - _now_ms())
 
 
 def _attest_wire(attest: "Attestation | dict | None") -> dict | None:

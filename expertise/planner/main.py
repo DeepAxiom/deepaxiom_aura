@@ -59,7 +59,8 @@ async def handle(ctx: Context) -> None:
         await ctx.status("status_out", "working",
                          f"planning with {len(catalog)} available skills...")
         backend, reasoning, steps = await asyncio.to_thread(
-            make_plan, goal, catalog, backend=BACKEND, config=dict(skill.config))
+            make_plan, goal, catalog, backend=BACKEND, config=dict(skill.config),
+            delivery=ctx.delivery)
         log.info("raw steps (%s): %s", backend, json.dumps(steps, ensure_ascii=False))
         plan = compile_plan(goal, reasoning, steps, catalog, cause=ctx.id,
                             skill_id=skill.manifest["id"])

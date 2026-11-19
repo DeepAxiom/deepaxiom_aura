@@ -797,6 +797,61 @@ func (l *Log) Session(session string, limit int) ([]Entry, error) {
 	return l.readLocators(session, locs)
 }
 
+// SessionPage returns up to `limit` of a session's records starting at the
+// `offset`-th, in the order they were written, and whether the session has
+// records beyond the page.
+//
+// Session's `limit` reads a prefix and SessionTail a suffix; neither lets a
+// reader walk a long session without holding all of it. Resume needs to — the
+// bookkeeping it rebuilds depends on the *end* of the history as much as the
+// beginning — and a voice session is hundreds of thousands of records.
+//
+// For a session whose locators were evicted the index cannot address a page,
+// so this falls back to one scan and slices it: correct, and no worse than
+// what Session already does for the same session.
+func (l *Log) SessionPage(session string, offset, limit int) ([]Entry, bool, error) {
+	if offset < 0 || limit <= 0 {
+		return nil, false, nil
+	}
+	l.mu.RLock()
+	si := l.idx[session]
+	if si == nil {
+		l.mu.RUnlock()
+		return nil, false, nil
+	}
+	if si.evicted {
+		segs := make([]uint32, 0, len(si.segs))
+		for ord := range si.segs {
+			segs = append(segs, ord)
+		}
+		paths := l.pathsFor(segs)
+		l.mu.RUnlock()
+		all, err := l.scanFor(session, paths, 0)
+		if err != nil || offset >= len(all) {
+			return nil, false, err
+		}
+		end := offset + limit
+		if end > len(all) {
+			end = len(all)
+		}
+		return all[offset:end], end < len(all), nil
+	}
+	if offset >= len(si.locs) {
+		l.mu.RUnlock()
+		return nil, false, nil
+	}
+	end := offset + limit
+	if end > len(si.locs) {
+		end = len(si.locs)
+	}
+	more := end < len(si.locs)
+	locs := append([]locator(nil), si.locs[offset:end]...)
+	l.mu.RUnlock()
+
+	out, err := l.readLocators(session, locs)
+	return out, more, err
+}
+
 // SessionTail returns the last `limit` records of a session, oldest first.
 //
 // Session answers "how did this conversation begin"; this answers "what just

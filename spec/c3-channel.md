@@ -1,6 +1,6 @@
 # C3 — Channel Protocol (frozen contract)
 
-**Protocol major: 1 · Status: v1.7 — FROZEN (2026-11-11: optional `trace` field added, carrying a W3C Trace Context `traceparent` along a causal chain, see [Trace context](#trace-context-joining-a-callers-trace) — additive, and absent from every envelope of a chain whose client supplied none, so a v1.6 peer sees an unchanged wire; 2026-08-15: optional `deadline`, `priority` and `speculative` fields added, carrying [C2](c2-graph-ir.md) v1.2 scheduling intent on the wire — additive; 2026-08-15: optional `attest` field added, carrying a [C5](c5-attestation.md) inference attestation — what the emitting Expertise asserts about how it produced the payload — additive, wire format otherwise unchanged; 2026-08-01: optional `receipt` field added, carrying a [C4](c4-ledger.md) ledger entry's hash on an envelope that sealed an effect — additive, wire format otherwise unchanged; 2026-08-01: QoS rule 4 now specifies what each class does under pressure and is enforced, and rule 7 permits payload elision on `realtime` edges — wire format unchanged; 2026-08-01: `cancel` widened from single-hop best-effort to whole-chain with kernel-side suppression, see [Cancel](#cancel-abandoning-a-chain); 2026-07-30: `config_update` kind added; base v1.0 frozen 2026-07-14). Changes: additive only; breaking = new major via RFC.**
+**Protocol major: 1 · Status: v1.8 — FROZEN (2026-11-19: optional `respond_by` field added, carrying [C2](c2-graph-ir.md) v1.3 rule 9 on the wire, and `deadline`, `priority` and `speculative` — on the wire since v1.6 — given their rows in the field table and their entries in the envelope schema, which had neither — additive; v1.7 2026-11-11: optional `trace` field added, carrying a W3C Trace Context `traceparent` along a causal chain, see [Trace context](#trace-context-joining-a-callers-trace) — additive, and absent from every envelope of a chain whose client supplied none, so a v1.6 peer sees an unchanged wire; 2026-08-15: optional `deadline`, `priority` and `speculative` fields added, carrying [C2](c2-graph-ir.md) v1.2 scheduling intent on the wire — additive; 2026-08-15: optional `attest` field added, carrying a [C5](c5-attestation.md) inference attestation — what the emitting Expertise asserts about how it produced the payload — additive, wire format otherwise unchanged; 2026-08-01: optional `receipt` field added, carrying a [C4](c4-ledger.md) ledger entry's hash on an envelope that sealed an effect — additive, wire format otherwise unchanged; 2026-08-01: QoS rule 4 now specifies what each class does under pressure and is enforced, and rule 7 permits payload elision on `realtime` edges — wire format unchanged; 2026-08-01: `cancel` widened from single-hop best-effort to whole-chain with kernel-side suppression, see [Cancel](#cancel-abandoning-a-chain); 2026-07-30: `config_update` kind added; base v1.0 frozen 2026-07-14). Changes: additive only; breaking = new major via RFC.**
 
 Everything that flows through the system travels as an **envelope** over a typed channel.
 Conforms to `schemas/envelope.schema.json`.
@@ -38,6 +38,10 @@ Conforms to `schemas/envelope.schema.json`.
 | `receipt` | Optional ([C4](c4-ledger.md)). Present only on an envelope the kernel delivered into a `motor.*` Expertise: the hash of the ledger entry that sealed that effect. Absent on every envelope that carries no effect — most of them. A receiving Expertise or client MAY ignore it; a client that wants proof an effect was attested, not merely delivered, looks it up via `GET /v1/ledger` or `aura verify`. |
 
 | `trace` | Optional (v1.7). A W3C Trace Context `traceparent`: `00-<32 hex>-<16 hex>-<2 hex>`, lowercase. See [Trace context](#trace-context-joining-a-callers-trace). |
+| `deadline` | Optional (v1.6). Unix milliseconds: the instant after which nothing this delivery causes is worth delivering. A validity bound — late `data` is dropped. See [Time bounds](#time-bounds). |
+| `respond_by` | Optional (v1.8). Unix milliseconds: the instant by which the first output caused by this delivery is due. A target — a miss is recorded and nothing is dropped. See [Time bounds](#time-bounds). |
+| `priority` | Optional (v1.6). Integer, higher wins, absent means 0. The scheduling priority of the edge this delivery travelled ([C2](c2-graph-ir.md) `edges[].priority`). |
+| `speculative` | Optional (v1.6). `true` on a delivery made on partial upstream output, which may be cancelled if the producer's final output differs ([C2](c2-graph-ir.md) rule 6). |
 
 ## Normative semantics
 
@@ -121,6 +125,45 @@ for whatever the client asked for instead.
 single-hop propagation and no suppression. This is a widening — every client
 that conformed to v1.1 still conforms, it simply receives less stale output
 than the old text allowed.*
+
+## Time bounds
+
+Two optional instants, both absolute and both in unix milliseconds, with
+different meanings and different consequences ([C2](c2-graph-ir.md) rules 7
+and 9):
+
+- **`deadline`** bounds validity. After it, whatever this delivery causes is
+  worthless and a kernel drops the `data` that arrives late. An effect dropped
+  this way is sealed in the ledger as `expired` ([C4](c4-ledger.md)).
+- **`respond_by`** bounds responsiveness. It is carried by the *front* of what
+  a delivery causes — the first `data` output and what that output causes in
+  turn — and by nothing behind it. A miss is recorded; nothing is dropped.
+
+**Who sets them.**
+
+| Party | May it set them? |
+|---|---|
+| The kernel, on what it delivers | Yes. This is where they normally come from: an edge's `deadline_ms` / `respond_ms`, or inheritance. |
+| A client, on the envelope that starts a chain | Yes. A caller may bound the chain it starts. |
+| An Expertise, on what it emits | **No.** A kernel MUST ignore `deadline` and `respond_by` on an envelope an Expertise emitted. |
+
+The last row is the point. An Expertise answers a delivery by naming it in
+`cause_id`, and the kernel inherits the bounds from its own record of that
+delivery. Were the Expertise to carry its own budget from one envelope to the
+next, the party being constrained would be the party stating the constraint.
+
+**What an Expertise does with them.** Reads them, and degrades: a smaller model,
+a shorter answer, the first sentence before the rest. `deadline` is the one to
+obey — what is emitted after it is dropped. `respond_by` is the one to hurry
+for. An SDK SHOULD expose both to a handler, together with the time remaining.
+
+A kernel MUST NOT drop a terminal or explanatory envelope (`done`, `error`,
+`status`, `confirm_request`) for either bound.
+
+**A held delivery says when it expires.** When a delivery held at a
+human-approval gate is under a `deadline`, the `std/confirmation@1` question
+carries it as `expires_at`. An approval that arrives later does not release the
+effect ([C2](c2-graph-ir.md) rule 7).
 
 ## Trace context (joining a caller's trace)
 

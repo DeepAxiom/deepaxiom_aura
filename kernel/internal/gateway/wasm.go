@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"aura/kernel/internal/channel"
+	"aura/kernel/internal/executor"
 	"aura/kernel/internal/registry"
 	"aura/kernel/internal/spec"
 	"aura/kernel/internal/wasmrt"
@@ -96,7 +97,11 @@ func (g *Gateway) registerWasmSkill(w http.ResponseWriter, r *http.Request) {
 	live := &registry.Live{
 		Manifest:  m,
 		Connected: time.Now(),
-		Send:      g.wasmSend(module, perm, ingressPort, egressPort.Name, egressPort.Schema),
+		Send: g.wasmSend(module, perm, ingressPort, egressPort.Name, egressPort.Schema,
+			// The kernel emits on the guest's behalf, so it also says who the
+			// guest is: the same identity a socket-connected Expertise gets
+			// from its registration.
+			executor.Emitter{Conn: connID, Expertise: m.ID}),
 	}
 	g.Reg.Register(connID, live)
 	if err := g.St.UpsertSkill(m.ID, m.Version, m); err != nil {
@@ -119,7 +124,7 @@ func (g *Gateway) registerWasmSkill(w http.ResponseWriter, r *http.Request) {
 // the goroutine actually running the sandboxed module, there, from
 // skillWS's read loop.
 func (g *Gateway) wasmSend(module *wasmrt.Module, perm wasmrt.Permission,
-	ingressPort, egressPort, egressSchema string) func([]byte, string) error {
+	ingressPort, egressPort, egressSchema string, em executor.Emitter) func([]byte, string) error {
 	return func(raw []byte, _ string) error {
 		var incoming channel.Envelope
 		if err := json.Unmarshal(raw, &incoming); err != nil {
@@ -139,11 +144,11 @@ func (g *Gateway) wasmSend(module *wasmrt.Module, perm wasmrt.Permission,
 			stdout, stderr, exitCode, err := module.Invoke(ctx, incoming.Payload, perm)
 
 			if err != nil {
-				g.dispatchWasmError(incoming, egressPort, err.Error())
+				g.dispatchWasmError(incoming, egressPort, err.Error(), em)
 				return
 			}
 			if exitCode != 0 {
-				g.dispatchWasmError(incoming, egressPort, string(stderr))
+				g.dispatchWasmError(incoming, egressPort, string(stderr), em)
 				return
 			}
 
@@ -153,7 +158,7 @@ func (g *Gateway) wasmSend(module *wasmrt.Module, perm wasmrt.Permission,
 				Seq: 1, Idem: incoming.ID + ":wasm-reply",
 				Schema: egressSchema, Kind: channel.KindData, Payload: stdout,
 			}
-			if err := g.Mgr.Dispatch(data); err != nil {
+			if err := g.Mgr.DispatchFrom(data, em); err != nil {
 				g.Log.Error("wasm reply dispatch failed", "err", err)
 				return
 			}
@@ -162,7 +167,7 @@ func (g *Gateway) wasmSend(module *wasmrt.Module, perm wasmrt.Permission,
 				Session: incoming.Session, Node: incoming.Node, Port: egressPort,
 				Kind: channel.KindDone,
 			}
-			if err := g.Mgr.Dispatch(done); err != nil {
+			if err := g.Mgr.DispatchFrom(done, em); err != nil {
 				g.Log.Error("wasm done dispatch failed", "err", err)
 			}
 		}()
@@ -176,14 +181,14 @@ func (g *Gateway) wasmSend(module *wasmrt.Module, perm wasmrt.Permission,
 // routing table — the wrong port here means the envelope matches no edge
 // and is silently dropped by Route's "no route" path instead of ever
 // reaching the client.
-func (g *Gateway) dispatchWasmError(incoming channel.Envelope, egressPort, detail string) {
+func (g *Gateway) dispatchWasmError(incoming channel.Envelope, egressPort, detail string, em executor.Emitter) {
 	payload, _ := json.Marshal(map[string]string{"state": "error", "detail": detail})
 	errEnv := channel.Envelope{
 		V: channel.ProtocolMajor, ID: channel.NewID(), CauseID: incoming.ID,
 		Session: incoming.Session, Node: incoming.Node, Port: egressPort,
 		Kind: channel.KindError, Schema: "std/status@1", Payload: payload,
 	}
-	if err := g.Mgr.Dispatch(errEnv); err != nil {
+	if err := g.Mgr.DispatchFrom(errEnv, em); err != nil {
 		g.Log.Error("wasm error dispatch failed", "err", err)
 	}
 }

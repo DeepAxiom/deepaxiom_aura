@@ -49,7 +49,20 @@ type Manager struct {
 	mbox         mailboxCounters
 	// usage totals what skills reported their inferences cost (C5 `usage`).
 	usage usageCounters
+	// lineage and deadlines are node-wide for the same reason usage is: the
+	// number an operator needs is what this node is doing, not what one
+	// conversation did.
+	lineage   lineageCounters
+	deadlines deadlineCounters
+	// onCancel is told whenever a chain's work is abandoned. See resolve.go.
+	onCancel cancelObserver
 }
+
+// LineageStats reports the node's delivery-lineage index. See lineage.go.
+func (m *Manager) LineageStats() LineageStats { return m.lineage.snapshot() }
+
+// DeadlineStats reports what deadlines and response targets did on this node.
+func (m *Manager) DeadlineStats() DeadlineStats { return m.deadlines.snapshot() }
 
 // SetApprovers installs the enrolled operator roster. Separate from NewManager
 // on purpose: the roster is loaded from the same store the manager already has,
@@ -112,6 +125,9 @@ func (m *Manager) Start(sessionID, graphID, undoOf string,
 	}
 	sess.approvers = m.approvers
 	sess.usage = &m.usage
+	sess.lineage.stats = &m.lineage
+	sess.deadlines = &m.deadlines
+	sess.onCancel = &m.onCancel
 	if err := m.st.StartSession(sessionID, graphID); err != nil {
 		return nil, err
 	}
@@ -142,6 +158,9 @@ func (m *Manager) End(sessionID string) {
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()
 	if sess != nil {
+		// Nobody is in this conversation any more. Whatever the node is still
+		// running on its behalf is running for no one.
+		m.notifyCancel(CancelNotice{Session: sessionID, Reason: CancelBySessionEnd})
 		// After the delete, so nothing new can be enqueued for it, and before
 		// the store is told the session ended, so nothing is still routing.
 		m.stopMailbox(sess)
@@ -152,8 +171,20 @@ func (m *Manager) End(sessionID string) {
 	m.log.Info("session ended", "session", sessionID)
 }
 
-// Dispatch routes a skill-emitted envelope to its session.
+// Dispatch routes an envelope to its session on the kernel's own authority.
+// What an Expertise emits goes through DispatchFrom.
 func (m *Manager) Dispatch(env channel.Envelope) error {
+	return m.DispatchFrom(env, Emitter{})
+}
+
+// DispatchFrom routes an envelope an Expertise emitted to its session, along
+// with who emitted it.
+//
+// The emitter travels with the envelope all the way to Session.RouteFrom —
+// through the mailbox too — because that is the only place that can check
+// what the envelope claims about itself against the connection it actually
+// arrived on.
+func (m *Manager) DispatchFrom(env channel.Envelope, em Emitter) error {
 	m.mu.RLock()
 	sess, ok := m.sessions[env.Session]
 	m.mu.RUnlock()
@@ -161,10 +192,10 @@ func (m *Manager) Dispatch(env channel.Envelope) error {
 		return fmt.Errorf("unknown session %q", env.Session)
 	}
 	if mb := sess.mailbox; mb != nil {
-		m.enqueue(mb, env)
+		m.enqueue(mb, queued{env: env, em: em})
 		return nil
 	}
-	return m.route(sess, env)
+	return m.route(sess, env, em)
 }
 
 // route runs one session's routing with a blast radius of one session.
@@ -186,7 +217,7 @@ func (m *Manager) Dispatch(env channel.Envelope) error {
 // caller fails that delivery the same way it would fail any other. Nothing is
 // silently swallowed — the difference is only that the other thousand sessions
 // keep running.
-func (m *Manager) route(sess *Session, env channel.Envelope) (err error) {
+func (m *Manager) route(sess *Session, env channel.Envelope, em Emitter) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			m.log.Error("panic while routing; this session failed, the node did not",
@@ -196,6 +227,6 @@ func (m *Manager) route(sess *Session, env channel.Envelope) (err error) {
 				env.ID, env.Session)
 		}
 	}()
-	sess.Route(env)
+	sess.RouteFrom(env, em)
 	return nil
 }

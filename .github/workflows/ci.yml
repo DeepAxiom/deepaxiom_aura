@@ -253,6 +253,15 @@ jobs:
           PYTHONPATH: ../../sdk/python/src
         run: python -m unittest test_parser -v
 
+      # The inference bench is what a number in this repository — or in an
+      # issue filed upstream — will have come out of, so the harness itself is
+      # tested: its percentiles, its SSE parsing, and that it tells a
+      # saturated engine from an idle one. Against the bundled mock only; no
+      # engine and no GPU are involved, and no result here is a measurement.
+      - name: inference bench harness
+        working-directory: bench/inference
+        run: python -m unittest discover -p 'test_*.py'
+
   conformance:
     name: conformance suite (C1/C2/C3)
     runs-on: ubuntu-latest
@@ -313,6 +322,26 @@ jobs:
         run: |
           pip install pyyaml
           python scripts/failover_e2e.py ./kernel/aura --port 9396 --max-outage-ms 5000
+
+      # C2 rules 7 and 9 over real sockets. The executor's unit tests hand the
+      # session an emitter; here the kernel has to work out who is speaking from
+      # the connection an envelope arrived on, which is the half that decides
+      # whether a deadline survives a real Expertise — and the half a unit test
+      # cannot reach. One of the three Expertise is built on the SDK, so this
+      # is also what proves a handler is actually shown its deadline.
+      - name: deadlines hold across real Expertise
+        run: python scripts/deadline_e2e.py ./kernel/aura --port 9397
+
+      # A real node with authentication on, a fake engine, and two Expertise
+      # built on the SDK holding only credentials scoped to their own
+      # capability. What it proves is the join no unit test reaches: a request
+      # made through the node is placed in the right graph and given the edge's
+      # priority rather than the one it claimed; one made under another
+      # Expertise's delivery is refused; a client's cancel, a deadline and a
+      # SIGTERM each release the engine. It prints how long each took and what
+      # going through the node cost — measured on this runner, not a claim.
+      - name: inference goes through the node, and stops when it should
+        run: python scripts/inference_e2e.py ./kernel/aura --port 9398
 
   adversarial:
     name: adversarial (the node refuses what it should)

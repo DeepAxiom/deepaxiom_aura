@@ -7,6 +7,7 @@ from .attest import (
     sha256_file,
     sha256_text,
 )
+from .delivery import DeliveryRef, node_headers, node_inference_url, via_node
 from .envelope import Envelope, new_id, PROTOCOL_MAJOR
 from .llm import ChatBackend, compact_history
 from .manifest import (LEGACY_MANIFEST_FILE, MANIFEST_FILE, SKILL_TYPES,
@@ -30,6 +31,8 @@ __all__ = [
     "sha256_text", "sha256_file",
     # Streaming helpers.
     "DeltaCoalescer", "compact_history",
+    # Inference through the node: naming the delivery a request is for.
+    "DeliveryRef", "node_headers", "node_inference_url", "via_node",
     # The manifest file, under its current name and the one it replaced.
     "MANIFEST_FILE", "LEGACY_MANIFEST_FILE", "default_manifest_path",
 ]
