@@ -5,7 +5,9 @@
 Fast enough to be in the loop. Every decision traceable to what argued for it.
 Nothing acts on the world that the node did not check first.
 
-[Quick start](QUICKSTART.md) · [Full guide](GUIDE.md) · [Roadmap](ROADMAP.md) ·
+[![CI](https://github.com/DeepAxiom/deepaxiom_aura/actions/workflows/ci.yml/badge.svg)](https://github.com/DeepAxiom/deepaxiom_aura/actions/workflows/ci.yml)
+
+[See it run](#run-both-yourself) · [Quick start](QUICKSTART.md) · [Full guide](GUIDE.md) · [Roadmap](ROADMAP.md) ·
 [Milestone status](GUIDE.md#milestone-status) · [Versión en español](README-ES.md) ·
 **v0.4.0 — pre-1.0, pre-production**
 
@@ -13,29 +15,79 @@ Nothing acts on the world that the node did not check first.
 <p align="center"><img src="docs/media/under-fire.gif" alt="aura demo: a node and its standby under 324 live sessions while six things are done to them — sessions stop reading, an Expertise is compromised, orders arrive late, generations are cancelled, the node is killed, a byte of the ledger is edited — each one measured and survived" width="900"></p>
 <!-- /UI-HERO -->
 
-**That is one run of `aura demo`**, three times faster than it happened: a real
-node and its standby under 324 live sessions, while six things are done to
-them. Sessions stop reading. An Expertise is taken over and reaches for a
-credential. Orders arrive past their deadline. Generations are cancelled
-mid-sentence. The node gets SIGKILL. One byte of the ledger is edited on disk.
-Every figure on the screen was measured in that run; none is typed in.
+## A node under fire
+
+**That is one run of `aura demo`**, three times faster than it happened. A real
+node and its standby, 324 live sessions through them, and six things done to
+that system while it runs. Nothing on the screen is typed in: every figure was
+measured in that run, and a beat that had not held would have said so in red,
+in the same place.
+
+| | What is done to it | What that run measured |
+|---|---|---|
+| 1 | Six sessions stop reading while an Expertise sends each of them 1,200 messages, over the connection it answers everyone else on | 3,718 messages held by the node; the others carried on; 7,200 of 7,200 delivered in order |
+| 2 | An Expertise is taken over and, with its own token, tries 71 ways to make a service act | 0 of 71 |
+| 3 | Twenty orders are issued after the decision behind them stopped being valid | 0 carried out; 20 sealed in the ledger as `expired` |
+| 4 | Sixteen long generations are cancelled mid-sentence | the engine was free 0.30 ms after the cancel |
+| 5 | The node gets SIGKILL | its standby answered in 520 ms, as the same node; 324 of 324 sessions back in 2.2 s |
+| 6 | One character of the ledger is edited on disk | caught in 10.6 ms, and verification names the entry |
+
+One laptop, everything on it; a reference for that machine and not a benchmark.
 [What it shows, and what it does not](GUIDE.md#a-node-under-fire-aura-demo).
 
-```bash
-aura demo              # then open http://127.0.0.1:7700
-```
+## The same work, without it
 
 <p align="center"><img src="docs/media/versus.gif" alt="aura demo --versus: an ordinary agent on the left and a node on the right, doing the same work while the same four things are done to both — taken over, orders arriving late, killed, their record edited. The left ends with 61 things that should never have happened, the right with none" width="900"></p>
 
-**And that is the same work without it.** `aura demo --versus` runs an ordinary
-agent beside a node — one process, the service's key in its environment, its
-own rule about what it may do, a log file, restarted the instant it dies — and
-does four things to both at the same instant. Taken over from inside, the agent
-makes 20 of 20 forbidden payments; the node, none. It carries out 20 of 20
-orders that arrive too late; the node seals them as expired. Killed and asked
-again, it carries out 20 orders a second time; the node, each exactly once. And
-when one character of its record is edited on disk, its own check passes.
+**That is `aura demo --versus`.** On the left an ordinary agent: one process,
+the service's key in its environment, a log file. On the right a node. The same
+work on both, and four things done to both at the same instant.
+
+| | Done to both | Without AURA | With AURA |
+|---|---|---|---|
+| 1 | The part that talks to the model is taken over, and tries to make 20 forbidden payments | **20 of 20 made** | 0 of 20 |
+| 2 | 20 orders are issued 600 ms after a decision that was good for 250 ms | **20 of 20 carried out** | 0; each sealed as `expired` |
+| 3 | SIGKILL, and then the 20 clients that never got an answer ask again | **20 carried out twice**; all 60 sessions forgotten | 0 twice; 60 of 60 sessions resumed |
+| 4 | One character of the record of what was done is edited on disk | **not noticed** | the entry is named |
+
+Sixty-one things that should never have happened on the left, none on the
+right, counted at each side's service rather than taken from either system's
+account of itself.
+
+The agent on the left is not built to lose. It has its own rule about what it
+will not do, and that rule refuses all twenty payments at the front door; it
+remembers what it has already carried out; it checks its own log; and it is
+restarted the instant it dies — it is back before the standby is. What it does
+not have is anything outside itself: its rule, its memory and its key are in the
+one process an attacker takes over and a crash takes down.
 [What is fair about that comparison, and what is not](GUIDE.md#the-same-agent-twice-aura-demo---versus).
+
+## Run both yourself
+
+```bash
+git clone https://github.com/DeepAxiom/deepaxiom_aura && cd deepaxiom_aura
+
+# with Docker, and nothing else installed
+docker build -t aura .
+docker run --rm -p 7700:7700 aura demo --listen 0.0.0.0:7700            # the node under fire
+docker run --rm -p 7700:7700 aura demo --versus --listen 0.0.0.0:7700   # the comparison
+
+# or with Go 1.25+ — no CGO, no services, one binary
+cd kernel && go build -o aura ./cmd/aura
+./aura demo
+./aura demo --versus
+```
+
+Then open **http://127.0.0.1:7700**; the run starts when the page does.
+`--headless` runs either with no screen and exits non-zero if anything failed to
+hold, which is how CI runs them on every change.
+
+Each takes under a minute, starts its own node on its own ports in a temporary
+directory, and removes it when it ends; neither touches a node you already run.
+The model in both is simulated — tokens on a timer — and the screen says so:
+what is measured about inference is how the node handles it, not how fast a
+model is. The demos are newer than the v0.4.0 binaries, so until the next
+release they are built from source, as above.
 
 ---
 

@@ -50,6 +50,7 @@ The loops cut from the last frame back to the first; they are not cross-faded.
 | `under-fire.png`, `under-fire-es.png` | The screen as each of those two runs ended (1280×800). |
 | `versus.gif`, `versus-es.gif` | One whole run of `aura demo --versus`, in each language: an ordinary agent on the left, a node on the right, four things done to both. Two separate runs. 1000×625, 12 fps. |
 | `versus.png`, `versus-es.png` | The screen as each of those two runs ended (1280×800). |
+| `social-preview.png` | `versus.png` scaled into 1280×640 for the repository's social preview. Nothing redrawn: the same screenshot, letterboxed. |
 
 These are not the control plane and not the test Expertise above: the screen
 is the demo's own page, embedded in the binary, and the figures on it are that
