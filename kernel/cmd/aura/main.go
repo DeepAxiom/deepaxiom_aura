@@ -116,6 +116,8 @@ func main() {
 		cmdApprove(os.Args[2:])
 	case "approvals":
 		cmdApprovals(os.Args[2:])
+	case "demo":
+		cmdDemo(os.Args[2:])
 	case "version":
 		fmt.Printf("aura %s (channel protocol %s, graph ir %s)\n",
 			version, channel.ProtocolMajor, executor.IRMajor)
@@ -138,6 +140,7 @@ Usage:
           [--open-witness] [--session-mailbox 1024]
           [--otlp http://collector:4318] [--otlp-sample 0.1]
           [--inference-url http://127.0.0.1:8000/v1] [--inference-priority vllm|sglang]
+  aura demo [--sessions 300] [--headless]     a node under fire, measured: http://127.0.0.1:7700
   aura chat ["message"] [--graph chat] [--port 9080]
   aura do "natural-language goal" [--yes] [--port 9080]
   aura connect --openapi <url|file> [--name x] [--base-url y] [--header "K: V"]

@@ -428,6 +428,100 @@ and a local model answering through the full pipeline. For voice, see
 [Talking to it](#talking-to-it); to check the node against the frozen
 contracts, see [Build & release](#build--release).
 
+### A node under fire: `aura demo`
+
+```bash
+aura demo                 # then open http://127.0.0.1:7700
+aura demo --headless      # no screen: prints every check; the exit code says whether it all held
+```
+
+<p align="center"><img src="docs/media/under-fire.png" alt="The demo's screen after a run: 324 sessions, round trips per second and their p99 over time with six marked beats, and six cards each reading survived" width="900"></p>
+
+One command, from the binary alone. It starts a node and a standby as two real
+processes — this same binary, default authentication, a policy file — on its own
+ports and in a temporary data directory, opens 324 live sessions through them,
+and then does six things to that system. The screen shows what is happening and
+what was measured. Nothing on it is recorded or typed in: every figure comes
+from that run, on that machine.
+
+| | What is done | What has to be true afterwards |
+|---|---|---|
+| 1 | Six sessions stop reading for about three seconds while an Expertise sends each of them 1,200 messages of 8 KiB — over the same connection it answers every other session on. | The node held the backlog; no sender was made to wait; the other sessions kept their rate; all 7,200 messages arrived, in order. See [Many sessions at once](#many-sessions-at-once). |
+| 2 | An Expertise is taken over — the one that talks to the model, which is where an injected instruction lands. With that Expertise's own token it calls the service directly, asks the broker for the service's key with no receipt and with invented ones, tries to read the ledger and the secrets, tries to register as the Expertise that is allowed to act, and tries to register a graph. Then a graph that wires a forbidden capability, gate waived, is run with the operator's token. | 71 attempts. The service carried out none of them and the forbidden Expertise was handed nothing. See [The credential broker](#the-credential-broker). |
+| 3 | Twenty orders are issued 600 ms after a decision that was good for 250 ms. Twenty more are issued at once. | No late order was carried out; each is sealed in the ledger as `expired`; every order has exactly one fate. See [Scheduling](#scheduling-speculation-deadlines-budgets). |
+| 4 | Sixteen long generations are running through the node, and every client cancels. | Each one was let go at the engine, and the node recorded why. See [Inference through the node](#inference-through-the-node). |
+| 5 | The leading node gets SIGKILL in the middle of all of it. | The standby answers as the same node; every Expertise reconnects and every session resumes under its own id; the ledger goes on as one chain. See [What a node does not survive](#what-a-node-does-not-survive). |
+| 6 | One character of one sealed entry is changed in `kernel.db` itself. | The node's verification says not sound and names the entry, and so does `aura verify`, offline. See [Security model](#security-model). |
+
+A beat that does not hold is shown as failed, in the place a pass would be, with
+what did not hold. `--headless` runs the same six with no screen and is a step
+in CI, so what the screen shows cannot quietly stop being true.
+
+**What it measured here.** One laptop (Intel i5-1145G7, four cores), inside a
+Linux container, with the nodes, the load, the Expertise and the engine all
+competing for the same CPUs. Six runs. A reference for this machine, not a
+benchmark:
+
+| | |
+|---|---|
+| Steady load, 300 sessions sending 10 messages a second each | 3,000 round trips/s · p50 0.6–1.0 ms · p99 about 2 ms |
+| 1 · held for the sessions that stopped reading | about 3,700 messages; p99 of the others went from about 2 ms to 3–12 ms |
+| 4 · from the cancel to the engine being free | 0.3–0.9 ms median in five runs; 50 ms in one |
+| 5 · from SIGKILL to the standby answering | 0.4–0.6 s in five runs, 2.1 s in one; all 324 sessions answering again 2.2–3.0 s after the kill |
+| 6 · verifying about 1,200 entries and naming the edited one | 10–17 ms |
+
+Natively on Windows, on the same laptop, one run at the same size: all six
+held and the steady figures were the same, but the takeover was slower — the
+standby answered after 1.0 s and the last session was back 10.8 s after the
+kill.
+
+**What it does not show.**
+
+- **A model.** The engine is simulated: it speaks the OpenAI streaming API and
+  produces tokens on a timer. What is measured about inference is how the node
+  handles it — placing, counting, cutting — and the screen says so. With
+  `--engine-url` the node talks to a real engine instead; that path has been run
+  against the mock engine in `bench/inference/` and against no real one.
+- **Two machines.** The standby is on the same host and sees that the leader's
+  process is gone. Across machines it waits for the lease to expire, and it
+  needs the data directory either way.
+- **A fast takeover on an idle node.** The standby reads the active segment of
+  the event log before it answers, and by the time of the kill the demo has
+  written up to 128 MiB into it. That is why the gap here is a second and not
+  the tens of milliseconds an idle node takes.
+- **Real Expertise processes.** The demo's Expertise are protocol clients inside
+  its own process: they register, receive and emit over a WebSocket as an SDK
+  does, each with a token scoped to its one capability. The service is a small
+  HTTP server that carries out an order only with the right key.
+- **An attacker who is the operator.** The compromised Expertise holds an
+  Expertise's token. Someone holding the node's own token can read the ledger
+  and spend a fresh receipt — see what the broker
+  [does not do](#the-credential-broker).
+- **A session that never comes back.** The readers stop for three seconds. A
+  delivery that cannot be made for five is dropped and its sender told; that
+  bound is the node choosing its own memory over one session's backlog.
+- **Nothing lost at the kill.** Round trips in flight when the node died went
+  unanswered — 112 to 186 of them here — and the screen counts them.
+
+**Options.**
+
+| Flag | |
+|---|---|
+| `--sessions 300` `--rate 10` | Relay sessions and messages per second each. These measure the node's routing; the Expertise answering them does no work. |
+| `--ops 24` | Operation sessions: a model call through the node, an order, an effect sealed in the ledger, the credential released for it, the call to the service. |
+| `--pace 6s` `--warmup 5s` | Quiet time before each beat, and before the first. |
+| `--headless` `--json` | No screen; print the final state as JSON. Exits non-zero if anything failed. |
+| `--now` | With a screen, start at once instead of when the page is first opened. |
+| `--listen 127.0.0.1:7700` `--node-port 7711` | Where the screen and the demo's own node listen. |
+| `--engine-url <url>` `--engine-model <name>` `--engine-priority vllm\|sglang` | A real OpenAI-compatible engine; its key comes from `$AURA_ENGINE_API_KEY`. Priorities are sent only if `--engine-priority` says how — an engine not started to schedule by priority refuses a request that carries one. |
+| `--lang en\|es` `--keep` | Language of the screen (default: the browser's). Keep the working directory: logs, policy and ledger. |
+
+It never touches a node already running on the machine. A default run takes
+under a minute and writes about 350 MiB to a temporary directory, almost all of
+it the event log, and removes it when it ends. `?hold` on the screen's URL waits
+for a key before starting, which is how the capture in this repository was made
+(see [`docs/media/README.md`](docs/media/README.md)).
+
 ---
 
 ## Command reference
@@ -447,6 +541,7 @@ The `aura` binary is the kernel, the client, the registry, and the fleet tool.
 | ↳ `[--otlp <url>] [--otlp-sample 1.0]` | Export spans to an OTLP/HTTP collector while the node runs. Whole sessions are sampled, never partial trees, and payloads are never exported. Also read from `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`. |
 | ↳ `[--policy <file>] [--max-sessions 1000]` | `--policy` loads an authorization document (deny-by-default for `motor.*`); `--max-sessions` caps live sessions, which matters when an ingress route is public. |
 | ↳ `[--with-examples] [--examples-dir expertise]` | Also start the example Expertises in `expertise/`. Opt-in, never the default: a node's Expertises are normally chosen by an operator, and the kernel is a Go binary that should not depend on a Python toolchain. Each is launched and watched — one that dies reports its own last line of stderr, which for a missing dependency is the pip line you need. |
+| `aura demo [--sessions 300] [--headless] [--engine-url <url>]` | Start a node and a standby of its own, put hundreds of sessions through them and do six things to that system, measured. Screen on `127.0.0.1:7700`; `--headless` prints the checks and exits non-zero if one failed. See [A node under fire](#a-node-under-fire-aura-demo). |
 | `aura status [--port 9080]` | Health of a running node plus its connected Expertises. |
 | `aura ready [--port 9080] [--quiet] [--timeout 3s]` | Readiness as an exit code, for a container healthcheck. Reads `/readyz` — open, so a probe needs no credential — and exits 0 only when the store, ledger and registry are usable. The distroless image has no shell or curl, so its `HEALTHCHECK` is this command. |
 | `aura backup [--data <dir>] [--out <f>] [--include-registry]` | Write a restorable archive of the data directory: a consistent `VACUUM INTO` snapshot of `kernel.db`, the node identity, the causal event log, and a manifest carrying a SHA-256 per file plus the ledger's entry count and Merkle root. Refuses to write an archive missing `node-id`, either half of `identity/`, or `kernel.db` — a data directory restored without the private key cannot decrypt the credential broker's secrets, so such an archive would look like a backup and not be one. Safe to run against a live node; the ledger snapshot is exact and the event log may lag by the last few events. Written `0600`: it contains the node's private key and operator token. |
@@ -3009,6 +3104,11 @@ lease, and takes over on either of two signals:
   crashed is replaced without waiting for anything to time out. Measured with
   two real binaries and a session in progress: **21–118 ms from the kill to
   `/healthz` answering again on Linux**, about half a second on Windows.
+  That is an idle node. The standby reads the active segment of the event
+  log before it answers, so the gap grows with what the dead node had
+  written to it: [`aura demo`](#a-node-under-fire-aura-demo) kills a node
+  carrying 324 sessions with up to 128 MiB in that segment, and measured
+  0.4–2.1 s on a laptop.
 - *The leader's heartbeat expired.* The only evidence there is about a leader
   that is alive but stalled, and it costs a full `--lease-ttl` (10 s by
   default), by construction: the TTL is the promise not to displace a node

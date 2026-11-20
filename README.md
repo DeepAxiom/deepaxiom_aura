@@ -10,8 +10,20 @@ Nothing acts on the world that the node did not check first.
 **v0.4.0 — pre-1.0, pre-production**
 
 <!-- UI-HERO -->
-<p align="center"><img src="docs/media/studio-live.gif" alt="The control plane: a graph running live, tokens streaming on the node that produces them, a gated edge into a motor Expertise" width="900"></p>
+<p align="center"><img src="docs/media/under-fire.gif" alt="aura demo: a node and its standby under 324 live sessions while six things are done to them — sessions stop reading, an Expertise is compromised, orders arrive late, generations are cancelled, the node is killed, a byte of the ledger is edited — each one measured and survived" width="900"></p>
 <!-- /UI-HERO -->
+
+**That is one run of `aura demo`**, three times faster than it happened: a real
+node and its standby under 324 live sessions, while six things are done to
+them. Sessions stop reading. An Expertise is taken over and reaches for a
+credential. Orders arrive past their deadline. Generations are cancelled
+mid-sentence. The node gets SIGKILL. One byte of the ledger is edited on disk.
+Every figure on the screen was measured in that run; none is typed in.
+[What it shows, and what it does not](GUIDE.md#a-node-under-fire-aura-demo).
+
+```bash
+aura demo              # then open http://127.0.0.1:7700
+```
 
 ---
 
@@ -240,7 +252,8 @@ aura up --data /var/lib/aura --standby       # takes over when the first dies
 
 The standby opens nothing the live node is writing. On the same host it sees
 that the leader's process is gone instead of waiting out a lease, and answers
-as the *same node* — same identity, same ledger — in tens of milliseconds.
+as the *same node* — same identity, same ledger — in tens of milliseconds when
+the node was idle, and in about a second under the load `aura demo` puts on it.
 Expertise reconnect on their own; a client that reconnects continues its
 session from the causal log. What it does not survive is losing the machine:
 the standby needs the data directory.
@@ -260,6 +273,8 @@ fixed passage and is not a model. How each was captured is in
 **Studio.** Build a graph and watch it run: envelopes move along the edges as
 they are delivered, text appears on the node producing it, a gated edge into a
 `motor` Expertise is visibly gated.
+
+<p align="center"><img src="docs/media/studio-live.gif" alt="The control plane: a graph running live, tokens streaming on the node that produces them, a gated edge into a motor Expertise" width="900"></p>
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/studio-gate-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/media/studio-gate-light.png"><img src="docs/media/studio-gate-dark.png" alt="Studio with a delivery held at the gate on the edge into a motor Expertise" width="900"></picture></p>
 
@@ -294,8 +309,9 @@ under which policy, and whether the chain verifies.
 
 A 67-check conformance suite runs the kernel over the wire, and separate CI
 jobs prove the ledger detects tampering by editing a real database behind a
-real binary's back, that a scoped token cannot act as the operator, and that a
-node started **with its default auth** can be driven end to end. Read
+real binary's back, that a scoped token cannot act as the operator, that a
+node started **with its default auth** can be driven end to end, and that a
+node and its standby survive all six beats of `aura demo`. Read
 [Security model](GUIDE.md#security-model) before exposing a port, and
 [the roadmap](ROADMAP.md) for what is missing and why it comes in that order.
 This is pre-production; treat it as such.

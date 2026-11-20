@@ -11,8 +11,20 @@ antes.
 **v0.4.0 — pre-1.0, pre-producción**
 
 <!-- UI-HERO -->
-<p align="center"><img src="docs/media/studio-live.gif" alt="El plano de control: un grafo corriendo en vivo, tokens apareciendo en el nodo que los produce, una arista gateada hacia un Expertise motor" width="900"></p>
+<p align="center"><img src="docs/media/under-fire-es.gif" alt="aura demo: un nodo y su standby con 324 sesiones vivas mientras se les hacen seis cosas — sesiones que dejan de leer, un Expertise comprometido, órdenes que llegan tarde, generaciones canceladas, el nodo muerto con SIGKILL, un byte del ledger editado — cada una medida y sobrevivida" width="900"></p>
 <!-- /UI-HERO -->
+
+**Eso es una ejecución de `aura demo`**, tres veces más rápida de lo que
+ocurrió: un nodo real y su standby con 324 sesiones vivas, mientras se les hacen
+seis cosas. Sesiones que dejan de leer. Un Expertise tomado que busca una
+credencial. Órdenes que llegan después de su plazo. Generaciones canceladas a
+media frase. El nodo recibe SIGKILL. Se edita un byte del ledger en disco. Cada
+cifra en pantalla se midió en esa ejecución; ninguna está escrita a mano.
+[Qué muestra, y qué no](GUIDE-ES.md#un-nodo-bajo-fuego-aura-demo).
+
+```bash
+aura demo              # y abre http://127.0.0.1:7700
+```
 
 ---
 
@@ -257,7 +269,8 @@ aura up --data /var/lib/aura --standby       # toma el relevo cuando el primero 
 El standby no abre nada que el nodo vivo esté escribiendo. En el mismo host ve
 que el proceso del líder ya no existe en vez de esperar un arrendamiento, y
 contesta como el *mismo nodo* — misma identidad, mismo ledger — en decenas de
-milisegundos. Los Expertises se reconectan solos; un cliente que se reconecta
+milisegundos si el nodo estaba ocioso, y en cerca de un segundo con la carga
+que le pone `aura demo`. Los Expertises se reconectan solos; un cliente que se reconecta
 continúa su sesión desde el log causal. Lo que no sobrevive es perder la
 máquina: el standby necesita el directorio de datos.
 [Detalles](GUIDE-ES.md#lo-que-un-nodo-no-sobrevive).
@@ -276,6 +289,8 @@ cada una está en [`docs/media/README.md`](docs/media/README.md).
 **Studio.** Construye un grafo y míralo correr: los envelopes avanzan por las
 aristas conforme se entregan, el texto aparece en el nodo que lo produce, y una
 arista gateada hacia un Expertise `motor` se ve gateada.
+
+<p align="center"><img src="docs/media/studio-live.gif" alt="El plano de control: un grafo corriendo en vivo, tokens apareciendo en el nodo que los produce, una arista gateada hacia un Expertise motor" width="900"></p>
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/studio-gate-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/media/studio-gate-light.png"><img src="docs/media/studio-gate-dark.png" alt="Studio con una entrega retenida en el gate de la arista hacia un Expertise motor" width="900"></picture></p>
 
@@ -313,8 +328,9 @@ bajo qué policy, y si la cadena verifica.
 Una suite de conformidad de 67 verificaciones ejercita el kernel sobre el
 cable, y jobs de CI aparte demuestran que el ledger detecta manipulación
 editando una base de datos real a espaldas de un binario real, que un token con
-alcance no puede actuar como el operador, y que un nodo arrancado **con su auth
-por defecto** se puede conducir de punta a punta. Lee [Modelo de
+alcance no puede actuar como el operador, que un nodo arrancado **con su auth
+por defecto** se puede conducir de punta a punta, y que un nodo y su standby
+sobreviven los seis golpes de `aura demo`. Lee [Modelo de
 seguridad](GUIDE-ES.md#modelo-de-seguridad) antes de exponer un puerto, y [el
 roadmap](ROADMAP-ES.md) para lo que falta y por qué va en ese orden. Esto es
 pre-producción; trátalo como tal.
