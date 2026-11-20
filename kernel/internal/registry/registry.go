@@ -331,8 +331,34 @@ func New() *Registry {
 // is why this is answered on the registration event rather than by anything
 // that samples the catalogue at startup and hopes.
 func (r *Registry) Register(connID string, live *Live) int {
+	return r.RegisterAnnounced(connID, live, nil)
+}
+
+// RegisterAnnounced is Register with one thing done first, at a moment nothing
+// else can see: announce runs while the registry is locked, before the
+// connection can be resolved.
+//
+// It exists for the registration acknowledgement. Registering made an Expertise
+// resolvable, and the acknowledgement was sent some milliseconds later — after
+// the manifest had been written to disk. A session that resolved the capability
+// in between sent its delivery down the same socket ahead of the
+// acknowledgement. On a quiet node the window was too short to matter; when a
+// standby took over hundreds of live sessions it was hit on the first try. An
+// Expertise that read its first frame as the acknowledgement lost that delivery
+// or dropped the connection, and the sessions bound to it had nowhere to go.
+//
+// Queuing the acknowledgement here closes the window from both sides: nothing
+// can be routed to the connection before the acknowledgement is ahead of it in
+// the queue, and nobody who hears "registered" can look for the Expertise and
+// fail to find it, because looking waits for this to return.
+//
+// announce must not block and must not call back into the registry.
+func (r *Registry) RegisterAnnounced(connID string, live *Live, announce func()) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if announce != nil {
+		announce()
+	}
 	live.conn = connID
 	r.byConn[connID] = live
 

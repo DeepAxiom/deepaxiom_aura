@@ -915,29 +915,6 @@ func (g *Gateway) ServeSkill(conn wire, p Principal) {
 	}
 	defer g.Adm.Release(connID)
 
-	live := &registry.Live{Manifest: manifest, Connected: time.Now(), Send: conn.Send,
-		TokenID: p.TokenID}
-	instances := g.Reg.Register(connID, live)
-	// Who this connection is, for everything it emits. Fixed at registration:
-	// the manifest it declared and the credential it presented do not change
-	// for the life of the socket, and the envelopes it sends are not asked.
-	emitter := executor.Emitter{Conn: connID, Expertise: manifest.ID, TokenID: p.TokenID}
-	defer g.Reg.Unregister(connID)
-	if err := g.St.UpsertSkill(manifest.ID, manifest.Version, manifest); err != nil {
-		g.Log.Error("persist skill failed", "err", err)
-	}
-	g.Log.Info("skill registered", "skill", manifest.ID, "type", manifest.Type,
-		"capability", manifest.Capability)
-	if instances > 1 {
-		// Said at the moment it becomes true, because that is the only moment
-		// anyone can act on it: a skill that outlived an earlier node may
-		// reconnect long after this one finished starting up, and a check that
-		// ran at startup would have found nothing to report.
-		g.Log.Warn("skill has more than one connection",
-			"skill", manifest.ID, "instances", instances,
-			"note", "deliberate for replicas; otherwise a process outlived an earlier node")
-	}
-
 	effective, err := g.effectiveConfig(manifest)
 	if err != nil {
 		g.Log.Error("load skill config failed", "skill", manifest.ID, "err", err)
@@ -958,7 +935,35 @@ func (g *Gateway) ServeSkill(conn wire, p Principal) {
 	ackEnv := channel.Envelope{V: channel.ProtocolMajor, ID: channel.NewID(),
 		CauseID: regEnv.ID, Kind: channel.KindStatus, Payload: ack}
 	rawAck, _ := json.Marshal(ackEnv)
-	_ = conn.Send(rawAck, channel.QoSReliable)
+
+	live := &registry.Live{Manifest: manifest, Connected: time.Now(), Send: conn.Send,
+		TokenID: p.TokenID}
+	// The acknowledgement is queued at the instant the Expertise becomes
+	// resolvable, so it is the first thing down the socket: an Expertise needs
+	// its config and grammars before its first delivery, and one that is told
+	// it is registered must be findable. See Registry.RegisterAnnounced.
+	instances := g.Reg.RegisterAnnounced(connID, live, func() {
+		_ = conn.Send(rawAck, channel.QoSReliable)
+	})
+	// Who this connection is, for everything it emits. Fixed at registration:
+	// the manifest it declared and the credential it presented do not change
+	// for the life of the socket, and the envelopes it sends are not asked.
+	emitter := executor.Emitter{Conn: connID, Expertise: manifest.ID, TokenID: p.TokenID}
+	defer g.Reg.Unregister(connID)
+	if err := g.St.UpsertSkill(manifest.ID, manifest.Version, manifest); err != nil {
+		g.Log.Error("persist skill failed", "err", err)
+	}
+	g.Log.Info("skill registered", "skill", manifest.ID, "type", manifest.Type,
+		"capability", manifest.Capability)
+	if instances > 1 {
+		// Said at the moment it becomes true, because that is the only moment
+		// anyone can act on it: a skill that outlived an earlier node may
+		// reconnect long after this one finished starting up, and a check that
+		// ran at startup would have found nothing to report.
+		g.Log.Warn("skill has more than one connection",
+			"skill", manifest.ID, "instances", instances,
+			"note", "deliberate for replicas; otherwise a process outlived an earlier node")
+	}
 
 	// Emission loop: everything the skill emits is dispatched to its session.
 	for {
