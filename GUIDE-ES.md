@@ -526,6 +526,72 @@ temporal, casi todo el log de eventos, y lo borra al terminar. `?hold` en la URL
 de la pantalla espera una tecla antes de empezar, que es como se hizo la captura
 de este repositorio (ver [`docs/media/README.md`](docs/media/README.md)).
 
+### El mismo agente, dos veces: `aura demo --versus`
+
+```bash
+aura demo --versus              # y abre http://127.0.0.1:7700
+aura demo --versus --headless   # el código de salida dice si salió como se describe aquí
+```
+
+<p align="center"><img src="docs/media/versus-es.png" alt="La pantalla de la comparación tras una ejecución: a la izquierda un agente corriente con 61 cosas que nunca debieron ocurrir, a la derecha un nodo con ninguna, y cuatro filas con lo que hizo cada uno al ser tomado, cuando las órdenes llegaron tarde, al ser matado y cuando se editó su registro" width="900"></p>
+
+La otra demo muestra un nodo que sobrevive. Esta muestra en lugar de qué: el
+mismo trabajo, y las mismas cuatro cosas hechas en el mismo instante, sobre un
+agente corriente y sobre un nodo.
+
+**El agente de la izquierda** es [`kernel/internal/demo/plain.go`](kernel/internal/demo/plain.go),
+corriendo como su propio proceso. Hace todo el trabajo como se suelen hacer los
+agentes: recibe peticiones, le pregunta al modelo, llama al servicio con una
+clave de su entorno, escribe lo que hizo en un archivo de log. No está hecho
+para perder. Tiene su propia regla de lo que no hace, y la aplica. Recuerda las
+peticiones que ya ejecutó, así que pedir dos veces no es ser atendido dos veces.
+Puede revisar su log en busca de daños. Y se vuelve a arrancar en el instante en
+que muere, como cualquier servicio supervisado. Lo que no tiene es nada fuera de
+sí mismo.
+
+| | Se les hace a los dos | Sin AURA | Con AURA |
+|---|---|---|---|
+| 1 | Alguien toma la parte que habla con el modelo e intenta que se hagan 20 pagos que ninguno de los dos sistemas puede hacer. | **20 de 20 hechos.** Su propia regla rechazó los 20 por la puerta principal. Desde dentro del proceso la clave está ahí y la regla no está en el camino. | **0 de 20.** El Expertise no tiene la clave, el broker no libera ninguna sin un efecto sellado, y la política deniega la capability diga lo que diga un grafo. |
+| 2 | 20 órdenes salen 600 ms después de una decisión que valía 250 ms. | **20 de 20 ejecutadas.** Nada entre la decisión y el acto sabe cuán vieja es la decisión. | **0 de 20.** Cada una queda sellada en el ledger como `expired`. |
+| 3 | SIGKILL a los dos a la vez. Después, los 20 clientes que nunca recibieron respuesta vuelven a pedir, con el mismo id de petición. | **20 ejecutadas por segunda vez.** De vuelta en 14–36 ms, como un proceso nuevo que olvidó las 60 sesiones y lo que ya había hecho. | **0 por segunda vez; cada una exactamente una vez.** El standby contesta en 73–299 ms como el mismo nodo, se reanudan 60 de 60 sesiones, y las 20 repeticiones se reconocen. |
+| 4 | Se cambia en disco un carácter del registro de lo que se hizo. | **No lo nota.** La comprobación que el propio agente hace de su log sigue pasando. | **Señalado.** La verificación dice que no es íntegro y apunta al registro. |
+
+Sesenta y una cosas que nunca debieron ocurrir a la izquierda, en cada una de
+diez ejecuciones, y ninguna a la derecha — contadas en el servicio de cada
+lado, no tomadas de lo que cada sistema dice de sí mismo.
+
+**Qué tiene de justa, y qué no.**
+
+- **El agente vuelve más rápido que el nodo.** Un proceso pequeño se reinicia
+  en decenas de milisegundos; el standby tarda cien o más. La pantalla muestra
+  los dos. La diferencia está en *como qué* vuelve cada uno.
+- **Las cuatro se pueden arreglar en el agente,** y cada arreglo es una pieza
+  del nodo: un registro duradero de lo ya hecho, un plazo que viaja con la
+  decisión y se comprueba antes del acto, una credencial guardada donde el
+  proceso del agente no está, un log encadenado. Eso es lo que se quiere
+  mostrar, no algo que se esté escondiendo.
+- **La toma es código corriendo como la parte que habla con el modelo,** en los
+  dos lados: dentro del proceso del agente a la izquierda — un handler en
+  `plain.go` que hace de atacante y al que no se le da nada, solo lo que el
+  proceso ya tiene — y con el token del propio Expertise a la derecha. No es un
+  prompt que convence a un modelo de hacer una llamada prohibida: la regla del
+  agente también detiene eso, que es lo que muestra la cuenta de la puerta
+  principal. Y una orden *permitida* pero equivocada pasa en los dos lados.
+- **Una repetición se reconoce, no se vuelve a contestar.** El nodo no actúa
+  sobre una petición que ya tomó, y tampoco reenvía su respuesta; el resultado
+  está en el ledger.
+- **No dice nada sobre velocidad.** Los dos lados atienden aquí las mismas
+  70–80 operaciones por segundo.
+- El modelo es simulado, todo está en una máquina y el standby está en el mismo
+  host, igual que en la otra demo.
+
+`--headless` sale con error si el nodo no aguanta alguna de las cuatro, y
+también si el agente *no* sale dañado en alguna — porque esta sección dice lo
+que pasa a la izquierda, y una ejecución en la que no pasara la volvería falsa.
+Es un paso del CI. `--sessions` es por lado (60 por defecto); `--pace`,
+`--warmup`, `--listen`, `--lang`, `--json` y `--keep` son como arriba, el agente
+escucha en el puerto siguiente a `--node-port`, y `--engine-url` no se acepta.
+
 ---
 
 ## Referencia de comandos
@@ -542,7 +608,7 @@ flota.
 | ↳ `[--session-mailbox 1024]` | Envelopes que una sesión puede encolar antes de que se frene al Expertise que la alimenta. Cada sesión rutea en su propia cola, así que un consumidor lento no frena a las demás que comparten conexión; `0` restaura el ruteo en línea. Ver [Muchas sesiones a la vez](#muchas-sesiones-a-la-vez). |
 | ↳ `[--otlp <url>] [--otlp-sample 1.0]` | Exporta spans a un collector OTLP/HTTP mientras el nodo corre. Se muestrean sesiones enteras, nunca árboles parciales, y los payloads nunca se exportan. También se lee de `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`. |
 | ↳ `[--with-examples] [--examples-dir expertise]` | Arranca también los Expertises de ejemplo de `expertise/`. Opt-in, nunca por defecto: los Expertises de un nodo normalmente los elige un operador, y el kernel es un binario Go que no debería depender de un toolchain de Python. Cada uno se lanza y se observa — el que muere devuelve su propia última línea de stderr, que ante una dependencia ausente es la línea de pip que necesitas. |
-| `aura demo [--sessions 300] [--headless] [--engine-url <url>]` | Arranca un nodo y un standby propios, pasa cientos de sesiones por ellos y le hace seis cosas a ese sistema, midiendo. Pantalla en `127.0.0.1:7700`; `--headless` imprime las comprobaciones y sale con error si alguna falló. Ver [Un nodo bajo fuego](#un-nodo-bajo-fuego-aura-demo). |
+| `aura demo [--versus] [--sessions 300] [--headless] [--engine-url <url>]` | Arranca un nodo y un standby propios, pasa cientos de sesiones por ellos y le hace seis cosas a ese sistema, midiendo. Pantalla en `127.0.0.1:7700`; `--headless` imprime las comprobaciones y sale con error si alguna falló. Ver [Un nodo bajo fuego](#un-nodo-bajo-fuego-aura-demo). `--versus` corre la comparación en su lugar: el mismo trabajo y cuatro ataques sobre un agente corriente y sobre un nodo, lado a lado — [El mismo agente, dos veces](#el-mismo-agente-dos-veces-aura-demo---versus). |
 | `aura status [--port 9080]` | Salud de un nodo en ejecución más sus Expertises conectados. |
 | `aura ready [--port 9080] [--quiet] [--timeout 3s]` | Readiness como código de salida, para un healthcheck de contenedor. Lee `/readyz` — abierto, para que una sonda no necesite credencial — y sale 0 solo cuando el store, el ledger y el registro son usables. La imagen distroless no tiene shell ni curl, así que su `HEALTHCHECK` es este comando. |
 | `aura verify [--data <dir>]` | Recalcula la cadena de hashes y el árbol Merkle del ledger de efectos, y comprueba cada firma de checkpoint y cada contrafirma de witness — sin conexión, sin necesitar un kernel corriendo. Sale con código distinto de cero si algo no verifica. Ver [Modelo de seguridad](#modelo-de-seguridad). |

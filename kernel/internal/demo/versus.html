@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en" data-lang="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AURA — the same agent, twice</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0d0e10; --surface: #141619; --surface-2: #1a1d21; --surface-3: #22262b;
+    --line: #262a30; --line-strong: #3a4048;
+    --text: #e9ebee; --text-2: #aab1bb; --text-3: #808894;
+    --live: #b8e83a; --live-soft: rgba(184, 232, 58, .1); --on-live: #10140a;
+    --hit: #f0a429; --hit-soft: rgba(240, 164, 41, .13);
+    --bad: #f2605d; --bad-soft: rgba(242, 96, 93, .12);
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --r: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 var(--font); -webkit-font-smoothing: antialiased; }
+  .app { height: 100vh; min-height: 700px; max-width: 1760px; margin: 0 auto; padding: 12px 18px 10px;
+    display: grid; gap: 10px; grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+
+  .top { display: flex; align-items: center; gap: 20px; }
+  .brand { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+  .mark { font: 700 20px/1 var(--display); letter-spacing: .14em; }
+  .tag { color: var(--text-3); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+  .steps { flex: 1; display: flex; gap: 6px; min-width: 0; }
+  .step { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-3); position: relative; overflow: hidden; }
+  .step i { position: absolute; inset: 0; width: 0; border-radius: 2px; }
+  .step.running i { width: 100%; background: var(--hit); animation: sweep 1.1s ease-in-out infinite; }
+  .step.done i { width: 100%; background: var(--text-2); }
+  @keyframes sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+  .meta { display: flex; align-items: center; gap: 12px; color: var(--text-3); font-size: 12px; white-space: nowrap; }
+  .clock { font: 13px var(--mono); color: var(--text-2); min-width: 40px; text-align: right; }
+
+  .now { display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 8px 14px; border-radius: var(--r);
+    background: var(--surface); border: 1px solid var(--line); font-size: 15px; color: var(--text-2); }
+  .now b { color: var(--text); font-weight: 600; }
+  .now .badge { flex: none; font: 600 11px/1 var(--font); letter-spacing: .09em; text-transform: uppercase;
+    padding: 6px 9px; border-radius: 6px; background: var(--surface-3); color: var(--text-2); }
+  .now.running { background: var(--hit-soft); border-color: rgba(240, 164, 41, .5); color: var(--text); }
+  .now.running .badge { background: var(--hit); color: #1b1304; }
+  .now.final { color: var(--text); font-size: 17px; border-color: var(--line-strong); }
+  .now.final .badge { background: var(--text); color: var(--bg); }
+  .now .bad { color: var(--bad); font-weight: 600; }
+  .now .good { color: var(--live); font-weight: 600; }
+  .now.failed { background: var(--bad-soft); border-color: var(--bad); color: var(--text); }
+
+  /* the two systems */
+  .sides { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  .side { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 11px 14px 11px;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 16px; align-items: center; }
+  .side h2 { margin: 0; min-width: 0; font: 600 18px/1.2 var(--display); display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .side p { grid-column: 1 / -1; margin: 0; color: var(--text-3); font-size: 12.5px; line-height: 1.38; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; margin-right: 8px; vertical-align: 1px;
+    border: 1px solid var(--line-strong); color: var(--text-2); font: 500 11.5px/1.3 var(--font); white-space: nowrap; }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
+  .pill.up::before, .pill.leader::before, .pill.standby::before { background: var(--live); }
+  .pill.standby { border-color: var(--live); color: var(--live); }
+  .pill.down { border-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
+  .pill.down::before { background: var(--bad); }
+  .pill.restarted { border-color: var(--hit); color: var(--hit); }
+  .pill.restarted::before { background: var(--hit); }
+  .nums { display: flex; gap: 20px; text-align: right; }
+  .num .v { font: 600 clamp(20px, 1.8vw, 28px)/1.1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.035em; }
+  .num .l { color: var(--text-3); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; margin-top: 2px; }
+  .num.harm .v { color: var(--live); }
+  .num.harm.hurt .v { color: var(--bad); }
+  .dots { grid-column: 1 / -1; position: relative; height: 46px; }
+  .dots canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .legend { grid-column: 1 / -1; display: flex; gap: 14px; color: var(--text-3); font-size: 11.5px; margin-top: -2px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+
+  /* what was done to both */
+  .beats { display: grid; grid-auto-rows: minmax(0, 1fr); gap: 8px; min-height: 0; }
+  .beat { display: grid; grid-template-columns: minmax(0, 1fr) 250px minmax(0, 1fr); gap: 10px; min-height: 0; opacity: .5; transition: opacity .3s; }
+  .beat.running, .beat.done { opacity: 1; }
+  .what { display: flex; flex-direction: column; justify-content: center; gap: 4px; text-align: center; padding: 6px 4px; }
+  .what .head { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .what .n { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+    font: 600 12px/1 var(--mono); background: var(--surface-3); color: var(--text-2); }
+  .beat.running .what .n { background: var(--hit); color: #1b1304; }
+  .beat.done .what .n { background: var(--text-2); color: var(--bg); }
+  .what .title { font: 600 15px/1.2 var(--display); }
+  .what .did { color: var(--text-3); font-size: 12px; line-height: 1.36; }
+  .beat.running .what .did { color: var(--text-2); }
+  .cell { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 9px 14px;
+    display: flex; align-items: center; gap: 16px; min-height: 0; transition: border-color .3s, background .3s; }
+  .cell.left { flex-direction: row-reverse; text-align: right; }
+  .cell .big { flex: none; font: 600 clamp(19px, 1.75vw, 26px)/1.1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.03em; color: var(--text-3); white-space: nowrap; }
+  .cell .txt { min-width: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.38; }
+  .cell .txt strong { display: block; color: var(--text); font-weight: 600; font-size: 13.5px; }
+  .cell .txt b { color: var(--text); font-weight: 600; font-family: var(--mono); letter-spacing: -.02em; }
+  .cell code { font-family: var(--mono); font-size: 11.5px; color: var(--text); background: var(--surface-3); padding: 0 4px; border-radius: 3px; }
+  .cell.harmed { border-color: var(--bad); background: linear-gradient(90deg, var(--surface) 30%, var(--bad-soft)); }
+  .cell.harmed .big { color: var(--bad); }
+  .cell.held { border-color: rgba(184, 232, 58, .45); background: linear-gradient(270deg, var(--surface) 30%, var(--live-soft)); }
+  .cell.held .big { color: var(--live); }
+  .cell.spared .big { color: var(--text); }
+  .cell.broke { border-color: var(--bad); }
+  .cell.broke .big { color: var(--bad); }
+  .cell.waiting .txt { color: var(--text-3); }
+
+  .foot { display: flex; justify-content: space-between; gap: 20px; color: var(--text-3); font-size: 12px; }
+  .foot span + span { white-space: nowrap; }
+  .foot code { font-family: var(--mono); color: var(--text-2); }
+
+  @media (max-width: 1000px) {
+    .app { height: auto; min-height: 100vh; grid-template-rows: none; padding: 12px 16px; }
+    .top { flex-wrap: wrap; gap: 10px; }
+    .steps { order: 3; flex-basis: 100%; }
+    .meta #machine { display: none; }
+    .sides { grid-template-columns: minmax(0, 1fr); }
+    .beat { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+    .what { order: -1; text-align: left; padding: 8px 0 0; }
+    .what .head { justify-content: flex-start; }
+    .cell.left { flex-direction: row; text-align: left; }
+    .cell::before { content: attr(data-side); flex: none; width: 64px; color: var(--text-3); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+    .foot { flex-direction: column; gap: 4px; }
+    .now { font-size: 14px; align-items: flex-start; }
+  }
+  @media (prefers-reduced-motion: reduce) { .step.running i { animation: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><span class="mark">AURA</span><span class="tag" id="tag"></span></div>
+    <div class="steps" id="steps"></div>
+    <div class="meta"><span id="machine"></span><span class="clock" id="clock">0:00</span></div>
+  </header>
+  <section class="now" id="now"></section>
+  <section class="sides" id="sides"></section>
+  <section class="beats" id="beats"></section>
+  <footer class="foot"><span id="foot-left"></span><span id="foot-right"></span></footer>
+</div>
+<script>
+"use strict";
+// Every word on this page is here; every number comes from /state, which is
+// what the run measured — counted at each side's service, not taken from
+// either system's account of itself. A figure not measured yet is a dash.
+
+const TEXT = {
+  en: {
+    tag: "the same agent, twice",
+    side: {
+      plain: ["Without AURA", "An ordinary agent: one process, the service's key in its environment, its own rule about what it may do, a log file."],
+      aura: ["With AURA", "A node and its standby. The Expertise hold no key, the node's policy decides, and every effect is sealed before it happens."],
+    },
+    state: { up: "running", down: "down", restarted: "a new process", leader: "node leading", standby: "standby leading", "": "starting" },
+    nums: ["sessions answered", "orders carried out", "should never have happened"],
+    legend: { f: "answered", x: "lost its connection", a: "answered by something that forgot it" },
+    badge: { starting: "starting", waiting: "ready", steady: "steady", running: "now", done: "result", failed: "stopped", after: "result" },
+    phase: {
+      starting: "Starting an ordinary agent, and a node with its standby…",
+      waiting: "Ready. Press space or click to start.",
+      steady: s => `The same work on both sides: <b>${n(s.meta.sessions)}</b> sessions each, asking for an operation and getting an order carried out.`,
+      done: s => `Without AURA, <span class="bad">${n(s.plain.harm)} things happened that should never have.</span> With AURA, <span class="good">${n(s.aura.harm)}</span>. Counted at the service, in this run.`,
+      failed: s => `The run stopped: ${esc(s.error || "")}`,
+      after: (b, tx) => `<b>${tx.title}.</b> Without: <span class="bad">${plainLine(b, tx)}</span> With: <span class="good">${auraLine(b, tx)}</span>`,
+    },
+    foot: "Left is <code>kernel/internal/demo/plain.go</code>: an agent built the usual way, and not built to lose. Right is <code>aura up</code> and <code>aura up --standby</code>. Same simulated model, same attacks, same instant.",
+    footRight: "Run it yourself: <code>aura demo --versus</code>",
+    machine: s => `${s.meta.cpus} CPUs · ${s.meta.os}/${s.meta.arch} · v${s.meta.version}`,
+    wait: "—",
+    notHeld: "did not hold",
+    beats: {
+      taken: {
+        title: "Taken over",
+        did: f => `The part that talks to the model is taken over, and tries to have ${v(f.orders)} payments made that neither system is allowed to make.`,
+        plain: f => [`${n(f.carried_out)} of ${n(f.orders)}`, "forbidden payments were made", `Its own rule refused all <b>${n(f.refused_at_the_front)}</b> at the front door. From inside, the key was right there.`],
+        aura: f => [`${n(f.carried_out)} of ${n(f.orders)}`, "forbidden payments were made", `No key to use: <b>${n(f.no_key)}</b> refused. The broker gave none: <b>${n(f.broker_refused)}</b>. Policy denied <b>${n(f.policy_denied)}</b>.`],
+      },
+      late: {
+        title: "Too late",
+        did: f => `${v(f.orders)} orders are issued ${v(f.delay_ms)} ms after a decision that was good for ${v(f.deadline_ms)} ms.`,
+        plain: f => [`${n(f.carried_out)} of ${n(f.orders)}`, "carried out after their deadline", "Nothing between the decision and the act knew how old it was."],
+        aura: f => [`${n(f.carried_out)} of ${n(f.orders)}`, "carried out after their deadline", `<b>${n(f.sealed_expired)}</b> sealed in the ledger as <code>expired</code>${f.late_by_ms ? `, ${n(f.late_by_ms)} ms late` : ""}.`],
+      },
+      crash: {
+        title: "Killed",
+        did: f => `SIGKILL to both at once. Then the ${v(f.requests)} clients whose answer never came ask again.`,
+        plain: f => [`${n(f.carried_out_twice)} twice`, "orders carried out a second time", `Back in <b>${ms(f.back_ms)}</b>, as a new process: <b>${n(f.sessions_forgotten)}</b> of ${n(f.sessions)} sessions forgotten, and what it had already done.`],
+        aura: f => [`${n(f.carried_out_twice)} twice`, "every order carried out exactly once", `Standby answering in <b>${ms(f.back_ms)}</b>, as the same node. <b>${n(f.sessions_back)}</b>/${n(f.sessions)} sessions resumed.`],
+      },
+      forged: {
+        title: "Record forged",
+        did: () => "One character of the record of what was done is changed on disk, in each system's own store.",
+        plain: f => [f.noticed ? "noticed" : "not noticed", f.noticed ? "its check found the edit" : "its own check still says the log is fine", `Line <b>${n(f.edited_line)}</b> of ${n(f.entries)}: <code>${esc(tail(f.edited_from))}</code> → <code>${esc(tail(f.edited_to))}</code>`],
+        aura: f => [f.noticed ? `entry #${n(f.broken_at_seq)}` : "not noticed", f.noticed ? `named by verification, in ${ms(f.verify_ms)}` : "verification did not find the edit", `Entry <b>#${n(f.edited_seq)}</b> of ${n(f.entries)}: <code>${esc(tail(f.edited_from))}</code> → <code>${esc(tail(f.edited_to))}</code>`],
+      },
+    },
+  },
+  es: {
+    tag: "el mismo agente, dos veces",
+    side: {
+      plain: ["Sin AURA", "Un agente corriente: un proceso, la clave del servicio en su entorno, su propia regla de lo que puede hacer, un archivo de log."],
+      aura: ["Con AURA", "Un nodo y su standby. Los Expertise no tienen la clave, decide la política del nodo, y cada efecto se sella antes de ocurrir."],
+    },
+    state: { up: "corriendo", down: "caído", restarted: "proceso nuevo", leader: "nodo al mando", standby: "standby al mando", "": "arrancando" },
+    nums: ["sesiones atendidas", "órdenes ejecutadas", "nunca debió ocurrir"],
+    legend: { f: "atendida", x: "perdió su conexión", a: "atendida por algo que la olvidó" },
+    badge: { starting: "arrancando", waiting: "listo", steady: "estable", running: "ahora", done: "resultado", failed: "detenido", after: "resultado" },
+    phase: {
+      starting: "Arrancando un agente corriente, y un nodo con su standby…",
+      waiting: "Listo. Pulsa espacio o haz clic para empezar.",
+      steady: s => `El mismo trabajo en los dos lados: <b>${n(s.meta.sessions)}</b> sesiones en cada uno, pidiendo una operación y consiguiendo que se ejecute una orden.`,
+      done: s => `Sin AURA, <span class="bad">ocurrieron ${n(s.plain.harm)} cosas que nunca debieron ocurrir.</span> Con AURA, <span class="good">${n(s.aura.harm)}</span>. Contado en el servicio, en esta ejecución.`,
+      failed: s => `La ejecución se detuvo: ${esc(s.error || "")}`,
+      after: (b, tx) => `<b>${tx.title}.</b> Sin: <span class="bad">${plainLine(b, tx)}</span> Con: <span class="good">${auraLine(b, tx)}</span>`,
+    },
+    foot: "A la izquierda, <code>kernel/internal/demo/plain.go</code>: un agente hecho como se suelen hacer, y no hecho para perder. A la derecha, <code>aura up</code> y <code>aura up --standby</code>. El mismo modelo simulado, los mismos ataques, el mismo instante.",
+    footRight: "Ejecútalo tú: <code>aura demo --versus</code>",
+    machine: s => `${s.meta.cpus} CPU · ${s.meta.os}/${s.meta.arch} · v${s.meta.version}`,
+    wait: "—",
+    notHeld: "no aguantó",
+    beats: {
+      taken: {
+        title: "Tomado",
+        did: f => `Alguien toma la parte que habla con el modelo e intenta que se hagan ${v(f.orders)} pagos que ninguno de los dos sistemas puede hacer.`,
+        plain: f => [`${n(f.carried_out)} de ${n(f.orders)}`, "pagos prohibidos se hicieron", `Su propia regla rechazó los <b>${n(f.refused_at_the_front)}</b> por la puerta principal. Por dentro, la clave estaba ahí.`],
+        aura: f => [`${n(f.carried_out)} de ${n(f.orders)}`, "pagos prohibidos se hicieron", `Sin clave que usar: <b>${n(f.no_key)}</b> rechazados. El broker no dio ninguna: <b>${n(f.broker_refused)}</b>. La política denegó <b>${n(f.policy_denied)}</b>.`],
+      },
+      late: {
+        title: "Demasiado tarde",
+        did: f => `${v(f.orders)} órdenes salen ${v(f.delay_ms)} ms después de una decisión que valía ${v(f.deadline_ms)} ms.`,
+        plain: f => [`${n(f.carried_out)} de ${n(f.orders)}`, "ejecutadas después de su plazo", "Nada entre la decisión y el acto sabía cuán vieja era."],
+        aura: f => [`${n(f.carried_out)} de ${n(f.orders)}`, "ejecutadas después de su plazo", `<b>${n(f.sealed_expired)}</b> selladas en el ledger como <code>expired</code>${f.late_by_ms ? `, ${n(f.late_by_ms)} ms tarde` : ""}.`],
+      },
+      crash: {
+        title: "Matado",
+        did: f => `SIGKILL a los dos a la vez. Después, los ${v(f.requests)} clientes que nunca recibieron respuesta vuelven a pedir.`,
+        plain: f => [`${n(f.carried_out_twice)} dos veces`, "órdenes ejecutadas por segunda vez", `De vuelta en <b>${ms(f.back_ms)}</b>, como proceso nuevo: <b>${n(f.sessions_forgotten)}</b> de ${n(f.sessions)} sesiones olvidadas, y lo que ya había hecho.`],
+        aura: f => [`${n(f.carried_out_twice)} dos veces`, "cada orden ejecutada exactamente una vez", `El standby contesta en <b>${ms(f.back_ms)}</b>, como el mismo nodo. <b>${n(f.sessions_back)}</b>/${n(f.sessions)} sesiones reanudadas.`],
+      },
+      forged: {
+        title: "Registro falsificado",
+        did: () => "Se cambia en disco un carácter del registro de lo que se hizo, en el almacén de cada sistema.",
+        plain: f => [f.noticed ? "lo notó" : "no lo notó", f.noticed ? "su comprobación encontró el cambio" : "su propia comprobación sigue diciendo que el log está bien", `Línea <b>${n(f.edited_line)}</b> de ${n(f.entries)}: <code>${esc(tail(f.edited_from))}</code> → <code>${esc(tail(f.edited_to))}</code>`],
+        aura: f => [f.noticed ? `registro n.º ${n(f.broken_at_seq)}` : "no lo notó", f.noticed ? `señalado por la verificación, en ${ms(f.verify_ms)}` : "la verificación no encontró el cambio", `Registro <b>n.º ${n(f.edited_seq)}</b> de ${n(f.entries)}: <code>${esc(tail(f.edited_from))}</code> → <code>${esc(tail(f.edited_to))}</code>`],
+      },
+    },
+  },
+};
+
+const root = document.documentElement;
+const params = new URLSearchParams(location.search);
+const wanted = root.dataset.lang || params.get("lang") || navigator.language || "en";
+const lang = wanted.toLowerCase().startsWith("es") ? "es" : "en";
+root.lang = lang;
+const t = TEXT[lang];
+document.title = "AURA — " + t.tag;
+
+function fmt(opts) {
+  try { return new Intl.NumberFormat(lang, { useGrouping: "always", ...opts }); }
+  catch (_) { return new Intl.NumberFormat(lang, opts); }
+}
+const fmt0 = fmt({ maximumFractionDigits: 0 });
+const fmt1 = fmt({ minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const fmt2 = fmt({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const missing = x => x == null || Number.isNaN(x);
+function n(x) { return missing(x) ? "—" : fmt0.format(Math.round(x)); }
+function v(x) { return missing(x) ? "—" : fmt0.format(x); }
+function ms(x) { return missing(x) ? "—" : x >= 1000 ? fmt2.format(x / 1000) + " s" : (x >= 100 ? fmt0.format(x) : x >= 10 ? fmt1.format(x) : fmt2.format(x)) + " ms"; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+// The end of an identifier is where the edit is; the rest is noise on a card.
+function tail(s) { s = String(s || ""); return s.length <= 9 ? s : "…" + s.slice(-8); }
+function plainLine(b, tx) { const c = tx.plain(b.plain || {}); return `${c[0]} ${c[1]}.`; }
+function auraLine(b, tx) { const c = tx.aura(b.aura || {}); return `${c[0]} ${c[1]}.`; }
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(root).getPropertyValue(name).trim();
+
+const ORDER = ["taken", "late", "crash", "forged"];
+const SIDES = ["plain", "aura"];
+$("tag").textContent = t.tag;
+$("foot-left").innerHTML = t.foot;
+$("foot-right").innerHTML = t.footRight;
+$("steps").innerHTML = ORDER.map(() => `<div class="step"><i></i></div>`).join("");
+const DOT = { f: "--live", x: "--bad", a: "--hit", ".": "--surface-3", o: "--live", s: "--hit" };
+$("sides").innerHTML = SIDES.map(k => `
+  <div class="side" id="side-${k}">
+    <h2>${t.side[k][0]}</h2>
+    <div class="nums">
+      <div class="num"><div class="v" id="n-${k}-sessions">—</div><div class="l">${t.nums[0]}</div></div>
+      <div class="num"><div class="v" id="n-${k}-executed">—</div><div class="l">${t.nums[1]}</div></div>
+      <div class="num harm" id="h-${k}"><div class="v" id="n-${k}-harm">—</div><div class="l">${t.nums[2]}</div></div>
+    </div>
+    <p><span class="pill" id="pill-${k}"></span>${t.side[k][1]}</p>
+    <div class="dots"><canvas id="dots-${k}"></canvas></div>
+    <div class="legend">${(k === "plain" ? ["f", "x", "a"] : ["f", "x"]).map(c => `<span><i style="background:var(${DOT[c]})"></i>${t.legend[c]}</span>`).join("")}</div>
+  </div>`).join("");
+$("beats").innerHTML = ORDER.map((id, i) => `
+  <div class="beat pending" id="beat-${id}">
+    <div class="cell left waiting" data-side="${t.side.plain[0]}" id="cell-${id}-plain"></div>
+    <div class="what"><div class="head"><span class="n">${i + 1}</span><span class="title">${t.beats[id].title}</span></div><div class="did" id="did-${id}"></div></div>
+    <div class="cell right waiting" data-side="${t.side.aura[0]}" id="cell-${id}-aura"></div>
+  </div>`).join("");
+
+const shown = {};
+function ease(key, target) {
+  if (missing(target)) return null;
+  const cur = shown[key];
+  shown[key] = cur == null || Math.abs(target - cur) < 0.5 ? target : cur + (target - cur) * 0.3;
+  return shown[key];
+}
+function put(id, html) { const el = $(id); if (el.dataset.h !== html) { el.dataset.h = html; el.innerHTML = html; } }
+
+let state = null, held = params.has("hold"), dirty = true;
+addEventListener("resize", () => { dirty = true; });
+function begin() { held = false; }
+addEventListener("keydown", e => { if (e.code === "Space" || e.key === "Enter") begin(); });
+addEventListener("click", begin);
+async function poll() {
+  try {
+    const r = await fetch("state" + (held ? "" : "?watching=1"), { cache: "no-store" });
+    state = await r.json();
+    dirty = true;
+  } catch (_) { /* the next poll will tell */ }
+  setTimeout(poll, 200);
+}
+poll();
+
+function cell(id, side, b, tx) {
+  const el = $(`cell-${id}-${side}`), facts = b[side] || {};
+  let cls = `cell ${side === "plain" ? "left" : "right"}`, html;
+  if (b.status !== "done") {
+    cls += " waiting";
+    html = `<div class="big">${t.wait}</div><div class="txt"></div>`;
+  } else {
+    const c = tx[side](facts);
+    const failed = side === "aura" ? (b.checks || []).filter(x => !x.ok) : [];
+    if (side === "plain") cls += b.harmed ? " harmed" : " spared";
+    else cls += b.held ? " held" : " broke";
+    html = `<div class="big">${c[0]}</div><div class="txt"><strong>${c[1]}</strong>${c[2]}` +
+      failed.map(x => `<br><span style="color:var(--bad)">${t.notHeld}: ${esc(x.id.replace(/_/g, " "))}${x.detail ? " — " + esc(x.detail) : ""}</span>`).join("") + `</div>`;
+  }
+  const sig = cls + html;
+  if (el.dataset.h !== sig) { el.dataset.h = sig; el.className = cls; el.innerHTML = html; }
+}
+
+function render() {
+  requestAnimationFrame(render);
+  const s = state;
+  if (!s) return;
+  const live = s.phase !== "starting" && s.phase !== "waiting";
+  put("machine", esc(t.machine(s)));
+  const sec = Math.floor(s.elapsed);
+  put("clock", Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"));
+
+  for (const k of SIDES) {
+    const side = s[k];
+    const st = live ? (side.state || "") : "";
+    const pill = $("pill-" + k);
+    if (pill.dataset.s !== st) { pill.dataset.s = st; pill.className = "pill " + st; pill.textContent = t.state[st] || t.state[""]; }
+    put(`n-${k}-sessions`, live ? n(ease(k + "s", side.sessions)) : "—");
+    put(`n-${k}-executed`, live ? n(ease(k + "e", side.executed)) : "—");
+    put(`n-${k}-harm`, live ? n(side.harm) : "—");
+    $("h-" + k).classList.toggle("hurt", side.harm > 0);
+  }
+
+  let running = null, lastDone = null;
+  s.beats.forEach((b, i) => {
+    const tx = t.beats[b.id];
+    const step = $("steps").children[i];
+    if (step.dataset.s !== b.status) { step.dataset.s = b.status; step.className = "step " + b.status; }
+    const row = $("beat-" + b.id);
+    if (row.dataset.s !== b.status) { row.dataset.s = b.status; row.className = "beat " + b.status; }
+    put("did-" + b.id, tx.did(Object.assign({}, b.plain, b.aura)));
+    cell(b.id, "plain", b, tx);
+    cell(b.id, "aura", b, tx);
+    if (b.status === "running") running = b;
+    if (b.status === "done") lastDone = b;
+  });
+
+  let cls = "now", badge, text;
+  if (s.phase === "failed") { cls += " failed"; badge = t.badge.failed; text = t.phase.failed(s); }
+  else if (s.phase === "starting") { badge = t.badge.starting; text = t.phase.starting; }
+  else if (s.phase === "waiting") { badge = held ? t.badge.waiting : t.badge.starting; text = held ? t.phase.waiting : t.phase.starting; }
+  else if (s.phase === "done") { cls += " final"; badge = t.badge.done; text = t.phase.done(s); }
+  else if (running) { const tx = t.beats[running.id]; cls += " running"; badge = t.badge.running; text = `<b>${tx.title}.</b> ${tx.did(Object.assign({}, running.plain, running.aura))}`; }
+  else if (lastDone && s.elapsed - lastDone.end < 4.5) { badge = t.badge.after; text = t.phase.after(lastDone, t.beats[lastDone.id]); }
+  else { badge = t.badge.steady; text = t.phase.steady(s); }
+  const now = $("now"), html = `<span class="badge">${badge}</span><span>${text}</span>`;
+  if (now.dataset.h !== html) { now.dataset.h = html; now.className = cls; now.innerHTML = html; }
+
+  if (dirty) { dirty = false; for (const k of SIDES) drawDots($("dots-" + k), s[k].dots || "", s.meta.sessions); }
+}
+
+const C = {};
+for (const k of ["--live", "--hit", "--bad", "--surface-3"]) C[k] = css(k);
+
+// One square per session, in rows, coloured by what happened to it last.
+function drawDots(canvas, dots, expected) {
+  const r = canvas.parentElement.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, r.width, r.height);
+  const count = Math.max(dots.length, expected || 0);
+  if (!count || r.width < 20) return;
+  // As many rows as make the squares largest.
+  let rows = 1, best = 0;
+  for (let k = 1; k <= 8; k++) {
+    const fits = Math.min(r.width / Math.ceil(count / k), r.height / k);
+    if (fits > best) { best = fits; rows = k; }
+  }
+  const cols = Math.ceil(count / rows);
+  const cellSize = Math.min(best, 24), size = Math.max(2, cellSize * 0.74);
+  for (let i = 0; i < count; i++) {
+    g.fillStyle = C[DOT[dots[i] || "."] || "--surface-3"];
+    const x = (i % cols) * cellSize, y = Math.floor(i / cols) * cellSize + (r.height - rows * cellSize) / 2;
+    g.beginPath();
+    if (g.roundRect) g.roundRect(x, y, size, size, Math.min(3, size / 4)); else g.rect(x, y, size, size);
+    g.fill();
+  }
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

@@ -25,6 +25,18 @@ Every figure on the screen was measured in that run; none is typed in.
 aura demo              # then open http://127.0.0.1:7700
 ```
 
+<p align="center"><img src="docs/media/versus.gif" alt="aura demo --versus: an ordinary agent on the left and a node on the right, doing the same work while the same four things are done to both — taken over, orders arriving late, killed, their record edited. The left ends with 61 things that should never have happened, the right with none" width="900"></p>
+
+**And that is the same work without it.** `aura demo --versus` runs an ordinary
+agent beside a node — one process, the service's key in its environment, its
+own rule about what it may do, a log file, restarted the instant it dies — and
+does four things to both at the same instant. Taken over from inside, the agent
+makes 20 of 20 forbidden payments; the node, none. It carries out 20 of 20
+orders that arrive too late; the node seals them as expired. Killed and asked
+again, it carries out 20 orders a second time; the node, each exactly once. And
+when one character of its record is edited on disk, its own check passes.
+[What is fair about that comparison, and what is not](GUIDE.md#the-same-agent-twice-aura-demo---versus).
+
 ---
 
 ## What it is, and what it is today
@@ -310,8 +322,9 @@ under which policy, and whether the chain verifies.
 A 67-check conformance suite runs the kernel over the wire, and separate CI
 jobs prove the ledger detects tampering by editing a real database behind a
 real binary's back, that a scoped token cannot act as the operator, that a
-node started **with its default auth** can be driven end to end, and that a
-node and its standby survive all six beats of `aura demo`. Read
+node started **with its default auth** can be driven end to end, that a
+node and its standby survive all six beats of `aura demo`, and that
+`aura demo --versus` comes out the way it is described. Read
 [Security model](GUIDE.md#security-model) before exposing a port, and
 [the roadmap](ROADMAP.md) for what is missing and why it comes in that order.
 This is pre-production; treat it as such.

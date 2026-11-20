@@ -48,16 +48,22 @@ The loops cut from the last frame back to the first; they are not cross-faded.
 |---|---|
 | `under-fire.gif`, `under-fire-es.gif` | One whole run of `aura demo`, from the first session opening to the result, in English and in Spanish. Two separate runs, not one run relabelled. 1000×625, 12 fps. |
 | `under-fire.png`, `under-fire-es.png` | The screen as each of those two runs ended (1280×800). |
+| `versus.gif`, `versus-es.gif` | One whole run of `aura demo --versus`, in each language: an ordinary agent on the left, a node on the right, four things done to both. Two separate runs. 1000×625, 12 fps. |
+| `versus.png`, `versus-es.png` | The screen as each of those two runs ended (1280×800). |
 
 These are not the control plane and not the test Expertise above: the screen
 is the demo's own page, embedded in the binary, and the figures on it are that
-run's. A node and a standby from this tree, 300 relay sessions and 24 operation
+run's. The agent on the left of the comparison is
+`kernel/internal/demo/plain.go`, a real process; what is fair about setting a
+node beside it, and what is not, is in
+[the guide](../../GUIDE.md#the-same-agent-twice-aura-demo---versus). A node and a standby from this tree, 300 relay sessions and 24 operation
 sessions, the simulated engine — the footer of the screen says so. What the
 demo starts, what each of its six beats requires and what it leaves out is in
 [the guide](../../GUIDE.md#a-node-under-fire-aura-demo).
 
 **Three times faster than it happened.** A frame was taken every 250 ms and the
-GIF plays twelve a second, so 51 seconds of run are 18 seconds of GIF. The clock
+GIF plays twelve a second, so 51 seconds of run are 18 seconds of GIF. The
+comparison's runs took 36 and 37 seconds, 13 of GIF. The clock
 in the top-right corner of the screen shows the real elapsed time throughout.
 Nothing else was done to it: no frame was dropped, reordered or retouched.
 
@@ -120,6 +126,8 @@ cd /tmp/cap                                   # the Playwright directory from st
 node <repo>/docs/media/src/capture_demo.mjs http://127.0.0.1:7700 /tmp/cap/demo-en
 bash <repo>/docs/media/src/make_demo_gif.sh /tmp/cap/demo-en /tmp/cap/gif-en
 # DEMO_LANG=es for the Spanish one: stop the demo, start it again, capture again.
+# The comparison: start `./aura demo --versus ...` instead, and capture with
+# DEMO_SCENE=versus; make_demo_gif.sh takes `versus` as its third argument.
 ```
 
 The capture exits non-zero if the run it filmed did not survive every beat, so a

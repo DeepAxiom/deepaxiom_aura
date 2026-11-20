@@ -27,6 +27,8 @@ func cmdDemo(args []string) {
 	rate := fs.Float64("rate", 10, "messages per second per relay session")
 	pace := fs.Duration("pace", 6*time.Second, "quiet time before each beat")
 	warmup := fs.Duration("warmup", 5*time.Second, "time at steady load before the first beat")
+	versus := fs.Bool("versus", false,
+		"run the comparison instead: the same work and the same attacks on a plain agent and on a node")
 	headless := fs.Bool("headless", false,
 		"no screen: run at once, print each result, exit non-zero if anything failed")
 	now := fs.Bool("now", false, "with a screen, start at once instead of when someone opens it")
@@ -57,6 +59,10 @@ Every number shown is measured in that run. The model is simulated unless
     aura demo                      open http://127.0.0.1:7700 and watch
     aura demo --headless           no screen; exit code says whether it held
 
+    aura demo --versus             the comparison: an ordinary agent on the left, a
+                                   node on the right, the same four things done to
+                                   both at the same instant
+
 `)
 		fs.PrintDefaults()
 	}
@@ -74,7 +80,26 @@ Every number shown is measured in that run. The model is simulated unless
 	if *ops == 0 {
 		opt.Ops = -1 // asked for none, as opposed to not asked
 	}
-	run := demo.New(opt)
+	// What the command needs of a run, whichever of the two it is.
+	type runner interface {
+		demo.Watchable
+		Start(context.Context) error
+		Close()
+		Survived() bool
+		Summary() string
+	}
+	var run runner = demo.New(opt)
+	if *versus {
+		// The comparison's sessions are whole operations, so its default is
+		// smaller; an explicit --sessions is honoured.
+		opt.Sessions = 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "sessions" {
+				opt.Sessions = *sessions
+			}
+		})
+		run = demo.NewVersus(opt)
+	}
 	defer run.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -97,9 +122,8 @@ Every number shown is measured in that run. The model is simulated unless
 	}
 
 	err := run.Start(ctx)
-	snap := run.Snapshot()
 	if *asJSON {
-		out, _ := json.MarshalIndent(snap, "", "  ")
+		out, _ := json.MarshalIndent(run.State(), "", "  ")
 		fmt.Println(string(out))
 	}
 	if err != nil {
@@ -111,15 +135,9 @@ Every number shown is measured in that run. The model is simulated unless
 		os.Exit(1)
 	}
 
-	survived := 0
-	for _, b := range snap.Beats {
-		if b.Status == "survived" {
-			survived++
-		}
-	}
-	fmt.Fprintf(os.Stderr, "\n  %d of %d survived\n", survived, len(snap.Beats))
+	fmt.Fprintf(os.Stderr, "\n  %s\n", run.Summary())
 	if *headless {
-		if !snap.Survived() {
+		if !run.Survived() {
 			run.Close()
 			os.Exit(1)
 		}

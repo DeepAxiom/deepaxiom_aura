@@ -223,7 +223,7 @@ func (r *Run) beatAgent(b *beat) {
 		if i%2 == 1 {
 			key = newKey()
 		}
-		if r.orderDirect(id, key) == http.StatusUnauthorized {
+		if orderDirect(r.c.http, r.svc, id, key) == http.StatusUnauthorized {
 			direct++
 		}
 	}
@@ -282,7 +282,7 @@ func (r *Run) beatAgent(b *beat) {
 	for i := 0; i < tries; i++ {
 		id := fmt.Sprintf("attack-%d-pay-%d", stamp, i)
 		orders = append(orders, id)
-		ok, detail := r.runForbidden(id)
+		ok, detail := r.c.runForbidden(id)
 		if !ok {
 			denied++
 			why = detail
@@ -327,14 +327,14 @@ func (r *Run) beatAgent(b *beat) {
 }
 
 // orderDirect calls the service the way a process with no key can.
-func (r *Run) orderDirect(id, key string) int {
+func orderDirect(h *http.Client, svc *service, id, key string) int {
 	body, _ := json.Marshal(map[string]string{"id": id})
-	req, _ := http.NewRequest(http.MethodPost, r.svc.url()+"/orders", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, svc.url()+"/orders", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
-	resp, err := r.c.http.Do(req)
+	resp, err := h.Do(req)
 	if err != nil {
 		return 0
 	}
@@ -363,8 +363,8 @@ func (c *cluster) registersAs(token string, m map[string]any) bool {
 
 // runForbidden tries to run the graph that wires the forbidden capability. ok
 // is true only if the node let the order through.
-func (r *Run) runForbidden(id string) (ok bool, detail string) {
-	cl, err := r.c.open(graphExfil, "demo-x-"+id)
+func (c *cluster) runForbidden(id string) (ok bool, detail string) {
+	cl, err := c.open(graphExfil, "demo-x-"+id)
 	var no refused
 	if errors.As(err, &no) {
 		return false, no.detail

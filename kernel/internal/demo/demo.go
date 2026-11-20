@@ -24,6 +24,9 @@ type Options struct {
 	Version string
 	// NodePort is where the node — and after the kill, its standby — listens.
 	NodePort int
+	// PlainPort is where the comparison's plain agent listens. Zero is the
+	// port after NodePort.
+	PlainPort int
 	// Sessions and Ops are how many relay and operation sessions run.
 	Sessions int
 	Ops      int
@@ -416,7 +419,7 @@ func (r *Run) setup() error {
 		}
 	}
 	tokens := map[string]string{}
-	for _, capability := range []string{capRelay, capBrain, capPlanner, capActuator, capPayments} {
+	for _, capability := range []string{capRelay, capBrain, capPlanner, capActuator, capPayments, capScribe} {
 		tok, err := r.c.issueToken(capability)
 		if err != nil {
 			return err
@@ -717,7 +720,25 @@ func round(v float64, places int) float64 {
 
 func ms(d time.Duration) float64 { return round(float64(d.Microseconds())/1000, 1) }
 
-// executable is the path nodes are started from when none was given.
+// State, Survived and Summary are what the command needs of any run.
+func (r *Run) State() any { return r.Snapshot() }
+
+// Survived reports whether every beat ran and held.
+func (r *Run) Survived() bool { return r.Snapshot().Survived() }
+
+// Summary is the last line of a run.
+func (r *Run) Summary() string {
+	s := r.Snapshot()
+	survived := 0
+	for _, b := range s.Beats {
+		if b.Status == "survived" {
+			survived++
+		}
+	}
+	return fmt.Sprintf("%d of %d survived", survived, len(s.Beats))
+}
+
+// Executable is the path nodes are started from when none was given.
 func Executable() string {
 	p, err := os.Executable()
 	if err != nil {

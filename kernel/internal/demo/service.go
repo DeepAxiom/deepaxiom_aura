@@ -28,7 +28,7 @@ type service struct {
 	rejected atomic.Int64 // calls turned away for lacking the key
 
 	mu   sync.Mutex
-	done map[string]bool // order ids carried out
+	done map[string]int // order id -> how many times it was carried out
 }
 
 func newKey() string {
@@ -42,7 +42,7 @@ func newService() (*service, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &service{key: newKey(), ln: ln, done: map[string]bool{}}
+	s := &service{key: newKey(), ln: ln, done: map[string]int{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /orders", s.order)
 	s.srv = &http.Server{Handler: mux}
@@ -64,7 +64,7 @@ func (s *service) order(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
 	s.mu.Lock()
-	s.done[body.ID] = true
+	s.done[body.ID]++
 	s.mu.Unlock()
 	s.executed.Add(1)
 	w.Header().Set("Content-Type", "application/json")
@@ -72,7 +72,11 @@ func (s *service) order(w http.ResponseWriter, r *http.Request) {
 }
 
 // carriedOut reports whether the service executed an order with this id.
-func (s *service) carriedOut(id string) bool {
+func (s *service) carriedOut(id string) bool { return s.times(id) > 0 }
+
+// times reports how many times the service executed an order with this id.
+// More than once is the service having done the same thing twice.
+func (s *service) times(id string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.done[id]

@@ -26,6 +26,8 @@ import (
 //	          service key, and calls the service.
 //	payments  provides a capability the policy forbids. It is connected and
 //	          able; it must never be handed anything.
+//	scribe    puts a finished effect into words for the client: a second model
+//	          call, after the act. Only the comparison's graph uses it.
 
 const (
 	graphRelay = "demo-relay"
@@ -33,12 +35,18 @@ const (
 	graphTalk  = "demo-talk"
 	graphLate  = "demo-late"
 	graphExfil = "demo-exfil"
+	graphWork  = "demo-work"
 
 	capRelay    = "logical.demo.relay"
 	capBrain    = "cognitive.demo.brain"
 	capPlanner  = "logical.demo.planner"
 	capActuator = "motor.demo.dispatch"
 	capPayments = "motor.payments.send"
+	capScribe   = "cognitive.demo.scribe"
+
+	// composeTokens is how long the answer after an effect is. Long enough
+	// that a crash can land between the act and the answer.
+	composeTokens = 60
 
 	// lateDeadlineMS is how long an order on the late graph stays valid.
 	lateDeadlineMS = 250
@@ -73,6 +81,17 @@ func graphs() []map[string]any {
 			e("plan.order_out", "act.order_in"),
 			e("act.text_out", "client.text_in"),
 		}),
+		// The whole of an operation, as the comparison runs it: decide, act,
+		// and then put the outcome into words — so there is a stretch after
+		// the effect and before the answer, as there is in any real agent.
+		g(graphWork, []map[string]any{n("brain", capBrain), n("act", capActuator), n("scribe", capScribe)},
+			[]map[string]any{
+				e("client.text_out", "brain.text_in"),
+				e("brain.text_out", "client.text_in"),
+				e("brain.order_out", "act.order_in"),
+				e("act.text_out", "scribe.text_in"),
+				e("scribe.text_out", "client.text_in"),
+			}),
 		// The graph an attacker registers: it wires the forbidden capability and
 		// waives the gate on it. It is a well-formed document, so it registers.
 		g(graphExfil, []map[string]any{n("pay", capPayments)}, []map[string]any{
@@ -89,6 +108,7 @@ type cast struct {
 	planner  *expertise
 	actuator *expertise
 	payments *expertise
+	scribes  []*expertise
 
 	svc   *service
 	model string
@@ -129,12 +149,18 @@ func (c *cluster) cast(svc *service, model string, tokens map[string]string, rel
 	k.payments = c.expertise(tokens[capPayments], manifest("demo/motor/payments", capPayments, "motor",
 		[]string{"order_in"}, []string{"text_out"}),
 		func(*expertise, envelope) { k.handedToPayments.Add(1) })
+	for i := 0; i < 2; i++ {
+		k.scribes = append(k.scribes, c.expertise(tokens[capScribe],
+			manifest("demo/cognitive/scribe", capScribe, "cognitive",
+				[]string{"text_in"}, []string{"text_out"}), k.scribe))
+	}
 	return k
 }
 
 func (k *cast) all() []*expertise {
 	out := append([]*expertise{}, k.relays...)
 	out = append(out, k.brains...)
+	out = append(out, k.scribes...)
 	return append(out, k.planner, k.actuator, k.payments)
 }
 
@@ -202,14 +228,37 @@ func (k *cast) brain(x *expertise, env envelope) {
 	if fields[0] == "talk" {
 		tokens, _ = strconv.Atoi(fields[1])
 	}
+	complete := k.generate(x, env, text, tokens, func(tok string) bool {
+		return x.emit(env, "text_out", tok, false) == nil
+	})
+	// An order follows only a generation that finished. One the node cut —
+	// cancelled, out of time — decided nothing, so nothing is ordered.
+	if complete && fields[0] == "op" {
+		_ = x.emit(env, "order_out", fields[1], true)
+	}
+}
+
+// scribe is handed the outcome of an effect and says it to the client, after
+// asking the model how.
+func (k *cast) scribe(x *expertise, env envelope) {
+	text := textOf(env)
+	if k.generate(x, env, text, composeTokens, nil) {
+		_ = x.emit(env, "text_out", text, true)
+	}
+}
+
+// generate asks the model for tokens through the node, on behalf of the
+// delivery env, and reports whether the generation ran to its end. each, when
+// set, is given every token as it arrives and may stop the reading.
+func (k *cast) generate(x *expertise, env envelope, prompt string, tokens int, each func(string) bool) bool {
 	body, _ := json.Marshal(map[string]any{
 		"model": k.model, "stream": true, "max_tokens": tokens,
-		"messages": []map[string]string{{"role": "user", "content": text}},
+		"messages": []map[string]string{{"role": "user", "content": prompt}},
 	})
 	req, err := http.NewRequest(http.MethodPost,
 		k.c.base()+"/v1/inference/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return
+		return false
 	}
 	// The call names the delivery it is made for. That is all the node needs
 	// to place it: which graph, which priority, which deadline, and whether the
@@ -223,14 +272,13 @@ func (k *cast) brain(x *expertise, env envelope) {
 	resp, err := k.streamer.Do(req)
 	if err != nil {
 		k.inferErr.Store(err.Error())
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		k.inferErr.Store("inference answered " + resp.Status)
-		return
+		return false
 	}
-	complete := false
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
@@ -240,8 +288,7 @@ func (k *cast) brain(x *expertise, env envelope) {
 		}
 		data := line[len("data: "):]
 		if bytes.Equal(data, []byte("[DONE]")) {
-			complete = true
-			break
+			return true
 		}
 		var chunk struct {
 			Choices []struct {
@@ -253,17 +300,11 @@ func (k *cast) brain(x *expertise, env envelope) {
 		if json.Unmarshal(data, &chunk) != nil || len(chunk.Choices) == 0 {
 			continue
 		}
-		if tok := chunk.Choices[0].Delta.Content; tok != "" {
-			if x.emit(env, "text_out", tok, false) != nil {
-				return
-			}
+		if tok := chunk.Choices[0].Delta.Content; tok != "" && each != nil && !each(tok) {
+			return false
 		}
 	}
-	// An order follows only a generation that finished. One the node cut —
-	// cancelled, out of time — decided nothing, so nothing is ordered.
-	if complete && fields[0] == "op" {
-		_ = x.emit(env, "order_out", fields[1], true)
-	}
+	return false
 }
 
 // plan issues an order, late or on time: `order <delay-ms> <id>`.

@@ -15,22 +15,35 @@ import (
 //go:embed screen.html
 var screenHTML string
 
+//go:embed versus.html
+var versusHTML string
+
+// Watchable is a run the screen can show: something with a state, that may be
+// waiting to be told somebody is watching.
+type Watchable interface {
+	State() any
+	Begin()
+}
+
 // Screen serves the page and the run's state.
 type Screen struct {
-	run *Run
 	ln  net.Listener
 	srv *http.Server
 }
 
-// Serve starts the screen for a run. lang fixes the language; empty leaves it
-// to the browser.
-func Serve(run *Run, addr, lang string) (*Screen, error) {
+// Serve starts the screen for a run — the demo's page, or the comparison's.
+// lang fixes the language; empty leaves it to the browser.
+func Serve(run Watchable, addr, lang string) (*Screen, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	s := &Screen{run: run, ln: ln}
-	page := strings.Replace(screenHTML, `data-lang=""`, `data-lang="`+safeLang(lang)+`"`, 1)
+	s := &Screen{ln: ln}
+	html := screenHTML
+	if _, versus := run.(*Versus); versus {
+		html = versusHTML
+	}
+	page := strings.Replace(html, `data-lang=""`, `data-lang="`+safeLang(lang)+`"`, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -45,7 +58,7 @@ func Serve(run *Run, addr, lang string) (*Screen, error) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(run.Snapshot())
+		_ = json.NewEncoder(w).Encode(run.State())
 	})
 	s.srv = &http.Server{Handler: mux}
 	go func() { _ = s.srv.Serve(ln) }()

@@ -2,6 +2,7 @@ package demo
 
 import (
 	"fmt"
+	"io"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -114,9 +115,10 @@ const (
 	dotOps            // an operation session, answering
 	dotSlow           // its reader has stopped
 	dotDown           // lost its node; reconnecting
+	dotForgot         // answering again, by something that no longer knows it
 )
 
-const dotChars = ".fosx"
+const dotChars = ".fosxa"
 
 // flow is one session that runs for the whole demo.
 type flow struct {
@@ -130,12 +132,19 @@ type flow struct {
 	// backAt is when this session next answered after going down.
 	backAt atomic.Int64
 
+	// turn is how far along the other end last said this session was, and
+	// forgot is set once it has said something lower. Only the comparison's
+	// plain agent reports a turn.
+	turn   atomic.Int64
+	forgot atomic.Bool
+
 	// lent is set while a beat has taken this session over; the session's own
 	// loop steps aside and its socket is closed.
 	lent atomic.Bool
 
-	mu   sync.Mutex
-	conn *client
+	mu    sync.Mutex
+	conn  *client
+	plain io.Closer // the socket, when the session is with the plain agent
 }
 
 func (f *flow) setConn(cl *client) {
@@ -144,11 +153,20 @@ func (f *flow) setConn(cl *client) {
 	f.mu.Unlock()
 }
 
+func (f *flow) setPlain(c io.Closer) {
+	f.mu.Lock()
+	f.plain = c
+	f.mu.Unlock()
+}
+
 // kick closes the session's socket, if it has one.
 func (f *flow) kick() {
 	f.mu.Lock()
 	if f.conn != nil {
 		f.conn.close()
+	}
+	if f.plain != nil {
+		_ = f.plain.Close()
 	}
 	f.mu.Unlock()
 }

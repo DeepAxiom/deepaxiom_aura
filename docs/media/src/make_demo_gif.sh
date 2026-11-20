@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Turns the frames capture_demo.mjs took into under-fire.gif.
+# Turns the frames capture_demo.mjs took into a GIF.
 #
-#   bash docs/media/src/make_demo_gif.sh <outdir-of-capture_demo.mjs> <dest-dir>
+#   bash docs/media/src/make_demo_gif.sh <outdir-of-capture_demo.mjs> <dest-dir> [scene]
+#
+# scene is the DEMO_SCENE the capture ran with: under-fire (the default) or versus.
 #
 # Same two passes as make_gifs.sh — a palette built from this recording, then
 # mapped to it — with ffmpeg from a container, so nothing is installed. The
@@ -17,13 +19,14 @@ FPS="${FPS:-12}"
 COLORS="${COLORS:-64}"
 WIDTH="${WIDTH:-1000}"
 IMAGE="${FFMPEG_IMAGE:-linuxserver/ffmpeg}"
+SCENE="${3:-under-fire}"
 filters="scale=$WIDTH:-1:flags=lanczos"
 
 MSYS_NO_PATHCONV=1 docker run --rm -v "$SRC:/in" -v "$DEST:/out" --entrypoint ffmpeg "$IMAGE" \
-  -hide_banner -loglevel error -y -framerate "$FPS" -i /in/under-fire-%05d.png \
+  -hide_banner -loglevel error -y -framerate "$FPS" -i /in/$SCENE-%05d.png \
   -vf "$filters,palettegen=max_colors=$COLORS:stats_mode=diff" /in/palette.png </dev/null
 MSYS_NO_PATHCONV=1 docker run --rm -v "$SRC:/in" -v "$DEST:/out" --entrypoint ffmpeg "$IMAGE" \
-  -hide_banner -loglevel error -y -framerate "$FPS" -i /in/under-fire-%05d.png -i /in/palette.png \
-  -lavfi "$filters[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" -loop 0 /out/under-fire.gif </dev/null
+  -hide_banner -loglevel error -y -framerate "$FPS" -i /in/$SCENE-%05d.png -i /in/palette.png \
+  -lavfi "$filters[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" -loop 0 /out/$SCENE.gif </dev/null
 rm -f "$SRC/palette.png"
-echo "under-fire.gif $(wc -c < "$DEST/under-fire.gif") bytes"
+echo "$SCENE.gif $(wc -c < "$DEST/$SCENE.gif") bytes"

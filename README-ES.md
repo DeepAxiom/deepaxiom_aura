@@ -26,6 +26,19 @@ cifra en pantalla se midió en esa ejecución; ninguna está escrita a mano.
 aura demo              # y abre http://127.0.0.1:7700
 ```
 
+<p align="center"><img src="docs/media/versus-es.gif" alt="aura demo --versus: un agente corriente a la izquierda y un nodo a la derecha, haciendo el mismo trabajo mientras se les hacen las mismas cuatro cosas — tomados, órdenes que llegan tarde, matados, su registro editado. La izquierda termina con 61 cosas que nunca debieron ocurrir, la derecha con ninguna" width="900"></p>
+
+**Y eso es el mismo trabajo sin él.** `aura demo --versus` corre un agente
+corriente junto a un nodo — un proceso, la clave del servicio en su entorno, su
+propia regla de lo que puede hacer, un archivo de log, reiniciado en el instante
+en que muere — y les hace cuatro cosas a los dos en el mismo instante. Tomado
+por dentro, el agente hace 20 de 20 pagos prohibidos; el nodo, ninguno. Ejecuta
+20 de 20 órdenes que llegan tarde; el nodo las sella como vencidas. Matado y
+vuelto a preguntar, ejecuta 20 órdenes por segunda vez; el nodo, cada una
+exactamente una vez. Y cuando se edita en disco un carácter de su registro, su
+propia comprobación pasa.
+[Qué tiene de justa esa comparación, y qué no](GUIDE-ES.md#el-mismo-agente-dos-veces-aura-demo---versus).
+
 ---
 
 ## Qué es, y qué es hoy
@@ -329,8 +342,9 @@ Una suite de conformidad de 67 verificaciones ejercita el kernel sobre el
 cable, y jobs de CI aparte demuestran que el ledger detecta manipulación
 editando una base de datos real a espaldas de un binario real, que un token con
 alcance no puede actuar como el operador, que un nodo arrancado **con su auth
-por defecto** se puede conducir de punta a punta, y que un nodo y su standby
-sobreviven los seis golpes de `aura demo`. Lee [Modelo de
+por defecto** se puede conducir de punta a punta, que un nodo y su standby
+sobreviven los seis golpes de `aura demo`, y que `aura demo --versus` sale
+como se describe. Lee [Modelo de
 seguridad](GUIDE-ES.md#modelo-de-seguridad) antes de exponer un puerto, y [el
 roadmap](ROADMAP-ES.md) para lo que falta y por qué va en ese orden. Esto es
 pre-producción; trátalo como tal.

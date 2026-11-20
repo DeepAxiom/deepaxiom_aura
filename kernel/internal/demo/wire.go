@@ -256,13 +256,20 @@ func (c *cluster) open(graph, session string) (*client, error) {
 // say sends one message as a full envelope, so its id is known to the sender:
 // a cancel names it, and a reconnect can never collide with it.
 func (cl *client) say(text string) (string, error) {
+	id := channel.NewID()
+	return id, cl.sayAs(id, text)
+}
+
+// sayAs sends a message under an id the caller chose. Sending the same id
+// again is what a client does when it never learned whether the first one
+// arrived: it is the same request, and says so.
+func (cl *client) sayAs(id, text string) error {
 	payload, _ := json.Marshal(textPayload{Text: text, Final: true})
 	cl.wmu.Lock()
 	defer cl.wmu.Unlock()
 	cl.seq++
-	id := channel.NewID()
 	_ = cl.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	return id, cl.conn.WriteJSON(envelope{
+	return cl.conn.WriteJSON(envelope{
 		V: "1", ID: id, Kind: channel.KindData, Port: "text_out", Seq: cl.seq,
 		Idem: id, Schema: "std/text@1", Payload: payload,
 	})

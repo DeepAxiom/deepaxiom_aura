@@ -522,6 +522,71 @@ it the event log, and removes it when it ends. `?hold` on the screen's URL waits
 for a key before starting, which is how the capture in this repository was made
 (see [`docs/media/README.md`](docs/media/README.md)).
 
+### The same agent, twice: `aura demo --versus`
+
+```bash
+aura demo --versus              # then open http://127.0.0.1:7700
+aura demo --versus --headless   # the exit code says whether it came out as described here
+```
+
+<p align="center"><img src="docs/media/versus.png" alt="The comparison's screen after a run: on the left an ordinary agent with 61 things that should never have happened, on the right a node with none, and four rows showing what each did when taken over, when orders came late, when killed and when its record was edited" width="900"></p>
+
+The other demo shows a node surviving. This one shows what it is surviving
+instead of: the same work, and the same four things done to it at the same
+instant, on an ordinary agent and on a node.
+
+**The agent on the left** is [`kernel/internal/demo/plain.go`](kernel/internal/demo/plain.go),
+run as its own process. It does the whole job the way most agents are built:
+takes requests, asks the model, calls the service with a key from its
+environment, writes what it did to a log file. It is not built to lose. It has
+its own rule about what it will not do, and enforces it. It remembers the
+requests it has carried out, so asking twice is not being served twice. It can
+check its log for damage. And it is started again the instant it dies, as any
+supervised service is. What it does not have is anything outside itself.
+
+| | Done to both | Without AURA | With AURA |
+|---|---|---|---|
+| 1 | The part that talks to the model is taken over, and tries to have 20 payments made that neither system may make. | **20 of 20 made.** Its own rule refused all 20 at the front door. From inside the process the key is there and the rule is not on the way. | **0 of 20.** The Expertise holds no key, the broker releases none without a sealed effect, and policy denies the capability whatever a graph says. |
+| 2 | 20 orders are issued 600 ms after a decision that was good for 250 ms. | **20 of 20 carried out.** Nothing between the decision and the act knows how old the decision is. | **0 of 20.** Each is sealed in the ledger as `expired`. |
+| 3 | SIGKILL to both at once. Then the 20 clients whose answer never came ask again, with the same request id. | **20 carried out a second time.** Back in 14–36 ms, as a new process that has forgotten all 60 sessions and what it had already done. | **0 a second time; each exactly once.** The standby answers in 73–299 ms as the same node, 60 of 60 sessions resume, and the 20 repeats are recognised. |
+| 4 | One character of the record of what was done is changed on disk. | **Not noticed.** The agent's own check of its log still passes. | **Named.** Verification says not sound and points at the entry. |
+
+Sixty-one things that should never have happened on the left, in every one of
+ten runs, and none on the right — counted at each side's service, not taken
+from either system's account of itself.
+
+**What is fair about it, and what is not.**
+
+- **The agent comes back faster than the node.** A small process is restarted
+  in tens of milliseconds; the standby takes a hundred or more. The screen shows
+  both. What each comes back *as* is the difference.
+- **Every one of the four can be fixed in the agent,** and each fix is a piece
+  of the node: a durable record of what was already done, a deadline that
+  travels with the decision and is checked before the act, a credential kept
+  somewhere the agent's process is not, a log that chains. That is the point
+  being made, not something being hidden.
+- **The takeover is code running as the model-facing part,** on both sides:
+  inside the agent's process on the left — a handler in `plain.go` that stands
+  in for the attacker and is handed nothing, only what the process already
+  holds — and with the Expertise's own token on the right. It is not a prompt
+  talking a model into a forbidden call: the agent's rule stops that too, which
+  is what the front-door count shows. And an order that is *allowed* but wrong
+  passes on both sides.
+- **A repeat is recognised, not answered again.** The node does not act on a
+  request it has already taken, and does not re-send its answer either; the
+  outcome is in the ledger.
+- **It says nothing about speed.** Both sides answer the same 70–80 operations
+  a second here.
+- The model is simulated, everything is on one machine and the standby is on
+  the same host, exactly as in the other demo.
+
+`--headless` exits non-zero if the node fails to hold in any of the four, and
+also if the agent is *not* harmed in one — because this section says what
+happens on the left, and a run in which it did not would make it untrue. It is
+a step in CI. `--sessions` is per side (default 60); `--pace`, `--warmup`,
+`--listen`, `--lang`, `--json` and `--keep` are as above, the agent listens on
+the port after `--node-port`, and `--engine-url` is not accepted.
+
 ---
 
 ## Command reference
@@ -541,7 +606,7 @@ The `aura` binary is the kernel, the client, the registry, and the fleet tool.
 | ↳ `[--otlp <url>] [--otlp-sample 1.0]` | Export spans to an OTLP/HTTP collector while the node runs. Whole sessions are sampled, never partial trees, and payloads are never exported. Also read from `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`. |
 | ↳ `[--policy <file>] [--max-sessions 1000]` | `--policy` loads an authorization document (deny-by-default for `motor.*`); `--max-sessions` caps live sessions, which matters when an ingress route is public. |
 | ↳ `[--with-examples] [--examples-dir expertise]` | Also start the example Expertises in `expertise/`. Opt-in, never the default: a node's Expertises are normally chosen by an operator, and the kernel is a Go binary that should not depend on a Python toolchain. Each is launched and watched — one that dies reports its own last line of stderr, which for a missing dependency is the pip line you need. |
-| `aura demo [--sessions 300] [--headless] [--engine-url <url>]` | Start a node and a standby of its own, put hundreds of sessions through them and do six things to that system, measured. Screen on `127.0.0.1:7700`; `--headless` prints the checks and exits non-zero if one failed. See [A node under fire](#a-node-under-fire-aura-demo). |
+| `aura demo [--versus] [--sessions 300] [--headless] [--engine-url <url>]` | Start a node and a standby of its own, put hundreds of sessions through them and do six things to that system, measured. Screen on `127.0.0.1:7700`; `--headless` prints the checks and exits non-zero if one failed. See [A node under fire](#a-node-under-fire-aura-demo). `--versus` runs the comparison instead: the same work and four attacks on an ordinary agent and on a node, side by side — [The same agent, twice](#the-same-agent-twice-aura-demo---versus). |
 | `aura status [--port 9080]` | Health of a running node plus its connected Expertises. |
 | `aura ready [--port 9080] [--quiet] [--timeout 3s]` | Readiness as an exit code, for a container healthcheck. Reads `/readyz` — open, so a probe needs no credential — and exits 0 only when the store, ledger and registry are usable. The distroless image has no shell or curl, so its `HEALTHCHECK` is this command. |
 | `aura backup [--data <dir>] [--out <f>] [--include-registry]` | Write a restorable archive of the data directory: a consistent `VACUUM INTO` snapshot of `kernel.db`, the node identity, the causal event log, and a manifest carrying a SHA-256 per file plus the ledger's entry count and Merkle root. Refuses to write an archive missing `node-id`, either half of `identity/`, or `kernel.db` — a data directory restored without the private key cannot decrypt the credential broker's secrets, so such an archive would look like a backup and not be one. Safe to run against a live node; the ledger snapshot is exact and the event log may lag by the last few events. Written `0600`: it contains the node's private key and operator token. |

@@ -22,7 +22,7 @@
 // PW_CHANNEL=msedge (or chrome) uses an installed browser instead of the
 // Chromium that `npx playwright install` downloads.
 //
-// Output: <outdir>/frames/under-fire-NNNNN.png and <outdir>/under-fire-<lang>.png.
+// Output: <outdir>/frames/<scene>-NNNNN.png and <outdir>/<scene>-<lang>.png.
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -37,6 +37,9 @@ if (!base || !out) {
   process.exit(2);
 }
 const lang = process.env.DEMO_LANG || "en";
+// DEMO_SCENE names the files: "under-fire" for `aura demo`, "versus" for
+// `aura demo --versus`. The page is whichever one the demo is serving.
+const scene = process.env.DEMO_SCENE || "under-fire";
 const every = Number(process.env.EVERY_MS || 250);
 const size = { width: 1280, height: 800 };
 const frames = path.join(out, "frames");
@@ -52,7 +55,7 @@ await page.waitForFunction("state && state.phase === 'waiting'", null, { timeout
 await sleep(1000);
 
 let n = 0;
-const shoot = () => page.screenshot({ path: path.join(frames, `under-fire-${String(n++).padStart(5, "0")}.png`) });
+const shoot = () => page.screenshot({ path: path.join(frames, `${scene}-${String(n++).padStart(5, "0")}.png`) });
 await shoot();
 await page.keyboard.press("Space");
 
@@ -71,22 +74,24 @@ for (let tick = 1; ; tick++) {
   if (Date.now() - start > 300_000) break;
 }
 
+// A beat held if the demo says it survived, or the comparison says the node held.
 const result = await page.evaluate("({ phase: state.phase, elapsed: state.elapsed, " +
-  "beats: state.beats.map(b => [b.id, b.status]), live: state.live, meta: state.meta })");
-await page.screenshot({ path: path.join(out, `under-fire-${lang}.png`) });
+  "beats: state.beats.map(b => [b.id, b.status === 'survived' || (b.status === 'done' && b.held === true)]), " +
+  "live: state.live, plain: state.plain, aura: state.aura, meta: state.meta })");
+await page.screenshot({ path: path.join(out, `${scene}-${lang}.png`) });
 
 // The same finished run in the other language: the page only re-renders.
 const other = lang === "en" ? "es" : "en";
 await page.goto(`${base}/?lang=${other}`);
 await page.waitForFunction("state && state.phase === 'done'", null, { timeout: 15_000 }).catch(() => {});
 await sleep(800);
-await page.screenshot({ path: path.join(out, `under-fire-${other}.png`) });
+await page.screenshot({ path: path.join(out, `${scene}-${other}.png`) });
 
 await context.close();
 await browser.close();
 
 console.log(JSON.stringify({ frames: n, every_ms: every, ...result }, null, 2));
-if (result.phase !== "done" || result.beats.some(([, status]) => status !== "survived")) {
-  console.error("the run did not survive every beat; do not publish this recording as if it had");
+if (result.phase !== "done" || result.beats.some(([, held]) => !held)) {
+  console.error("the node did not hold through every beat; do not publish this recording as if it had");
   process.exit(1);
 }
