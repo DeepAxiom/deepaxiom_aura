@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -628,6 +629,54 @@ func TestACallerThatLeavesReleasesTheEngine(t *testing.T) {
 
 	released(t, e, "the caller hung up")
 	waitFor(t, "the stop to be counted", func() bool { return n.plane.Stats().Stopped[StopCaller] == 1 })
+}
+
+// The SDK and the node hold the same deadline, and each ends the request when
+// it passes. Whichever is noticed first, it is the deadline that ended it.
+//
+// The node's own timer is kept out of this on purpose: the deadline is an hour
+// away by the wall clock, so nothing cuts the request but the caller leaving,
+// and the node's clock is what says whether the deadline had passed by then.
+func TestACallerThatGivesUpAtTheDeadlineIsCountedUnderTheDeadline(t *testing.T) {
+	leave := func(t *testing.T, pastDeadline bool) Stats {
+		t.Helper()
+		e := newEngine(t)
+		e.hold = make(chan struct{})
+		var ahead atomic.Int64
+		clock := func() time.Time { return time.Now().Add(time.Duration(ahead.Load())) }
+		n := newNode(t, e, Config{Now: clock}, resolveTo(Resolved{Session: "s", Graph: "g", Root: "r",
+			Known: true, Deadline: time.Now().Add(time.Hour).UnixMilli()}))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+			n.srv.URL+"/v1/inference/chat/completions", strings.NewReader(chatBody))
+		for k, v := range delivery("s", "d1") {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-e.started
+		if pastDeadline {
+			ahead.Store(int64(2 * time.Hour))
+		}
+		cancel()
+		resp.Body.Close()
+		released(t, e, "the caller hung up")
+		waitFor(t, "the stop to be counted", func() bool {
+			st := n.plane.Stats().Stopped
+			return st[StopDeadline]+st[StopCaller] == 1
+		})
+		return n.plane.Stats()
+	}
+
+	if st := leave(t, true).Stopped; st[StopDeadline] != 1 || st[StopCaller] != 0 {
+		t.Errorf("a caller that left after the deadline was counted as %v, want one %q", st, StopDeadline)
+	}
+	if st := leave(t, false).Stopped; st[StopCaller] != 1 || st[StopDeadline] != 0 {
+		t.Errorf("a caller that left before the deadline was counted as %v, want one %q", st, StopCaller)
+	}
 }
 
 // A node stopped during a generation must not wait for the model.
