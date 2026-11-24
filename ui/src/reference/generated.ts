@@ -57,6 +57,11 @@ export const COMMANDS: CommandGroup[] = [
         ]
       },
       {
+        "syntax": "aura demo [--versus] [--sessions 300] [--headless] [--engine-url <url>]",
+        "purpose": "Start a node and a standby of its own, put hundreds of sessions through them and do six things to that system, measured. Screen on 127.0.0.1:7700; --headless prints the checks and exits non-zero if one failed. See A node under fire. --versus runs the comparison instead: the same work and four attacks on an ordinary agent and on a node, side by side — The same agent, twice.",
+        "options": []
+      },
+      {
         "syntax": "aura status [--port 9080]",
         "purpose": "Health of a running node plus its connected Expertises.",
         "options": []
