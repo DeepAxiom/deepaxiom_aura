@@ -9,7 +9,7 @@
 #
 #     ./scripts/pi_smoke_test.sh [path-to-aura-binary]
 #
-# If no binary path is given, builds one from source (needs Go 1.25+ on the
+# If no binary path is given, builds one from source (needs Go 1.26+ on the
 # device — cross-compiling elsewhere and copying the binary over is fine
 # too, just pass its path as the argument).
 set -euo pipefail

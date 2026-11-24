@@ -9,7 +9,7 @@ Every command here has been run end to end on a clean machine.
 standby and hundreds of sessions under attack, measured on your machine. See
 [the README](README.md#run-both-yourself).
 
-**You need:** Python 3.11+ for the Expertises, and Go 1.25+ only if you build the
+**You need:** Python 3.11+ for the Expertises, and Go 1.26+ only if you build the
 kernel instead of downloading it. No CGO, no Docker, no database, no account.
 
 ---

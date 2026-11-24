@@ -74,7 +74,7 @@ docker build -t aura .
 docker run --rm -p 7700:7700 aura demo --listen 0.0.0.0:7700 --lang es            # el nodo bajo fuego
 docker run --rm -p 7700:7700 aura demo --versus --listen 0.0.0.0:7700 --lang es   # la comparación
 
-# o con Go 1.25+ — sin CGO, sin servicios, un binario
+# o con Go 1.26+ — sin CGO, sin servicios, un binario
 cd kernel && go build -o aura ./cmd/aura
 ./aura demo
 ./aura demo --versus
@@ -570,7 +570,7 @@ O por el camino largo, desde el código:
 
 ```bash
 git clone https://github.com/DeepAxiom/deepaxiom_aura && cd deepaxiom_aura/kernel
-go build -o aura ./cmd/aura     # Go 1.25+, sin CGO, sin servicios externos
+go build -o aura ./cmd/aura     # Go 1.26+, sin CGO, sin servicios externos
 ./aura up
 ```
 

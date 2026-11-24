@@ -364,7 +364,7 @@ not belong in the kernel.
 
 ## Install & quickstart
 
-**Requirements:** none to run a release binary. Go 1.25+ only to build the
+**Requirements:** none to run a release binary. Go 1.26+ only to build the
 kernel yourself; Python 3.11+ to run the first-party Expertises; Node 20+ only if
 you want to rebuild the UI. Consumer hardware (8 GB RAM) is enough.
 

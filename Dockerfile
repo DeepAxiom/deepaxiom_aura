@@ -15,7 +15,11 @@
 #   that loses identity/ turns every stored secret into ciphertext nobody can
 #   open. Losing this directory is losing the evidence, not losing a cache.
 
-FROM golang:1.25-alpine AS build
+# The patch version, not the minor: kernel/go.mod names 1.26.11 and the official
+# image runs with GOTOOLCHAIN=local, so a `golang:1.26-alpine` that somebody
+# pulled a month ago is an older patch and stops at `go mod download`. Move this
+# line with the `go` directive.
+FROM golang:1.26.11-alpine AS build
 WORKDIR /src
 
 # Dependencies first, so a source change does not re-download the module cache.

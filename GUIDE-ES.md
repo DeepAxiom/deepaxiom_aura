@@ -369,7 +369,7 @@ funcionalidad necesita un LLM para funcionar, no pertenece al kernel.
 
 ## Instalación y arranque rápido
 
-**Requisitos:** ninguno para correr un binario de release. Go 1.25+ solo para
+**Requisitos:** ninguno para correr un binario de release. Go 1.26+ solo para
 compilar el kernel tú mismo; Python 3.11+ para ejecutar los Expertises de primera
 parte; Node 20+ solo si quieres reconstruir la UI. Hardware de consumo (8 GB de
 RAM) es suficiente.
