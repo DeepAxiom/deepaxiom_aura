@@ -42,6 +42,40 @@ the kernel gates and seals it because its capability is `motor.*`.
 
 The loops cut from the last frame back to the first; they are not cross-faded.
 
+## The demo run (`aura demo`)
+
+| File | Shows |
+|---|---|
+| `under-fire.gif`, `under-fire-es.gif` | One whole run of `aura demo`, from the first session opening to the result, in English and in Spanish. Two separate runs, not one run relabelled. 1000×625, 12 fps. |
+| `under-fire.png`, `under-fire-es.png` | The screen as each of those two runs ended (1280×800). |
+| `versus.gif`, `versus-es.gif` | One whole run of `aura demo --versus`, in each language: an ordinary agent on the left, a node on the right, four things done to both. Two separate runs. 1000×625, 12 fps. |
+| `versus.png`, `versus-es.png` | The screen as each of those two runs ended (1280×800). |
+| `social-preview.png` | `versus.png` scaled into 1280×640 for the repository's social preview. Nothing redrawn: the same screenshot, letterboxed. |
+
+These are not the control plane and not the test Expertise above: the screen
+is the demo's own page, embedded in the binary, and the figures on it are that
+run's. The agent on the left of the comparison is
+`kernel/internal/demo/plain.go`, a real process; what is fair about setting a
+node beside it, and what is not, is in
+[the guide](../../GUIDE.md#the-same-agent-twice-aura-demo---versus). A node and a standby from this tree, 300 relay sessions and 24 operation
+sessions, the simulated engine — the footer of the screen says so. What the
+demo starts, what each of its six beats requires and what it leaves out is in
+[the guide](../../GUIDE.md#a-node-under-fire-aura-demo).
+
+**Three times faster than it happened.** A frame was taken every 250 ms and the
+GIF plays twelve a second, so 51 seconds of run are 18 seconds of GIF. The
+comparison's runs took 36 and 37 seconds, 13 of GIF. The clock
+in the top-right corner of the screen shows the real elapsed time throughout.
+Nothing else was done to it: no frame was dropped, reordered or retouched.
+
+**Frames rather than video, and why.** The first capture recorded a video in
+real time, like the scenes above. The browser encoding it took a core from the
+node being measured, on a four-core laptop, and the run it filmed came out
+several times slower than one nobody was filming — the standby took nine
+seconds instead of half of one. That recording was thrown away. A screenshot
+every 250 ms costs almost nothing, and the two runs kept here took 51 and 52
+seconds, the same as a run with no browser at all.
+
 ## Mechanism diagrams (animated SVG, CSS animation only)
 
 No script, no external reference, own background, `prefers-color-scheme`
@@ -84,11 +118,29 @@ cp /tmp/cap/out/*.png <repo>/docs/media/
 bash <repo>/docs/media/src/make_gifs.sh /tmp/cap/out <repo>/docs/media
 ```
 
+The demo's capture is separate, and needs no node of yours — the demo starts its own:
+
+```bash
+(cd kernel && go build -o ../aura ./cmd/aura)
+./aura demo --listen 127.0.0.1:7700 &        # waits for the page before it starts
+cd /tmp/cap                                   # the Playwright directory from step 3
+node <repo>/docs/media/src/capture_demo.mjs http://127.0.0.1:7700 /tmp/cap/demo-en
+bash <repo>/docs/media/src/make_demo_gif.sh /tmp/cap/demo-en /tmp/cap/gif-en
+# DEMO_LANG=es for the Spanish one: stop the demo, start it again, capture again.
+# The comparison: start `./aura demo --versus ...` instead, and capture with
+# DEMO_SCENE=versus; make_demo_gif.sh takes `versus` as its third argument.
+```
+
+The capture exits non-zero if the run it filmed did not survive every beat, so a
+failed run cannot be published as a passing one by accident.
+
 | Source | Role |
 |---|---|
 | `src/demo_expertise.py` | The three test Expertise. `--replicas`, `--tps`, `--coalesce`. |
 | `src/drive.py` | Registers graphs `draft-only` and `notice`; opens sessions (`run`); raises a gate through `/mcp` (`mcp`). |
 | `src/capture.mjs` | Playwright: the stills in both themes, and one video per animated scene with `scenes.json` (offset and length). |
 | `src/make_gifs.sh` | `palettegen` then `paletteuse` per scene; `FPS`, `COLORS`, `WIDTH` env vars. |
+| `src/capture_demo.mjs` | Playwright: opens the demo's screen held, starts the run, takes a frame every `EVERY_MS` until it ends, and a still in each language. `DEMO_LANG`, `PW_CHANNEL`. |
+| `src/make_demo_gif.sh` | The same two passes over those frames; `FPS`, `COLORS`, `WIDTH`. |
 
 The SVGs are hand-written; edit them directly.

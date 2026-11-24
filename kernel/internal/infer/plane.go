@@ -430,14 +430,14 @@ func (p *Plane) Serve(w http.ResponseWriter, r *http.Request, who Who, route str
 		}
 	}
 	if err != nil {
-		kind := p.stopKind(ctx, r)
+		kind := p.stopKind(ctx, r, res.Deadline)
 		g.finish(kind, false)
 		p.stats.stopped(kind)
 		switch kind {
 		case StopCaller:
 			// Nobody to answer.
 		case StopDeadline:
-			fail(w, http.StatusRequestTimeout, "deadline_exceeded", context.Cause(ctx).Error())
+			fail(w, http.StatusRequestTimeout, "deadline_exceeded", "the delivery's deadline passed")
 		case "":
 			p.log.Warn("the engine could not be reached", "upstream", p.Upstream(), "err", err)
 			fail(w, http.StatusBadGateway, "engine_unreachable",
@@ -469,7 +469,7 @@ func (p *Plane) Serve(w http.ResponseWriter, r *http.Request, who Who, route str
 
 	kind := ""
 	if err != nil {
-		kind = p.stopKind(ctx, r)
+		kind = p.stopKind(ctx, r, res.Deadline)
 		if kind == "" {
 			p.log.Debug("an inference response ended early", "err", err)
 		}
@@ -503,12 +503,23 @@ func msSince(from, to time.Time) int64 {
 
 // stopKind names why a request ended early, or "" when the node did not end
 // it and the caller did not leave — that is, when the engine failed.
-func (p *Plane) stopKind(ctx context.Context, r *http.Request) string {
+//
+// A caller that hangs up once the delivery's deadline has passed is counted
+// under the deadline, not as a caller that left. Both ends hold the same
+// deadline: an SDK gives up on its request when it passes, and the node cuts
+// it when it passes. Which of the two is noticed first is decided by the
+// scheduler, and counting the stop by who won meant one event had two names —
+// on a machine with CPU to spare it was always "deadline", and on a busy one it
+// was sometimes "caller_gone".
+func (p *Plane) stopKind(ctx context.Context, r *http.Request, deadline int64) string {
 	var s *stop
 	if errors.As(context.Cause(ctx), &s) {
 		return s.kind
 	}
 	if r.Context().Err() != nil {
+		if deadline != 0 && !p.now().Before(time.UnixMilli(deadline)) {
+			return StopDeadline
+		}
 		return StopCaller
 	}
 	return ""

@@ -23,6 +23,7 @@ import (
 
 	"aura/kernel/internal/channel"
 	"aura/kernel/internal/config"
+	"aura/kernel/internal/demo"
 	"aura/kernel/internal/executor"
 	"aura/kernel/internal/gateway"
 	"aura/kernel/internal/identity"
@@ -116,6 +117,16 @@ func main() {
 		cmdApprove(os.Args[2:])
 	case "approvals":
 		cmdApprovals(os.Args[2:])
+	case "demo":
+		cmdDemo(os.Args[2:])
+	case "demo-plain":
+		// The ordinary agent `aura demo --versus` compares a node against. Not
+		// a command for people: the demo starts it, with its configuration in
+		// the environment.
+		if err := demo.RunPlainAgent(demo.PlainConfigFromEnv()); err != nil {
+			fmt.Fprintln(os.Stderr, "aura demo-plain:", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Printf("aura %s (channel protocol %s, graph ir %s)\n",
 			version, channel.ProtocolMajor, executor.IRMajor)
@@ -138,6 +149,7 @@ Usage:
           [--open-witness] [--session-mailbox 1024]
           [--otlp http://collector:4318] [--otlp-sample 0.1]
           [--inference-url http://127.0.0.1:8000/v1] [--inference-priority vllm|sglang]
+  aura demo [--sessions 300] [--headless]     a node under fire, measured: http://127.0.0.1:7700
   aura chat ["message"] [--graph chat] [--port 9080]
   aura do "natural-language goal" [--yes] [--port 9080]
   aura connect --openapi <url|file> [--name x] [--base-url y] [--header "K: V"]

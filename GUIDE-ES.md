@@ -369,7 +369,7 @@ funcionalidad necesita un LLM para funcionar, no pertenece al kernel.
 
 ## Instalación y arranque rápido
 
-**Requisitos:** ninguno para correr un binario de release. Go 1.25+ solo para
+**Requisitos:** ninguno para correr un binario de release. Go 1.26+ solo para
 compilar el kernel tú mismo; Python 3.11+ para ejecutar los Expertises de primera
 parte; Node 20+ solo si quieres reconstruir la UI. Hardware de consumo (8 GB de
 RAM) es suficiente.
@@ -428,6 +428,170 @@ channel) y un modelo local respondiendo a través del pipeline completo. Para la
 voz, ver [Hablarle](#hablarle); para comprobar el nodo contra los contratos
 congelados, ver [Compilación y release](#compilación-y-release).
 
+### Un nodo bajo fuego: `aura demo`
+
+```bash
+aura demo                 # y abre http://127.0.0.1:7700
+aura demo --headless      # sin pantalla: imprime cada comprobación; el código de salida dice si todo aguantó
+```
+
+<p align="center"><img src="docs/media/under-fire-es.png" alt="La pantalla de la demo tras una ejecución: 324 sesiones, idas y vueltas por segundo y su p99 en el tiempo con seis golpes marcados, y seis tarjetas que dicen sobrevivió" width="900"></p>
+
+Un comando, solo con el binario. Arranca un nodo y un standby como dos procesos
+reales — este mismo binario, la autenticación por defecto, un archivo de
+política — en sus propios puertos y en un directorio de datos temporal, abre
+324 sesiones vivas a través de ellos, y entonces le hace seis cosas a ese
+sistema. La pantalla muestra qué está pasando y qué se midió. Nada en ella está
+grabado ni escrito a mano: cada cifra sale de esa ejecución, en esa máquina.
+
+| | Qué se hace | Qué tiene que ser cierto después |
+|---|---|---|
+| 1 | Seis sesiones dejan de leer durante unos tres segundos mientras un Expertise le envía a cada una 1.200 mensajes de 8 KiB — por la misma conexión con la que atiende a todas las demás. | El nodo retuvo lo pendiente; ningún emisor tuvo que esperar; las demás sesiones mantuvieron su ritmo; los 7.200 mensajes llegaron, en orden. Ver [Muchas sesiones a la vez](#muchas-sesiones-a-la-vez). |
+| 2 | Alguien toma el control de un Expertise — el que habla con el modelo, que es donde aterriza una instrucción inyectada. Con el token de ese Expertise llama directo al servicio, le pide al broker la clave del servicio sin recibo y con recibos inventados, intenta leer el ledger y los secretos, intenta registrarse como el Expertise que sí puede actuar, e intenta registrar un grafo. Después se ejecuta, con el token del operador, un grafo que cablea una capability prohibida con el gate eximido. | 71 intentos. El servicio no ejecutó ninguno y al Expertise prohibido no se le entregó nada. Ver [El broker de credenciales](#el-broker-de-credenciales). |
+| 3 | Veinte órdenes se emiten 600 ms después de una decisión que valía 250 ms. Otras veinte se emiten de inmediato. | Ninguna orden tardía se ejecutó; cada una está sellada en el ledger como `expired`; cada orden tiene exactamente un destino. Ver [Scheduling](#scheduling-especulación-deadlines-presupuestos). |
+| 4 | Hay dieciséis generaciones largas corriendo a través del nodo, y todos los clientes cancelan. | Cada una se soltó en el motor, y el nodo registró por qué. Ver [Inferencia a través del nodo](#inferencia-a-través-del-nodo). |
+| 5 | El nodo que manda recibe SIGKILL en mitad de todo. | El standby contesta como el mismo nodo; cada Expertise se reconecta y cada sesión se reanuda con su propio id; el ledger sigue como una sola cadena. Ver [Lo que un nodo no sobrevive](#lo-que-un-nodo-no-sobrevive). |
+| 6 | Se cambia un carácter de un registro sellado en el propio `kernel.db`. | La verificación del nodo dice que no es íntegro y nombra el registro, y lo mismo dice `aura verify`, sin conexión. Ver [Modelo de seguridad](#modelo-de-seguridad). |
+
+Un golpe que no aguanta se muestra como fallido, en el lugar donde iría un
+acierto, con lo que no se cumplió. `--headless` corre los mismos seis sin
+pantalla y es un paso del CI, así que lo que la pantalla muestra no puede dejar
+de ser cierto sin que nadie lo note.
+
+**Qué midió aquí.** Una laptop (Intel i5-1145G7, cuatro núcleos), dentro de un
+contenedor Linux, con los nodos, la carga, los Expertises y el motor compitiendo
+por las mismas CPU. Seis ejecuciones. Una referencia para esta máquina, no un
+benchmark:
+
+| | |
+|---|---|
+| Carga estable, 300 sesiones enviando 10 mensajes por segundo cada una | 3.000 idas y vueltas/s · p50 0,6–1,0 ms · p99 cerca de 2 ms |
+| 1 · retenido para las sesiones que dejaron de leer | unos 3.700 mensajes; el p99 de las demás pasó de unos 2 ms a 3–12 ms |
+| 4 · de la cancelación a que el motor quede libre | 0,3–0,9 ms de mediana en cinco ejecuciones; 50 ms en una |
+| 5 · del SIGKILL a que conteste el standby | 0,4–0,6 s en cinco ejecuciones, 2,1 s en una; las 324 sesiones respondiendo otra vez entre 2,2 y 3,0 s después del kill |
+| 6 · verificar unos 1.200 registros y nombrar el editado | 10–17 ms |
+
+Nativo en Windows, en la misma laptop, una ejecución del mismo tamaño: los
+seis aguantaron y las cifras de carga estable fueron las mismas, pero el
+relevo fue más lento — el standby contestó al cabo de 1,0 s y la última sesión
+volvió 10,8 s después del kill.
+
+**Qué no muestra.**
+
+- **Un modelo.** El motor es simulado: habla la API de streaming de OpenAI y
+  produce tokens con un temporizador. De la inferencia se mide cómo la maneja el
+  nodo — situarla, contarla, cortarla — y la pantalla lo dice. Con
+  `--engine-url` el nodo habla con un motor real; ese camino se corrió contra el
+  motor simulado de `bench/inference/` y contra ninguno real.
+- **Dos máquinas.** El standby está en el mismo host y ve que el proceso del
+  líder ya no existe. Entre máquinas espera a que venza el arrendamiento, y en
+  cualquier caso necesita el directorio de datos.
+- **Un relevo rápido sobre un nodo ocioso.** El standby lee el segmento activo
+  del log de eventos antes de contestar, y para el momento del kill la demo ya
+  escribió en él hasta 128 MiB. Por eso aquí el hueco es de un segundo y no las
+  decenas de milisegundos que tarda un nodo ocioso.
+- **Procesos reales de Expertise.** Los Expertises de la demo son clientes del
+  protocolo dentro de su propio proceso: se registran, reciben y emiten por un
+  WebSocket como lo hace un SDK, cada uno con un token acotado a su única
+  capability. El servicio es un pequeño servidor HTTP que ejecuta una orden solo
+  con la clave correcta.
+- **Un atacante que es el operador.** El Expertise comprometido tiene el token
+  de un Expertise. Quien tiene el token del propio nodo puede leer el ledger y
+  gastar un recibo reciente — ver lo que el broker
+  [no hace](#el-broker-de-credenciales).
+- **Una sesión que no vuelve nunca.** Los lectores se detienen tres segundos.
+  Una entrega que no se puede hacer durante cinco se descarta y se le avisa a
+  quien la envió; ese límite es el nodo eligiendo su propia memoria sobre lo
+  pendiente de una sesión.
+- **Que no se pierda nada en el kill.** Las idas y vueltas en vuelo cuando murió
+  el nodo quedaron sin respuesta — entre 112 y 186 aquí — y la pantalla las
+  cuenta.
+
+**Opciones.**
+
+| Flag | |
+|---|---|
+| `--sessions 300` `--rate 10` | Sesiones de enrutado y mensajes por segundo de cada una. Miden el enrutado del nodo; el Expertise que les contesta no hace ningún trabajo. |
+| `--ops 24` | Sesiones de operación: una llamada al modelo a través del nodo, una orden, un efecto sellado en el ledger, la credencial liberada para él, la llamada al servicio. |
+| `--pace 6s` `--warmup 5s` | Tiempo en calma antes de cada golpe, y antes del primero. |
+| `--headless` `--json` | Sin pantalla; imprime el estado final como JSON. Sale con error si algo falló. |
+| `--now` | Con pantalla, empieza de inmediato en vez de cuando se abre la página. |
+| `--listen 127.0.0.1:7700` `--node-port 7711` | Dónde escuchan la pantalla y el nodo propio de la demo. |
+| `--engine-url <url>` `--engine-model <nombre>` `--engine-priority vllm\|sglang` | Un motor real compatible con OpenAI; su clave sale de `$AURA_ENGINE_API_KEY`. Las prioridades solo se envían si `--engine-priority` dice cómo — un motor que no se arrancó para planificar por prioridad rechaza una petición que la trae. |
+| `--lang en\|es` `--keep` | Idioma de la pantalla (por defecto, el del navegador). Conservar el directorio de trabajo: logs, política y ledger. |
+
+Nunca toca un nodo que ya esté corriendo en la máquina. Una ejecución por
+defecto dura menos de un minuto y escribe unos 350 MiB en un directorio
+temporal, casi todo el log de eventos, y lo borra al terminar. `?hold` en la URL
+de la pantalla espera una tecla antes de empezar, que es como se hizo la captura
+de este repositorio (ver [`docs/media/README.md`](docs/media/README.md)).
+
+### El mismo agente, dos veces: `aura demo --versus`
+
+```bash
+aura demo --versus              # y abre http://127.0.0.1:7700
+aura demo --versus --headless   # el código de salida dice si salió como se describe aquí
+```
+
+<p align="center"><img src="docs/media/versus-es.png" alt="La pantalla de la comparación tras una ejecución: a la izquierda un agente corriente con 61 cosas que nunca debieron ocurrir, a la derecha un nodo con ninguna, y cuatro filas con lo que hizo cada uno al ser tomado, cuando las órdenes llegaron tarde, al ser matado y cuando se editó su registro" width="900"></p>
+
+La otra demo muestra un nodo que sobrevive. Esta muestra en lugar de qué: el
+mismo trabajo, y las mismas cuatro cosas hechas en el mismo instante, sobre un
+agente corriente y sobre un nodo.
+
+**El agente de la izquierda** es [`kernel/internal/demo/plain.go`](kernel/internal/demo/plain.go),
+corriendo como su propio proceso. Hace todo el trabajo como se suelen hacer los
+agentes: recibe peticiones, le pregunta al modelo, llama al servicio con una
+clave de su entorno, escribe lo que hizo en un archivo de log. No está hecho
+para perder. Tiene su propia regla de lo que no hace, y la aplica. Recuerda las
+peticiones que ya ejecutó, así que pedir dos veces no es ser atendido dos veces.
+Puede revisar su log en busca de daños. Y se vuelve a arrancar en el instante en
+que muere, como cualquier servicio supervisado. Lo que no tiene es nada fuera de
+sí mismo.
+
+| | Se les hace a los dos | Sin AURA | Con AURA |
+|---|---|---|---|
+| 1 | Alguien toma la parte que habla con el modelo e intenta que se hagan 20 pagos que ninguno de los dos sistemas puede hacer. | **20 de 20 hechos.** Su propia regla rechazó los 20 por la puerta principal. Desde dentro del proceso la clave está ahí y la regla no está en el camino. | **0 de 20.** El Expertise no tiene la clave, el broker no libera ninguna sin un efecto sellado, y la política deniega la capability diga lo que diga un grafo. |
+| 2 | 20 órdenes salen 600 ms después de una decisión que valía 250 ms. | **20 de 20 ejecutadas.** Nada entre la decisión y el acto sabe cuán vieja es la decisión. | **0 de 20.** Cada una queda sellada en el ledger como `expired`. |
+| 3 | SIGKILL a los dos a la vez. Después, los 20 clientes que nunca recibieron respuesta vuelven a pedir, con el mismo id de petición. | **20 ejecutadas por segunda vez.** De vuelta en 14–36 ms, como un proceso nuevo que olvidó las 60 sesiones y lo que ya había hecho. | **0 por segunda vez; cada una exactamente una vez.** El standby contesta en 73–299 ms como el mismo nodo, se reanudan 60 de 60 sesiones, y las 20 repeticiones se reconocen. |
+| 4 | Se cambia en disco un carácter del registro de lo que se hizo. | **No lo nota.** La comprobación que el propio agente hace de su log sigue pasando. | **Señalado.** La verificación dice que no es íntegro y apunta al registro. |
+
+Sesenta y una cosas que nunca debieron ocurrir a la izquierda, en cada una de
+diez ejecuciones, y ninguna a la derecha — contadas en el servicio de cada
+lado, no tomadas de lo que cada sistema dice de sí mismo.
+
+**Qué tiene de justa, y qué no.**
+
+- **El agente vuelve más rápido que el nodo.** Un proceso pequeño se reinicia
+  en decenas de milisegundos; el standby tarda cien o más. La pantalla muestra
+  los dos. La diferencia está en *como qué* vuelve cada uno.
+- **Las cuatro se pueden arreglar en el agente,** y cada arreglo es una pieza
+  del nodo: un registro duradero de lo ya hecho, un plazo que viaja con la
+  decisión y se comprueba antes del acto, una credencial guardada donde el
+  proceso del agente no está, un log encadenado. Eso es lo que se quiere
+  mostrar, no algo que se esté escondiendo.
+- **La toma es código corriendo como la parte que habla con el modelo,** en los
+  dos lados: dentro del proceso del agente a la izquierda — un handler en
+  `plain.go` que hace de atacante y al que no se le da nada, solo lo que el
+  proceso ya tiene — y con el token del propio Expertise a la derecha. No es un
+  prompt que convence a un modelo de hacer una llamada prohibida: la regla del
+  agente también detiene eso, que es lo que muestra la cuenta de la puerta
+  principal. Y una orden *permitida* pero equivocada pasa en los dos lados.
+- **Una repetición se reconoce, no se vuelve a contestar.** El nodo no actúa
+  sobre una petición que ya tomó, y tampoco reenvía su respuesta; el resultado
+  está en el ledger.
+- **No dice nada sobre velocidad.** Los dos lados atienden aquí las mismas
+  70–80 operaciones por segundo.
+- El modelo es simulado, todo está en una máquina y el standby está en el mismo
+  host, igual que en la otra demo.
+
+`--headless` sale con error si el nodo no aguanta alguna de las cuatro, y
+también si el agente *no* sale dañado en alguna — porque esta sección dice lo
+que pasa a la izquierda, y una ejecución en la que no pasara la volvería falsa.
+Es un paso del CI. `--sessions` es por lado (60 por defecto); `--pace`,
+`--warmup`, `--listen`, `--lang`, `--json` y `--keep` son como arriba, el agente
+escucha en el puerto siguiente a `--node-port`, y `--engine-url` no se acepta.
+
 ---
 
 ## Referencia de comandos
@@ -444,6 +608,7 @@ flota.
 | ↳ `[--session-mailbox 1024]` | Envelopes que una sesión puede encolar antes de que se frene al Expertise que la alimenta. Cada sesión rutea en su propia cola, así que un consumidor lento no frena a las demás que comparten conexión; `0` restaura el ruteo en línea. Ver [Muchas sesiones a la vez](#muchas-sesiones-a-la-vez). |
 | ↳ `[--otlp <url>] [--otlp-sample 1.0]` | Exporta spans a un collector OTLP/HTTP mientras el nodo corre. Se muestrean sesiones enteras, nunca árboles parciales, y los payloads nunca se exportan. También se lee de `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`. |
 | ↳ `[--with-examples] [--examples-dir expertise]` | Arranca también los Expertises de ejemplo de `expertise/`. Opt-in, nunca por defecto: los Expertises de un nodo normalmente los elige un operador, y el kernel es un binario Go que no debería depender de un toolchain de Python. Cada uno se lanza y se observa — el que muere devuelve su propia última línea de stderr, que ante una dependencia ausente es la línea de pip que necesitas. |
+| `aura demo [--versus] [--sessions 300] [--headless] [--engine-url <url>]` | Arranca un nodo y un standby propios, pasa cientos de sesiones por ellos y le hace seis cosas a ese sistema, midiendo. Pantalla en `127.0.0.1:7700`; `--headless` imprime las comprobaciones y sale con error si alguna falló. Ver [Un nodo bajo fuego](#un-nodo-bajo-fuego-aura-demo). `--versus` corre la comparación en su lugar: el mismo trabajo y cuatro ataques sobre un agente corriente y sobre un nodo, lado a lado — [El mismo agente, dos veces](#el-mismo-agente-dos-veces-aura-demo---versus). |
 | `aura status [--port 9080]` | Salud de un nodo en ejecución más sus Expertises conectados. |
 | `aura ready [--port 9080] [--quiet] [--timeout 3s]` | Readiness como código de salida, para un healthcheck de contenedor. Lee `/readyz` — abierto, para que una sonda no necesite credencial — y sale 0 solo cuando el store, el ledger y el registro son usables. La imagen distroless no tiene shell ni curl, así que su `HEALTHCHECK` es este comando. |
 | `aura verify [--data <dir>]` | Recalcula la cadena de hashes y el árbol Merkle del ledger de efectos, y comprueba cada firma de checkpoint y cada contrafirma de witness — sin conexión, sin necesitar un kernel corriendo. Sale con código distinto de cero si algo no verifica. Ver [Modelo de seguridad](#modelo-de-seguridad). |
@@ -2864,6 +3029,11 @@ cualquiera de dos señales:
   esperar a que nada expire. Medido con dos binarios reales y una sesión en
   curso: **21–118 ms desde el kill hasta que `/healthz` vuelve a contestar en
   Linux**, cerca de medio segundo en Windows.
+  Eso es un nodo ocioso. El standby lee el segmento activo del log de
+  eventos antes de contestar, así que el hueco crece con lo que el nodo
+  muerto había escrito en él: [`aura demo`](#un-nodo-bajo-fuego-aura-demo)
+  mata un nodo que lleva 324 sesiones con hasta 128 MiB en ese segmento, y
+  midió entre 0,4 y 2,1 s en una laptop.
 - *El heartbeat del líder expiró.* La única evidencia que hay sobre un líder
   vivo pero detenido, y cuesta un `--lease-ttl` completo (10 s por defecto),
   por construcción: el TTL es la promesa de no desplazar a un nodo que solo se

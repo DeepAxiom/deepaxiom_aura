@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en" data-lang="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AURA — under fire</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0d0e10; --surface: #141619; --surface-2: #1a1d21; --surface-3: #22262b;
+    --line: #262a30; --line-strong: #3a4048;
+    --text: #e9ebee; --text-2: #aab1bb; --text-3: #808894;
+    --live: #b8e83a; --live-soft: rgba(184, 232, 58, .12); --on-live: #10140a;
+    --hit: #f0a429; --hit-soft: rgba(240, 164, 41, .13);
+    --bad: #f2605d; --bad-soft: rgba(242, 96, 93, .14);
+    --info: #6cb4f5;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --r: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 var(--font); -webkit-font-smoothing: antialiased; }
+  .app { height: 100vh; min-height: 760px; max-width: 1760px; margin: 0 auto; padding: 14px 20px 12px;
+    display: grid; gap: 12px; grid-template-rows: auto auto auto minmax(0, 1fr) auto auto; }
+
+  /* header */
+  .top { display: flex; align-items: center; gap: 20px; }
+  .brand { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+  .mark { font: 700 20px/1 var(--display); letter-spacing: .14em; }
+  .tag { color: var(--text-3); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+  .steps { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .step { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-3); position: relative; overflow: hidden; }
+  .step i { position: absolute; inset: 0; width: 0; border-radius: 2px; }
+  .step.running i { width: 100%; background: var(--hit); animation: sweep 1.1s ease-in-out infinite; }
+  .step.survived i { width: 100%; background: var(--live); }
+  .step.failed i { width: 100%; background: var(--bad); }
+  @keyframes sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+  .meta { display: flex; align-items: center; gap: 12px; color: var(--text-3); font-size: 12px; white-space: nowrap; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line-strong); color: var(--text-2); font-size: 12px; }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+  .pill.leader::before, .pill.standby::before { background: var(--live); box-shadow: 0 0 0 3px var(--live-soft); }
+  .pill.standby { border-color: var(--live); color: var(--live); }
+  .pill.down { border-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
+  .pill.down::before { background: var(--bad); }
+  .clock { font: 13px var(--mono); color: var(--text-2); min-width: 40px; text-align: right; }
+
+  /* counters */
+  .hero { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 11px 14px 10px; min-width: 0; }
+  .tile .label { color: var(--text-3); font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .value { font: 600 clamp(22px, 1.9vw, 32px)/1.15 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.035em;
+    margin-top: 4px; white-space: nowrap; overflow: hidden; }
+  .tile .value small { font-size: .46em; font-weight: 500; color: var(--text-3); letter-spacing: 0; margin-left: 4px; }
+  .tile .value .sep { color: var(--text-3); font-weight: 400; margin: 0 .18em; }
+  .tile .sub { color: var(--text-3); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile.flash { animation: flash .9s ease-out; }
+  @keyframes flash { 0% { border-color: var(--hit); background: var(--hit-soft); } 100% { border-color: var(--line); background: var(--surface); } }
+
+  /* what is happening now */
+  .now { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 9px 14px; border-radius: var(--r);
+    background: var(--surface); border: 1px solid var(--line); font-size: 15px; color: var(--text-2); transition: background .25s, border-color .25s; }
+  .now b { color: var(--text); font-weight: 600; }
+  .now .badge { flex: none; font: 600 11px/1 var(--font); letter-spacing: .09em; text-transform: uppercase;
+    padding: 6px 9px; border-radius: 6px; background: var(--surface-3); color: var(--text-2); }
+  .now.running { background: var(--hit-soft); border-color: rgba(240, 164, 41, .5); color: var(--text); }
+  .now.running .badge { background: var(--hit); color: #1b1304; }
+  .now.survived .badge { background: var(--live); color: var(--on-live); }
+  .now.failed { background: var(--bad-soft); border-color: var(--bad); color: var(--text); }
+  .now.failed .badge { background: var(--bad); color: #220706; }
+  .now.final { background: var(--live-soft); border-color: rgba(184, 232, 58, .55); color: var(--text); font-size: 17px; }
+  .now.final .badge { background: var(--live); color: var(--on-live); }
+  .now.final b { color: var(--live); }
+
+  /* chart and sessions */
+  .mid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 12px; min-height: 0; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 11px 14px 12px;
+    display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .panel h2 { margin: 0 0 6px; font: 500 11.5px/1.3 var(--font); letter-spacing: .04em; text-transform: uppercase; color: var(--text-3);
+    display: flex; justify-content: space-between; gap: 12px; white-space: nowrap; }
+  .panel h2 span + span { text-transform: none; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* The canvas is taken out of flow so its own pixel size can never push the
+     panel taller, which would resize the canvas, which would push the panel. */
+  .plot { flex: 1; position: relative; min-height: 150px; }
+  .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; color: var(--text-3); font-size: 12px; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+  /* the six beats */
+  .beats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+  .beat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 11px 13px 11px;
+    display: flex; flex-direction: column; gap: 5px; min-height: 206px; opacity: .55; transition: opacity .3s, border-color .3s, background .3s; }
+  .beat.running, .beat.survived, .beat.failed { opacity: 1; }
+  .beat.running { border-color: var(--hit); background: linear-gradient(180deg, var(--hit-soft), var(--surface) 70%); }
+  .beat.survived { border-color: rgba(184, 232, 58, .38); }
+  .beat.failed { border-color: var(--bad); background: linear-gradient(180deg, var(--bad-soft), var(--surface) 70%); }
+  .beat .head { display: flex; align-items: center; gap: 8px; }
+  .beat .n { flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+    font: 600 12px/1 var(--mono); background: var(--surface-3); color: var(--text-2); }
+  .beat.running .n { background: var(--hit); color: #1b1304; }
+  .beat.survived .n { background: var(--live); color: var(--on-live); }
+  .beat.failed .n { background: var(--bad); color: #220706; }
+  .beat .title { font: 600 14px/1.25 var(--display); }
+  .beat .did { color: var(--text-3); font-size: 12.5px; line-height: 1.4; margin-top: 2px; }
+  .beat.running .did { color: var(--text-2); }
+  .beat .head-fact { font: 600 21px/1.15 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.03em; color: var(--live); margin-top: 3px; }
+  .beat .head-fact small { display: block; font: 400 12.5px/1.35 var(--font); letter-spacing: 0; color: var(--text-2); margin-top: 3px; }
+  .beat.failed .head-fact { color: var(--bad); }
+  .beat ul { list-style: none; margin: 3px 0 0; padding: 0; display: grid; gap: 3px; color: var(--text-2); font-size: 12.5px; line-height: 1.38; }
+  .beat li b { color: var(--text); font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .beat li.bad { color: var(--bad); }
+  .beat code { font-family: var(--mono); font-size: 12px; color: var(--text); background: var(--surface-3); padding: 0 4px; border-radius: 3px; }
+  .beat .status { margin-top: auto; padding-top: 5px; font: 600 11px/1 var(--font); letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); }
+  .beat.running .status { color: var(--hit); }
+  .beat.survived .status { color: var(--live); }
+  .beat.failed .status { color: var(--bad); }
+
+  .foot { display: flex; justify-content: space-between; gap: 20px; color: var(--text-3); font-size: 12px; }
+  .foot code { font-family: var(--mono); color: var(--text-2); }
+
+  /* A laptop screen: the same one-page layout, with less air in it. */
+  @media (min-width: 1181px) and (max-width: 1450px), (min-width: 1181px) and (max-height: 840px) {
+    .app { min-height: 690px; gap: 10px; padding: 12px 16px 10px; }
+    .hero, .mid, .beats { gap: 10px; }
+    .tile { padding: 9px 12px 8px; }
+    .now { min-height: 40px; padding: 7px 12px; font-size: 14px; }
+    .now.final { font-size: 15px; }
+    .beat { padding: 10px 11px 9px; min-height: 196px; gap: 4px; }
+    .beat .title { font-size: 13px; }
+    .beat .did, .beat ul, .beat .head-fact small { font-size: 12px; line-height: 1.34; }
+    .beat .head-fact { font-size: 18px; }
+    .beat ul { gap: 2px; }
+    .plot { min-height: 120px; }
+  }
+  @media (max-width: 1180px) {
+    .app { height: auto; min-height: 100vh; grid-template-rows: none; }
+    .hero { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .beats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .tile .value { font-size: 26px; }
+    .plot { min-height: 260px; }
+    .beat { min-height: 0; }
+  }
+  @media (max-width: 760px) {
+    .app { padding: 12px 16px; }
+    .top { flex-wrap: wrap; gap: 10px; }
+    .steps { order: 3; flex-basis: 100%; }
+    .meta #machine { display: none; }
+    .hero, .beats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile .value { font-size: 22px; }
+    .mid { grid-template-columns: minmax(0, 1fr); }
+    .plot { min-height: 220px; }
+    .panel h2 span + span { display: none; }
+    .foot { flex-direction: column; gap: 4px; }
+    .now { font-size: 14px; align-items: flex-start; }
+  }
+  @media (prefers-reduced-motion: reduce) { .step.running i, .tile.flash { animation: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><span class="mark">AURA</span><span class="tag" id="tag"></span></div>
+    <div class="steps" id="steps"></div>
+    <div class="meta"><span id="machine"></span><span class="pill" id="node"></span><span class="clock" id="clock">0:00</span></div>
+  </header>
+  <section class="hero" id="hero"></section>
+  <section class="now" id="now"></section>
+  <section class="mid">
+    <div class="panel"><h2><span id="chart-title"></span><span id="chart-note"></span></h2><div class="plot"><canvas id="chart"></canvas></div></div>
+    <div class="panel"><h2><span id="dots-title"></span><span id="dots-note"></span></h2><div class="plot"><canvas id="dots"></canvas></div><div class="legend" id="legend"></div></div>
+  </section>
+  <section class="beats" id="beats"></section>
+  <footer class="foot"><span id="foot-left"></span><span id="foot-right"></span></footer>
+</div>
+<script>
+"use strict";
+// Every word on this page is here; every number comes from /state, which is
+// what the run measured. Nothing below invents a value: a figure that has not
+// been measured yet is shown as a dash.
+
+const TEXT = {
+  en: {
+    tag: "under fire",
+    node: { leader: "node: leading", standby: "standby: leading", down: "node: down", "": "node: starting" },
+    tiles: {
+      sessions: ["Live sessions", s => `${n(s.live.flowing)} of the demo's answering`],
+      rate: ["Round trips / s", s => `offered: ${n(s.meta.sessions * s.meta.rate)} / s`],
+      latency: ["Round trip · p50 / p99", () => "via the node and an Expertise"],
+      tokens: ["Tokens / s via the node", s => `${n(s.live.tokens)} counted by the node`],
+      effects: ["Effects sealed", () => "hash-chained, one by one"],
+      service: ["Orders carried out", s => `by the service · ${n(s.live.rejected)} refused`],
+    },
+    chartTitle: "Round trips per second, and their p99",
+    chartNote: "each point is 250 ms of real round trips",
+    dotsTitle: "Sessions", dotsNote: s => `${n(s.meta.sessions + s.meta.ops)} open on one node`,
+    legend: { f: "routing", o: "decision → effect", s: "stopped reading", x: "lost its node" },
+    axis: { rate: "round trips / s", p99: "p99, ms" },
+    status: { pending: "next", running: "happening now", survived: "survived", failed: "did not hold" },
+    badge: { starting: "starting", waiting: "ready", steady: "steady", running: "now", survived: "survived", failed: "failed", done: "result" },
+    phase: {
+      starting: "Starting a real node and its standby, as two processes…",
+      waiting: "Ready. Press space or click to start.",
+      opening: s => `Opening <b>${n(s.meta.sessions + s.meta.ops)}</b> sessions…`,
+      steady: s => `Steady load: <b>${n(s.live.flowing)}</b> sessions, <b>${n(s.live.rate)}</b> round trips a second, p50 <b>${ms(s.live.p50)}</b>.`,
+      done: (s, k) => `<b>${k} of ${s.beats.length} survived.</b> ${n(s.live.flowing)} sessions still answering, ${n(s.live.effects)} effects sealed. Every figure was measured in this run.`,
+      failed: s => `The run stopped: ${esc(s.error || "")}`,
+    },
+    foot: s => s.meta.engine === "simulated"
+      ? "Model: simulated, tokens on a timer. What is measured about inference is how the node handles it, not how fast a model is."
+      : `Model: served by ${esc(s.meta.engine)}.`,
+    footRight: "Run it yourself: <code>aura demo</code>",
+    machine: s => `${s.meta.cpus} CPUs · ${s.meta.os}/${s.meta.arch} · v${s.meta.version}`,
+    checks: "did not hold",
+    beats: {
+      slow: {
+        title: "Sessions stop reading",
+        did: f => `${v(f.sessions)} sessions stop reading for 3 s while an Expertise sends each one ${n(f.burst)} messages, over the connection it serves everyone else on.`,
+        head: f => [`${n(f.held_peak)} held`, "by the node for the slow ones; the rest carried on"],
+        facts: f => [
+          `p99 of the rest: <b>${lat(f.p99_before)}</b> → <b>${ms(f.p99_during)}</b>`,
+          `Senders made to wait: <b>${n(f.producer_waits)}</b>`,
+          `<b>${n(f.received)}</b>/${n(f.expected)} in order`,
+        ],
+      },
+      agent: {
+        title: "A compromised Expertise",
+        did: () => "Something takes over the Expertise that talks to the model and, with its token, tries to make the service act.",
+        head: f => [`${n(f.reached)} of ${n(f.attempts)}`, "attempts made the service do anything"],
+        facts: f => [
+          `Without the key: <b>${n(f.direct)}</b> refused`,
+          `Asking for the key: <b>${n(f.broker)}</b> refused`,
+          `Forbidden effect: <b>${n(f.denied)}</b> denied`,
+        ],
+      },
+      late: {
+        title: "Orders arrive too late",
+        did: f => `${v(f.late)} orders are issued ${v(f.delay_ms)} ms after a decision that was good for ${v(f.deadline_ms)} ms. ${v(f.on_time)} more are issued in time.`,
+        head: f => [`${n(f.executed_late)} of ${n(f.late)}`, "late orders were carried out"],
+        facts: f => [
+          `<b>${n(f.sealed_expired)}</b> sealed as <code>expired</code>`,
+          `<b>${n(f.late_by_ms)} ms</b> past the deadline`,
+          `In time: <b>${n(f.executed_on_time)}</b>/${n(f.on_time)} carried out` + (f.missed_on_time ? `; ${n(f.missed_on_time)} ran late and expired` : ""),
+        ],
+      },
+      cut: {
+        title: "Generations are cut off",
+        did: f => `${v(f.generations)} long answers are mid-generation, and every client cancels at once.`,
+        head: f => [`${ms(f.release_ms_median)}`, f.measured_at === "node" ? "from cancel to nothing in flight at the node" : "from cancel to the engine being free (median)"],
+        facts: f => [
+          `Slowest of ${n(f.generations)}: <b>${ms(f.release_ms_max)}</b>`,
+          f.saved_tokens == null ? `Measured at the node` : `<b>${n(f.saved_tokens)}</b> tokens not generated`,
+          f.measured_at === "node" ? `As counted by the node` : `Observed at the engine`,
+        ],
+      },
+      kill: {
+        title: "The node is killed",
+        did: () => "SIGKILL to the leading node, in the middle of everything: nothing flushed, nothing handed over.",
+        head: f => [`${ms(f.outage_ms)}`, "until the standby answered, as the same node"],
+        facts: f => [
+          `<b>${n(f.sessions_back)}</b>/${n(f.sessions)} back${f.back_ms ? ` in <b>${ms(f.back_ms)}</b>` : ""}`,
+          `Ledger went on: <b>${n(f.effects_before)}</b> → <b>${n(f.effects_after)}</b>`,
+          `<b>${n(f.interrupted)}</b> in-flight messages lost`,
+        ],
+      },
+      tamper: {
+        title: "One byte of the ledger",
+        did: () => "One character of a sealed entry is changed in the database file itself, behind the node's back.",
+        head: f => [`entry #${n(f.broken_at_seq)}`, `is where verification stopped, in ${ms(f.verify_ms)}`],
+        facts: f => [
+          `#<b>${n(f.edited_seq)}</b>: <code>${esc(tail(f.edited_from))}</code> → <code>${esc(tail(f.edited_to))}</code>`,
+          `<b>${n(f.entries)}</b> entries checked`,
+          `With no node: <b>not sound</b>`,
+        ],
+      },
+    },
+  },
+  es: {
+    tag: "bajo fuego",
+    node: { leader: "nodo: al mando", standby: "standby: al mando", down: "nodo: caído", "": "nodo: arrancando" },
+    tiles: {
+      sessions: ["Sesiones vivas", s => `${n(s.live.flowing)} de la demo respondiendo`],
+      rate: ["Idas y vueltas / s", s => `ofrecido: ${n(s.meta.sessions * s.meta.rate)} / s`],
+      latency: ["Ida y vuelta · p50 / p99", () => "por el nodo y un Expertise"],
+      tokens: ["Tokens / s por el nodo", s => `${n(s.live.tokens)} contados por el nodo`],
+      effects: ["Efectos sellados", () => "encadenados uno a uno"],
+      service: ["Órdenes ejecutadas", s => `por el servicio · ${n(s.live.rejected)} rechazadas`],
+    },
+    chartTitle: "Idas y vueltas por segundo, y su p99",
+    chartNote: "cada punto son 250 ms de idas y vueltas reales",
+    dotsTitle: "Sesiones", dotsNote: s => `${n(s.meta.sessions + s.meta.ops)} abiertas en un nodo`,
+    legend: { f: "enrutado", o: "decisión → efecto", s: "dejó de leer", x: "perdió su nodo" },
+    axis: { rate: "idas y vueltas / s", p99: "p99, ms" },
+    status: { pending: "siguiente", running: "ocurriendo", survived: "sobrevivió", failed: "no aguantó" },
+    badge: { starting: "arrancando", waiting: "listo", steady: "estable", running: "ahora", survived: "sobrevivió", failed: "falló", done: "resultado" },
+    phase: {
+      starting: "Arrancando un nodo real y su standby, como dos procesos…",
+      waiting: "Listo. Pulsa espacio o haz clic para empezar.",
+      opening: s => `Abriendo <b>${n(s.meta.sessions + s.meta.ops)}</b> sesiones…`,
+      steady: s => `Carga estable: <b>${n(s.live.flowing)}</b> sesiones, <b>${n(s.live.rate)}</b> idas y vueltas por segundo, p50 <b>${ms(s.live.p50)}</b>.`,
+      done: (s, k) => `<b>${k} de ${s.beats.length} sobrevividos.</b> ${n(s.live.flowing)} sesiones siguen respondiendo, ${n(s.live.effects)} efectos sellados. Cada cifra se midió en esta ejecución.`,
+      failed: s => `La ejecución se detuvo: ${esc(s.error || "")}`,
+    },
+    foot: s => s.meta.engine === "simulated"
+      ? "Modelo: simulado, tokens con un temporizador. De la inferencia se mide cómo la maneja el nodo, no la velocidad de un modelo."
+      : `Modelo: servido por ${esc(s.meta.engine)}.`,
+    footRight: "Ejecútalo tú: <code>aura demo</code>",
+    machine: s => `${s.meta.cpus} CPU · ${s.meta.os}/${s.meta.arch} · v${s.meta.version}`,
+    checks: "no se cumplió",
+    beats: {
+      slow: {
+        title: "Sesiones que dejan de leer",
+        did: f => `${v(f.sessions)} sesiones dejan de leer 3 s mientras un Expertise le envía ${n(f.burst)} mensajes a cada una, por la conexión con que atiende a las demás.`,
+        head: f => [`${n(f.held_peak)} retenidos`, "por el nodo para las lentas; el resto siguió"],
+        facts: f => [
+          `p99 del resto: <b>${lat(f.p99_before)}</b> → <b>${ms(f.p99_during)}</b>`,
+          `Emisores en espera: <b>${n(f.producer_waits)}</b>`,
+          `<b>${n(f.received)}</b>/${n(f.expected)} en orden`,
+        ],
+      },
+      agent: {
+        title: "Un Expertise comprometido",
+        did: () => "Algo toma el control del Expertise que habla con el modelo y, con su token, intenta que el servicio actúe.",
+        head: f => [`${n(f.reached)} de ${n(f.attempts)}`, "intentos lograron que el servicio hiciera algo"],
+        facts: f => [
+          `Sin la clave: <b>${n(f.direct)}</b> rechazadas`,
+          `Pedir la clave: <b>${n(f.broker)}</b> negadas`,
+          `Efecto prohibido: <b>${n(f.denied)}</b> denegados`,
+        ],
+      },
+      late: {
+        title: "Órdenes que llegan tarde",
+        did: f => `${v(f.late)} órdenes salen ${v(f.delay_ms)} ms después de una decisión que valía ${v(f.deadline_ms)} ms. Otras ${v(f.on_time)} salen a tiempo.`,
+        head: f => [`${n(f.executed_late)} de ${n(f.late)}`, "órdenes tardías se ejecutaron"],
+        facts: f => [
+          `<b>${n(f.sealed_expired)}</b> selladas como <code>expired</code>`,
+          `<b>${n(f.late_by_ms)} ms</b> después del plazo`,
+          `A tiempo: <b>${n(f.executed_on_time)}</b>/${n(f.on_time)} ejecutadas` + (f.missed_on_time ? `; ${n(f.missed_on_time)} se retrasó y venció` : ""),
+        ],
+      },
+      cut: {
+        title: "Generaciones cortadas",
+        did: f => `${v(f.generations)} respuestas largas a media generación, y todos los clientes cancelan a la vez.`,
+        head: f => [`${ms(f.release_ms_median)}`, f.measured_at === "node" ? "de cancelar a nada en curso en el nodo" : "de cancelar a motor libre (mediana)"],
+        facts: f => [
+          `La más lenta de ${n(f.generations)}: <b>${ms(f.release_ms_max)}</b>`,
+          f.saved_tokens == null ? `Medido en el nodo` : `<b>${n(f.saved_tokens)}</b> tokens sin generar`,
+          f.measured_at === "node" ? `Según la cuenta del nodo` : `Observado en el motor`,
+        ],
+      },
+      kill: {
+        title: "Se mata el nodo",
+        did: () => "SIGKILL al nodo que manda, en mitad de todo: nada se vacía, nada se cede.",
+        head: f => [`${ms(f.outage_ms)}`, "hasta que respondió el standby, como el mismo nodo"],
+        facts: f => [
+          `<b>${n(f.sessions_back)}</b>/${n(f.sessions)} de vuelta${f.back_ms ? ` en <b>${ms(f.back_ms)}</b>` : ""}`,
+          `El ledger siguió: <b>${n(f.effects_before)}</b> → <b>${n(f.effects_after)}</b>`,
+          `<b>${n(f.interrupted)}</b> mensajes en vuelo perdidos`,
+        ],
+      },
+      tamper: {
+        title: "Un byte del ledger",
+        did: () => "Se cambia un carácter de un registro sellado en el propio archivo de la base de datos, a espaldas del nodo.",
+        head: f => [`registro n.º ${n(f.broken_at_seq)}`, `ahí se detuvo la verificación, en ${ms(f.verify_ms)}`],
+        facts: f => [
+          `N.º <b>${n(f.edited_seq)}</b>: <code>${esc(tail(f.edited_from))}</code> → <code>${esc(tail(f.edited_to))}</code>`,
+          `<b>${n(f.entries)}</b> registros comprobados`,
+          `Sin nodo: <b>no íntegro</b>`,
+        ],
+      },
+    },
+  },
+};
+
+const root = document.documentElement;
+const params = new URLSearchParams(location.search);
+const wanted = root.dataset.lang || params.get("lang") || navigator.language || "en";
+const lang = wanted.toLowerCase().startsWith("es") ? "es" : "en";
+root.lang = lang;
+const t = TEXT[lang];
+document.title = "AURA — " + t.tag;
+
+// ── formatting ──────────────────────────────────────────────────────
+// Grouping is forced: Spanish leaves four-digit numbers ungrouped, and a row
+// of counters that reads 5000 beside 15.780 looks like two different scales.
+function fmt(opts) {
+  try { return new Intl.NumberFormat(lang, { useGrouping: "always", ...opts }); }
+  catch (_) { return new Intl.NumberFormat(lang, opts); }
+}
+const fmt0 = fmt({ maximumFractionDigits: 0 });
+const fmt1 = fmt({ minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const fmt2 = fmt({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const missing = x => x == null || Number.isNaN(x);
+function n(x) { return missing(x) ? "—" : fmt0.format(Math.round(x)); }
+function v(x) { return missing(x) ? "—" : fmt0.format(x); }
+// A latency, with as many digits as it deserves.
+function lat(x) { return missing(x) ? "—" : x >= 100 ? fmt0.format(x) : x >= 10 ? fmt1.format(x) : fmt2.format(x); }
+function ms(x) { return missing(x) ? "—" : x >= 1000 ? fmt2.format(x / 1000) + " s" : lat(x) + " ms"; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function tail(s) { s = String(s || ""); const i = s.lastIndexOf("."); return i < 0 ? s : "…" + s.slice(i); }
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(root).getPropertyValue(name).trim();
+
+// ── static scaffolding ──────────────────────────────────────────────
+const ORDER = ["slow", "agent", "late", "cut", "kill", "tamper"];
+const TILES = ["sessions", "rate", "latency", "tokens", "effects", "service"];
+$("tag").textContent = t.tag;
+$("chart-title").textContent = t.chartTitle;
+$("chart-note").textContent = t.chartNote;
+$("dots-title").textContent = t.dotsTitle;
+$("foot-right").innerHTML = t.footRight;
+$("steps").innerHTML = ORDER.map(() => `<div class="step"><i></i></div>`).join("");
+$("hero").innerHTML = TILES.map(k =>
+  `<div class="tile" id="tile-${k}"><div class="label">${t.tiles[k][0]}</div><div class="value" id="val-${k}">—</div><div class="sub" id="sub-${k}">&nbsp;</div></div>`).join("");
+$("beats").innerHTML = ORDER.map((id, i) =>
+  `<article class="beat pending" id="beat-${id}"><div class="head"><span class="n">${i + 1}</span><span class="title">${t.beats[id].title}</span></div><div class="body"></div><div class="status"></div></article>`).join("");
+const DOT = { f: "--live", o: "--info", s: "--hit", x: "--bad", ".": "--surface-3" };
+$("legend").innerHTML = ["f", "o", "s", "x"].map(k => `<span><i style="background:var(${DOT[k]})"></i>${t.legend[k]}</span>`).join("");
+
+// ── counters that move rather than jump ─────────────────────────────
+const shown = {};
+function ease(key, target) {
+  if (missing(target)) return null;
+  const cur = shown[key];
+  shown[key] = cur == null || Math.abs(target - cur) < 0.5 ? target : cur + (target - cur) * 0.3;
+  return shown[key];
+}
+function put(id, html) { const el = $(id); if (el.dataset.h !== html) { el.dataset.h = html; el.innerHTML = html; } }
+
+// ── state ───────────────────────────────────────────────────────────
+// With ?hold the run waits for a key, so a recording can be set up first.
+let state = null, lastRejected = null, held = params.has("hold");
+// The charts are redrawn when there is something new to draw, not sixty times
+// a second: the page shares its machine with what it is measuring.
+let dirty = true;
+addEventListener("resize", () => { dirty = true; });
+function begin() { held = false; }
+addEventListener("keydown", e => { if (e.code === "Space" || e.key === "Enter") begin(); });
+addEventListener("click", begin);
+
+async function poll() {
+  try {
+    const r = await fetch("state" + (held ? "" : "?watching=1"), { cache: "no-store" });
+    state = await r.json();
+    dirty = true;
+  } catch (_) { /* the screen outlives a hiccup; the next poll will tell */ }
+  setTimeout(poll, 200);
+}
+poll();
+
+function render() {
+  requestAnimationFrame(render);
+  const s = state;
+  if (!s) return;
+  const live = s.phase !== "starting" && s.phase !== "waiting";
+  const L = s.live;
+
+  put("machine", esc(t.machine(s)));
+  const role = live ? (L.node || "") : "";
+  const node = $("node");
+  if (node.dataset.r !== role) { node.dataset.r = role; node.className = "pill " + role; node.textContent = t.node[role] || t.node[""]; }
+  const sec = Math.floor(s.elapsed);
+  put("clock", Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"));
+
+  // counters
+  put("val-sessions", live ? n(ease("sessions", L.sessions)) : "—");
+  put("val-rate", live ? n(ease("rate", L.rate)) : "—");
+  put("val-latency", live && L.p50 ? `${lat(L.p50)}<span class="sep">/</span>${lat(L.p99)}<small>ms</small>` : "—");
+  put("val-tokens", live ? n(ease("tokens", L.tokens_rate)) : "—");
+  put("val-effects", live ? n(ease("effects", L.effects)) : "—");
+  put("val-service", live ? n(ease("service", L.executed)) : "—");
+  for (const k of TILES) put("sub-" + k, live ? esc(t.tiles[k][1](s)) : "&nbsp;");
+  if (lastRejected != null && L.rejected > lastRejected) {
+    const el = $("tile-service"); el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+  }
+  lastRejected = L.rejected;
+  put("dots-note", esc(t.dotsNote(s)));
+  put("foot-left", t.foot(s));
+
+  // beats
+  let running = null, lastDone = null, survived = 0;
+  s.beats.forEach((b, i) => {
+    const step = $("steps").children[i];
+    if (step.dataset.s !== b.status) { step.dataset.s = b.status; step.className = "step " + b.status; }
+    const card = $("beat-" + b.id);
+    const sig = b.status + "|" + JSON.stringify(b.facts || {}) + "|" + (b.checks || []).length;
+    if (card.dataset.sig !== sig) { card.dataset.sig = sig; card.className = "beat " + b.status; drawBeat(card, b); }
+    if (b.status === "running") running = b;
+    if (b.status === "survived" || b.status === "failed") lastDone = b;
+    if (b.status === "survived") survived++;
+  });
+
+  // what is happening now
+  let cls = "now", badge, text;
+  const F = b => b.facts || {};
+  if (s.phase === "failed") { cls += " failed"; badge = t.badge.failed; text = t.phase.failed(s); }
+  else if (s.phase === "starting") { badge = t.badge.starting; text = t.phase.starting; }
+  else if (s.phase === "waiting") { badge = held ? t.badge.waiting : t.badge.starting; text = held ? t.phase.waiting : t.phase.starting; }
+  else if (s.phase === "done") { cls += " final"; badge = t.badge.done; text = t.phase.done(s, survived); }
+  else if (running) { cls += " running"; badge = t.badge.running; text = `<b>${t.beats[running.id].title}.</b> ${t.beats[running.id].did(F(running))}`; }
+  else if (lastDone && s.elapsed - lastDone.end < 4) {
+    const ok = lastDone.status === "survived", h = t.beats[lastDone.id].head(F(lastDone));
+    cls += ok ? " survived" : " failed"; badge = ok ? t.badge.survived : t.badge.failed;
+    text = `<b>${t.beats[lastDone.id].title}:</b> ${ok ? `${h[0]} ${h[1]}.` : t.checks + "."}`;
+  }
+  else if (!lastDone && L.flowing < s.meta.sessions + s.meta.ops) { badge = t.badge.starting; text = t.phase.opening(s); }
+  else { badge = t.badge.steady; text = t.phase.steady(s); }
+  const now = $("now"), html = `<span class="badge">${badge}</span><span>${text}</span>`;
+  if (now.dataset.h !== html) { now.dataset.h = html; now.className = cls; now.innerHTML = html; }
+
+  if (dirty) {
+    dirty = false;
+    drawChart(s);
+    drawDots(s);
+  }
+}
+
+function drawBeat(card, b) {
+  const tx = t.beats[b.id], f = b.facts || {};
+  let html;
+  if (b.status === "pending" || b.status === "running") {
+    html = `<div class="did">${tx.did(f)}</div>`;
+  } else {
+    const h = tx.head(f);
+    html = `<div class="head-fact">${h[0]}<small>${h[1]}</small></div><ul>` +
+      tx.facts(f).map(x => `<li>${x}</li>`).join("") +
+      (b.checks || []).filter(c => !c.ok).map(c =>
+        `<li class="bad">${t.checks}: ${esc(c.id.replace(/_/g, " "))}${c.detail ? " — " + esc(c.detail) : ""}</li>`).join("") + `</ul>`;
+  }
+  card.querySelector(".body").innerHTML = html;
+  card.querySelector(".status").textContent = t.status[b.status] || "";
+}
+
+// ── canvas helpers ──────────────────────────────────────────────────
+function fit(canvas) {
+  const r = canvas.parentElement.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, r.width, r.height);
+  return [g, r.width, r.height];
+}
+const C = {};
+for (const k of ["--live", "--hit", "--bad", "--info", "--text", "--text-2", "--text-3", "--line", "--surface-3"]) C[k] = css(k);
+const MONO = css("--mono");
+function nice(max) {
+  if (max <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(max))), m = max / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+
+// Two panels over one time axis: how many round trips completed, and how long
+// the slowest of them took. The bands are the beats.
+function drawChart(s) {
+  const [g, W, H] = fit($("chart"));
+  const padL = 50, padR = 16, padT = 18, padB = 20, gap = 16;
+  const w = W - padL - padR, h = H - padT - padB;
+  if (w < 40 || h < 60) return;
+  const h1 = Math.round((h - gap) * 0.56), h2 = h - gap - h1;
+  const y1 = padT, y2 = padT + h1 + gap;
+  const pts = s.series || [];
+  const tMax = Math.max(60, Math.ceil((s.elapsed + 5) / 15) * 15);
+  const X = sec => padL + (sec / tMax) * w;
+
+  const rMax = nice(Math.max(100, ...pts.map(p => p.rate)) * 1.05);
+  const tails = pts.map(p => p.p99).filter(x => x > 0).sort((a, b) => a - b);
+  const lMax = nice(Math.max(2, (tails.length ? tails[Math.floor(tails.length * 0.96)] : 1) * 1.6));
+
+  g.font = "11px " + MONO; g.textBaseline = "middle";
+  s.beats.forEach((b, i) => {
+    if (!b.start) return;
+    const x0 = X(b.start), bw = Math.max(3, X(b.end || s.elapsed) - x0);
+    const col = b.status === "failed" ? C["--bad"] : b.status === "running" ? C["--hit"] : C["--live"];
+    g.globalAlpha = b.status === "running" ? 0.18 : 0.1; g.fillStyle = col;
+    g.fillRect(x0, y1, bw, h1); g.fillRect(x0, y2, bw, h2);
+    g.globalAlpha = 1; g.textAlign = "center"; g.fillText(String(i + 1), x0 + bw / 2, y1 - 9);
+  });
+  g.strokeStyle = C["--line"]; g.lineWidth = 1; g.fillStyle = C["--text-3"]; g.textAlign = "right";
+  for (const [y0, hh, max] of [[y1, h1, rMax], [y2, h2, lMax]]) {
+    for (const frac of [0, 0.5, 1]) {
+      const y = Math.round(y0 + hh - frac * hh) + 0.5;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + w, y); g.stroke();
+      g.fillText(fmt0.format(max * frac), padL - 7, y);
+    }
+  }
+  g.textAlign = "left"; g.textBaseline = "top";
+  g.fillText(t.axis.rate, padL + 6, y1 + 5); g.fillText(t.axis.p99, padL + 6, y2 + 5);
+  g.textBaseline = "middle"; g.textAlign = "center";
+  for (let sec = 15; sec <= tMax; sec += tMax > 150 ? 30 : 15) g.fillText(sec + " s", Math.min(X(sec), padL + w - 12), H - 8);
+  if (pts.length < 2) return;
+
+  g.beginPath(); g.moveTo(X(pts[0].t), y1 + h1);
+  for (const p of pts) g.lineTo(X(p.t), y1 + h1 - Math.min(1, p.rate / rMax) * h1);
+  g.lineTo(X(pts[pts.length - 1].t), y1 + h1); g.closePath();
+  g.fillStyle = "rgba(184,232,58,.16)"; g.fill();
+  g.beginPath();
+  pts.forEach((p, i) => { const x = X(p.t), y = y1 + h1 - Math.min(1, p.rate / rMax) * h1; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.strokeStyle = C["--live"]; g.lineWidth = 1.6; g.lineJoin = "round"; g.stroke();
+
+  // p99: a line, broken wherever nothing completed
+  g.beginPath(); let pen = false;
+  for (const p of pts) {
+    if (!(p.p99 > 0)) { pen = false; continue; }
+    const x = X(p.t), y = y2 + h2 - Math.min(1, p.p99 / lMax) * h2;
+    pen ? g.lineTo(x, y) : g.moveTo(x, y); pen = true;
+  }
+  g.strokeStyle = C["--text"]; g.lineWidth = 1.4; g.stroke();
+  // a tick that went off the scale is marked, not hidden
+  g.fillStyle = C["--hit"];
+  for (const p of pts) if (p.p99 > lMax) { g.beginPath(); g.arc(X(p.t), y2 + 3, 2, 0, 6.3); g.fill(); }
+}
+
+// One square per session, coloured by what that session is doing right now.
+function drawDots(s) {
+  const [g, W, H] = fit($("dots"));
+  const dots = s.dots || "";
+  const count = Math.max(dots.length, s.meta.sessions + s.meta.ops);
+  if (!count || W < 20 || H < 20) return;
+  let cols = Math.max(1, Math.ceil(Math.sqrt(count * W / H)));
+  while (Math.ceil(count / cols) * (W / cols) > H && cols < count) cols++;
+  const cell = Math.min(W / cols, 26), size = Math.max(2, cell * 0.72), r = Math.min(3, size / 4);
+  const rows = Math.ceil(count / cols);
+  const ox = (W - cols * cell) / 2 + (cell - size) / 2, oy = (H - rows * cell) / 2 + (cell - size) / 2;
+  for (let i = 0; i < count; i++) {
+    g.fillStyle = C[DOT[dots[i] || "."] || "--surface-3"];
+    const x = ox + (i % cols) * cell, y = oy + Math.floor(i / cols) * cell;
+    g.beginPath();
+    if (g.roundRect) g.roundRect(x, y, size, size, r); else g.rect(x, y, size, size);
+    g.fill();
+  }
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

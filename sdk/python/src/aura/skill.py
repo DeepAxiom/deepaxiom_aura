@@ -605,14 +605,13 @@ class Skill:
                     attempt = 0
                     reg = Envelope(kind=KIND_REGISTER, payload=self.manifest)
                     await ws.send(json.dumps(reg.to_wire()))
-                    ack = Envelope.from_wire(json.loads(await ws.recv()))
-                    if ack.kind == KIND_ERROR:
-                        raise RuntimeError(f"kernel rejected manifest: {ack.payload}")
-                    _logger.info("registered: %s", ack.payload)
-                    self._apply_config((ack.payload or {}).get("config"))
-                    self.grammars = (ack.payload or {}).get("grammars") or {}
+                    registered = False
                     async for raw in ws:
-                        task = asyncio.create_task(self._dispatch(json.loads(raw)))
+                        wire = json.loads(raw)
+                        if not registered and self._acknowledged(wire):
+                            registered = True
+                            continue
+                        task = asyncio.create_task(self._dispatch(wire))
                         self._tasks.add(task)
                         task.add_done_callback(self._tasks.discard)
             except asyncio.CancelledError:
@@ -637,6 +636,30 @@ class Skill:
                 else:
                     _logger.warning("disconnected (%s); retry in %ss", exc, delay)
                 await asyncio.sleep(delay)
+
+    def _acknowledged(self, wire: dict) -> bool:
+        """Whether this frame is the node's answer to the registration.
+
+        The first frame used to be taken for it without looking. A node up to
+        0.4.0 makes an Expertise resolvable a moment before it answers, so
+        under load -- a standby taking over a node full of live sessions is the
+        case that showed it -- a delivery could arrive first. Read as the
+        answer, that delivery was lost and the real answer, with the config and
+        the grammars in it, was then ignored as an unknown status.
+
+        So the answer is recognised by what it says, and anything that arrives
+        ahead of it is dispatched like any other delivery.
+        """
+        env = Envelope.from_wire(wire)
+        if env.kind == KIND_ERROR and not env.session:
+            raise RuntimeError(f"kernel rejected manifest: {env.payload}")
+        payload = env.payload if isinstance(env.payload, dict) else {}
+        if env.kind != KIND_STATUS or payload.get("state") != "registered":
+            return False
+        _logger.info("registered: %s", payload)
+        self._apply_config(payload.get("config"))
+        self.grammars = payload.get("grammars") or {}
+        return True
 
     async def _dispatch(self, wire: dict) -> None:
         env = Envelope.from_wire(wire)

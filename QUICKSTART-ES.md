@@ -5,7 +5,11 @@ comando de aquí se ejecutó de punta a punta en una máquina limpia.
 
 [English version](QUICKSTART.md) · [Guía completa](GUIDE-ES.md) · [README](README-ES.md)
 
-**Necesitas:** Python 3.11+ para los Expertises, y Go 1.25+ solo si compilas el
+**¿Solo quieres verlo correr?** `aura demo` no necesita más que el binario — un nodo, su
+standby y cientos de sesiones bajo ataque, medido en tu máquina. Ver
+[el README](README-ES.md#córrelas-tú).
+
+**Necesitas:** Python 3.11+ para los Expertises, y Go 1.26+ solo si compilas el
 kernel en vez de descargarlo. Sin CGO, sin Docker, sin base de datos, sin cuenta.
 
 ---

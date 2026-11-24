@@ -6,13 +6,90 @@ Lo bastante rápido para estar dentro del lazo. Cada decisión trazable hasta lo
 que la argumentó. Nada actúa sobre el mundo sin que el nodo lo haya revisado
 antes.
 
-[Inicio rápido](QUICKSTART-ES.md) · [Guía completa](GUIDE-ES.md) · [Roadmap](ROADMAP-ES.md) ·
+[![CI](https://github.com/DeepAxiom/deepaxiom_aura/actions/workflows/ci.yml/badge.svg)](https://github.com/DeepAxiom/deepaxiom_aura/actions/workflows/ci.yml)
+
+[Verlo correr](#córrelas-tú) · [Inicio rápido](QUICKSTART-ES.md) · [Guía completa](GUIDE-ES.md) · [Roadmap](ROADMAP-ES.md) ·
 [Estado de los hitos](GUIDE-ES.md#estado-de-los-hitos) · [English](README.md) ·
 **v0.4.0 — pre-1.0, pre-producción**
 
 <!-- UI-HERO -->
-<p align="center"><img src="docs/media/studio-live.gif" alt="El plano de control: un grafo corriendo en vivo, tokens apareciendo en el nodo que los produce, una arista gateada hacia un Expertise motor" width="900"></p>
+<p align="center"><img src="docs/media/under-fire-es.gif" alt="aura demo: un nodo y su standby con 324 sesiones vivas mientras se les hacen seis cosas — sesiones que dejan de leer, un Expertise comprometido, órdenes que llegan tarde, generaciones canceladas, el nodo muerto con SIGKILL, un byte del ledger editado — cada una medida y sobrevivida" width="900"></p>
 <!-- /UI-HERO -->
+
+## Un nodo bajo fuego
+
+**Eso es una ejecución de `aura demo`**, tres veces más rápida de lo que
+ocurrió. Un nodo real y su standby, 324 sesiones vivas a través de ellos, y seis
+cosas que se le hacen a ese sistema mientras corre. Nada en la pantalla está
+escrito a mano: cada cifra se midió en esa ejecución, y un golpe que no hubiera
+aguantado lo habría dicho en rojo, en el mismo sitio.
+
+| | Qué se le hace | Qué midió esa ejecución |
+|---|---|---|
+| 1 | Seis sesiones dejan de leer mientras un Expertise le envía 1.200 mensajes a cada una, por la conexión con que atiende a todas las demás | 3.720 mensajes retenidos por el nodo; las demás siguieron; 7.200 de 7.200 entregados en orden |
+| 2 | Alguien toma un Expertise y, con su propio token, intenta por 71 vías que un servicio actúe | 0 de 71 |
+| 3 | Veinte órdenes salen después de que la decisión que las motivó dejó de valer | 0 ejecutadas; 20 selladas en el ledger como `expired` |
+| 4 | Dieciséis generaciones largas se cancelan a media frase | el motor quedó libre 0,60 ms después de la cancelación |
+| 5 | El nodo recibe SIGKILL | su standby contestó en 585 ms, como el mismo nodo; 324 de 324 sesiones de vuelta en 2,4 s |
+| 6 | Se edita en disco un carácter del ledger | detectado en 10,9 ms, y la verificación nombra el registro |
+
+Una laptop, con todo en ella; una referencia para esa máquina y no un benchmark.
+[Qué muestra, y qué no](GUIDE-ES.md#un-nodo-bajo-fuego-aura-demo).
+
+## El mismo trabajo, sin él
+
+<p align="center"><img src="docs/media/versus-es.gif" alt="aura demo --versus: un agente corriente a la izquierda y un nodo a la derecha, haciendo el mismo trabajo mientras se les hacen las mismas cuatro cosas — tomados, órdenes que llegan tarde, matados, su registro editado. La izquierda termina con 61 cosas que nunca debieron ocurrir, la derecha con ninguna" width="900"></p>
+
+**Eso es `aura demo --versus`.** A la izquierda un agente corriente: un proceso,
+la clave del servicio en su entorno, un archivo de log. A la derecha un nodo. El
+mismo trabajo en los dos, y cuatro cosas que se les hacen a los dos en el mismo
+instante.
+
+| | Se les hace a los dos | Sin AURA | Con AURA |
+|---|---|---|---|
+| 1 | Alguien toma la parte que habla con el modelo e intenta hacer 20 pagos prohibidos | **20 de 20 hechos** | 0 de 20 |
+| 2 | 20 órdenes salen 600 ms después de una decisión que valía 250 ms | **20 de 20 ejecutadas** | 0; cada una sellada como `expired` |
+| 3 | SIGKILL, y después los 20 clientes que nunca recibieron respuesta vuelven a pedir | **20 ejecutadas dos veces**; las 60 sesiones olvidadas | 0 dos veces; 60 de 60 sesiones reanudadas |
+| 4 | Se edita en disco un carácter del registro de lo que se hizo | **no lo nota** | señala el registro |
+
+Sesenta y una cosas que nunca debieron ocurrir a la izquierda, ninguna a la
+derecha, contadas en el servicio de cada lado y no tomadas de lo que cada
+sistema dice de sí mismo.
+
+El agente de la izquierda no está hecho para perder. Tiene su propia regla de lo
+que no hace, y esa regla rechaza los veinte pagos por la puerta principal;
+recuerda lo que ya ejecutó; revisa su propio log; y se reinicia en el instante
+en que muere — vuelve antes que el standby. Lo que no tiene es nada fuera de sí
+mismo: su regla, su memoria y su clave están en el único proceso que un atacante
+toma y que una caída se lleva.
+[Qué tiene de justa esa comparación, y qué no](GUIDE-ES.md#el-mismo-agente-dos-veces-aura-demo---versus).
+
+## Córrelas tú
+
+```bash
+git clone https://github.com/DeepAxiom/deepaxiom_aura && cd deepaxiom_aura
+
+# con Docker, y nada más instalado
+docker build -t aura .
+docker run --rm -p 7700:7700 aura demo --listen 0.0.0.0:7700 --lang es            # el nodo bajo fuego
+docker run --rm -p 7700:7700 aura demo --versus --listen 0.0.0.0:7700 --lang es   # la comparación
+
+# o con Go 1.26+ — sin CGO, sin servicios, un binario
+cd kernel && go build -o aura ./cmd/aura
+./aura demo
+./aura demo --versus
+```
+
+Después abre **http://127.0.0.1:7700**; la ejecución empieza cuando se abre la
+página. `--headless` corre cualquiera de las dos sin pantalla y sale con error
+si algo no aguantó, que es como las corre el CI en cada cambio.
+
+Cada una dura menos de un minuto, arranca su propio nodo en sus propios puertos
+y en un directorio temporal, y lo borra al terminar; ninguna toca un nodo que ya
+tengas corriendo. El modelo en las dos es simulado — tokens con un temporizador
+— y la pantalla lo dice: de la inferencia se mide cómo la maneja el nodo, no la
+velocidad de un modelo. Las demos son más nuevas que los binarios de la v0.4.0,
+así que hasta la próxima release se compilan desde el código, como arriba.
 
 ---
 
@@ -257,7 +334,8 @@ aura up --data /var/lib/aura --standby       # toma el relevo cuando el primero 
 El standby no abre nada que el nodo vivo esté escribiendo. En el mismo host ve
 que el proceso del líder ya no existe en vez de esperar un arrendamiento, y
 contesta como el *mismo nodo* — misma identidad, mismo ledger — en decenas de
-milisegundos. Los Expertises se reconectan solos; un cliente que se reconecta
+milisegundos si el nodo estaba ocioso, y en cerca de un segundo con la carga
+que le pone `aura demo`. Los Expertises se reconectan solos; un cliente que se reconecta
 continúa su sesión desde el log causal. Lo que no sobrevive es perder la
 máquina: el standby necesita el directorio de datos.
 [Detalles](GUIDE-ES.md#lo-que-un-nodo-no-sobrevive).
@@ -276,6 +354,8 @@ cada una está en [`docs/media/README.md`](docs/media/README.md).
 **Studio.** Construye un grafo y míralo correr: los envelopes avanzan por las
 aristas conforme se entregan, el texto aparece en el nodo que lo produce, y una
 arista gateada hacia un Expertise `motor` se ve gateada.
+
+<p align="center"><img src="docs/media/studio-live.gif" alt="El plano de control: un grafo corriendo en vivo, tokens apareciendo en el nodo que los produce, una arista gateada hacia un Expertise motor" width="900"></p>
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/studio-gate-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/media/studio-gate-light.png"><img src="docs/media/studio-gate-dark.png" alt="Studio con una entrega retenida en el gate de la arista hacia un Expertise motor" width="900"></picture></p>
 
@@ -313,8 +393,10 @@ bajo qué policy, y si la cadena verifica.
 Una suite de conformidad de 67 verificaciones ejercita el kernel sobre el
 cable, y jobs de CI aparte demuestran que el ledger detecta manipulación
 editando una base de datos real a espaldas de un binario real, que un token con
-alcance no puede actuar como el operador, y que un nodo arrancado **con su auth
-por defecto** se puede conducir de punta a punta. Lee [Modelo de
+alcance no puede actuar como el operador, que un nodo arrancado **con su auth
+por defecto** se puede conducir de punta a punta, que un nodo y su standby
+sobreviven los seis golpes de `aura demo`, y que `aura demo --versus` sale
+como se describe. Lee [Modelo de
 seguridad](GUIDE-ES.md#modelo-de-seguridad) antes de exponer un puerto, y [el
 roadmap](ROADMAP-ES.md) para lo que falta y por qué va en ese orden. Esto es
 pre-producción; trátalo como tal.
@@ -488,7 +570,7 @@ O por el camino largo, desde el código:
 
 ```bash
 git clone https://github.com/DeepAxiom/deepaxiom_aura && cd deepaxiom_aura/kernel
-go build -o aura ./cmd/aura     # Go 1.25+, sin CGO, sin servicios externos
+go build -o aura ./cmd/aura     # Go 1.26+, sin CGO, sin servicios externos
 ./aura up
 ```
 

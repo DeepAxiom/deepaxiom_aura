@@ -343,6 +343,24 @@ jobs:
       - name: inference goes through the node, and stops when it should
         run: python scripts/inference_e2e.py ./kernel/aura --port 9398
 
+      # `aura demo` is a claim about the whole system at once: a node and its
+      # standby under hundreds of live sessions, hit six ways — readers that
+      # stall, a compromised Expertise reaching for a credential, orders past
+      # their deadline, generations cancelled mid-stream, a SIGKILL, a byte of
+      # the ledger edited on disk. Headless it prints each check and exits
+      # non-zero if one does not hold, so what the README shows cannot quietly
+      # stop being true. Smaller than the default so a shared runner is not what
+      # is being measured.
+      - name: the node survives the demo
+        run: ./kernel/aura demo --headless --sessions 60 --ops 6 --pace 1s --warmup 2s --node-port 9399
+
+      # The comparison the README opens with: an ordinary agent and a node, the
+      # same four things done to both. It fails if the node does not hold — and
+      # also if the agent is not harmed, because the documentation says what
+      # happens on the left and must not be allowed to become untrue.
+      - name: the comparison comes out as described
+        run: ./kernel/aura demo --versus --headless --sessions 20 --pace 1s --warmup 2s --node-port 9401
+
   adversarial:
     name: adversarial (the node refuses what it should)
     runs-on: ubuntu-latest
